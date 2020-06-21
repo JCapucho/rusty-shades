@@ -1,0 +1,67 @@
+// I'm lazy to use other grammar notations so here's my own
+// "//" is a comment
+// The syntax is name "->" rule
+// | means or
+// * means zero or more
+// ? zero or one
+// + one or more
+// names are lowercase
+// literals are uppercase
+// "" is a keyword
+
+program -> top_statement*
+
+top_statement -> global_statement | const_statement | function_statement | struct_statement
+
+global_statement -> "global" global_modifier identifier (":" type)? ";"
+global_modifier -> "position" | ("in" "=" INTEGER) | ("out" "=" INTEGER) | ("uniform" "=" "(" "set" "=" INTEGER,"binding" "=" INTEGER ")")
+
+const_statement -> "const" identifier (":" type)? "=" init_statement ";"
+
+function_statement -> "fn" function_modifier identifier "(" ")" "{" block "}"
+function_statement -> "fn" identifier "(" (argument ",")* ")" ("->" type")?  "{" block "}"
+function_modifier -> "vertex" | "fragment"
+
+struct_statement -> "struct" identifier "{" (argument ",")+ "}"
+
+argument -> identifier ":" type
+
+block -> statement*
+
+statement -> expression | declaration | assignment | return | if
+
+return -> "return" expression? ";"
+assignment -> identifier "=" expression ";"
+if -> "if" expression "{" block "}" ("else" "if" expression "{" block "}")* (else "{" block "}")?
+declaration -> "let" identifier (: type) "=" expression ";"
+
+expression -> logical_or
+
+logical_or -> logical_and ( ( "||" ) logical_and )*
+logical_and -> equality ( ( "&&" ) equality )*
+
+equality -> comparison ( ( "!=" | "==" ) comparison )*
+comparison -> bitwise_or ( ( ">" | ">=" | "<" | "<=" ) bitwise_or )*
+
+bitwise_or -> bitwise_xor ( ( "|" ) bitwise_xor )*
+bitwise_xor -> bitwise_and ( ( "^" ) bitwise_and )*
+bitwise_and -> addition ( ( "&" ) addition )*
+
+addition -> multiplication ( ( "-" | "+" ) multiplication )*
+multiplication -> unary ( ( "/" | "*" | "%" ) unary )*
+unary -> ( "!" | "-" )? struct_access
+struct_access -> atom ("." ident)*
+atom -> LITERAL | "false" | "true" | "(" expression ")" | call | identifier
+call -> identifier "(" (expression ",")* ")"
+
+init_statement -> LITERAL
+init_statement -> identifier "{" (field_init ",")+ "}"
+
+identifier -> (CHARACTER | "_")ALPHANUMERIC*
+type -> identifier ("<" (generic ",")* ">")?
+
+field_init -> identifier ":" init_statement
+
+generic -> UINTEGER | scalar_type
+
+scalar_type -> "Int" | "Uint" | "Float" | "Double"

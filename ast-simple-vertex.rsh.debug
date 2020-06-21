@@ -1,0 +1,318 @@
+[
+    (Global {
+        modifier: (Input(
+            0,
+        ): 7..11),
+        ident: (0x000001eea91930f0 : "a_position": 12..22),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 24..30),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 31..32),
+                        (ScalarType(
+                            Float,
+                        ): 34..39),
+                    ]: 30..40),
+                ),
+            }: 24..40),
+        ),
+    }: 0..41),
+    (Global {
+        modifier: (Input(
+            1,
+        ): 50..54),
+        ident: (0x000001eea9193120 : "a_color": 55..62),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 64..70),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 71..72),
+                        (ScalarType(
+                            Float,
+                        ): 74..79),
+                    ]: 70..80),
+                ),
+            }: 64..80),
+        ),
+    }: 43..81),
+    (Global {
+        modifier: (Input(
+            2,
+        ): 90..94),
+        ident: (0x000001eea9192fd0 : "a_normal": 95..103),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 105..111),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 112..113),
+                        (ScalarType(
+                            Float,
+                        ): 115..120),
+                    ]: 111..121),
+                ),
+            }: 105..121),
+        ),
+    }: 83..122),
+    (Global {
+        modifier: (Output(
+            0,
+        ): 141..146),
+        ident: (0x000001eea9192d60 : "v_position": 147..157),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 159..165),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 166..167),
+                        (ScalarType(
+                            Float,
+                        ): 169..174),
+                    ]: 165..175),
+                ),
+            }: 159..175),
+        ),
+    }: 134..176),
+    (Global {
+        modifier: (Output(
+            1,
+        ): 185..190),
+        ident: (0x000001eea9193270 : "v_color": 191..198),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 200..206),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 207..208),
+                        (ScalarType(
+                            Float,
+                        ): 210..215),
+                    ]: 206..216),
+                ),
+            }: 200..216),
+        ),
+    }: 178..217),
+    (Global {
+        modifier: (Output(
+            2,
+        ): 226..231),
+        ident: (0x000001eea9193150 : "v_normal": 232..240),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9193240 : "Vector": 242..248),
+                generics: Some(
+                    ([
+                        (UInt(
+                            3,
+                        ): 249..250),
+                        (ScalarType(
+                            Float,
+                        ): 252..257),
+                    ]: 248..258),
+                ),
+            }: 242..258),
+        ),
+    }: 219..259),
+    (Global {
+        modifier: (Position: 270..278),
+        ident: (0x000001eea9193180 : "gl_position": 279..290),
+        ty: None,
+    }: 263..291),
+    (Global {
+        modifier: (Uniform {
+            set: 0,
+            binding: 0,
+        }: 302..327),
+        ident: (0x000001eea9192be0 : "globals": 328..335),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9192e20 : "Globals": 337..344),
+                generics: None,
+            }: 337..344),
+        ),
+    }: 295..345),
+    (Global {
+        modifier: (Uniform {
+            set: 2,
+            binding: 0,
+        }: 354..379),
+        ident: (0x000001eea9193000 : "locals": 380..386),
+        ty: Some(
+            (CompositeType {
+                name: (0x000001eea9192e80 : "Locals": 388..394),
+                generics: None,
+            }: 388..394),
+        ),
+    }: 347..395),
+    (StructDef {
+        ident: (0x000001eea9192e20 : "Globals": 406..413),
+        fields: [
+            (IdentTypePair {
+                ident: (0x000001eea9193030 : "u_view_proj": 421..432),
+                ty: (CompositeType {
+                    name: (0x000001eea9192f10 : "Matrix": 434..440),
+                    generics: Some(
+                        ([
+                            (UInt(
+                                4,
+                            ): 441..442),
+                            (UInt(
+                                4,
+                            ): 444..445),
+                            (ScalarType(
+                                Float,
+                            ): 447..452),
+                        ]: 440..453),
+                    ),
+                }: 434..453),
+            }: 421..453),
+            (IdentTypePair {
+                ident: (0x000001eea9193090 : "u_view_position": 460..475),
+                ty: (CompositeType {
+                    name: (0x000001eea9193240 : "Vector": 477..483),
+                    generics: Some(
+                        ([
+                            (UInt(
+                                3,
+                            ): 484..485),
+                            (ScalarType(
+                                Float,
+                            ): 487..492),
+                        ]: 483..493),
+                    ),
+                }: 477..493),
+            }: 460..493),
+        ],
+    }: 399..496),
+    (StructDef {
+        ident: (0x000001eea9192e80 : "Locals": 507..513),
+        fields: [
+            (IdentTypePair {
+                ident: (0x000001eea9193060 : "u_transform": 521..532),
+                ty: (CompositeType {
+                    name: (0x000001eea9192f10 : "Matrix": 534..540),
+                    generics: Some(
+                        ([
+                            (UInt(
+                                4,
+                            ): 541..542),
+                            (UInt(
+                                4,
+                            ): 544..545),
+                            (ScalarType(
+                                Float,
+                            ): 547..552),
+                        ]: 540..553),
+                    ),
+                }: 534..553),
+            }: 521..553),
+            (IdentTypePair {
+                ident: (0x000001eea9192bb0 : "u_min_max": 560..569),
+                ty: (CompositeType {
+                    name: (0x000001eea9193240 : "Vector": 571..577),
+                    generics: Some(
+                        ([
+                            (UInt(
+                                2,
+                            ): 578..579),
+                            (ScalarType(
+                                Float,
+                            ): 581..586),
+                        ]: 577..587),
+                    ),
+                }: 571..587),
+            }: 560..587),
+        ],
+    }: 500..590),
+    (Function {
+        modifier: Some(
+            (Vertex: 605..611),
+        ),
+        ident: (0x000001eea9192df0 : "main": 612..616),
+        ty: None,
+        args: [],
+        body: ([
+            (Assignment {
+                ident: (0x000001eea9193270 : "v_color": 626..633),
+                expr: (Variable(
+                    (0x000001eea9193120 : "a_color": 636..643),
+                ): 636..643),
+            }: 626..644),
+            (Assignment {
+                ident: (0x000001eea9193150 : "v_normal": 650..658),
+                expr: (Variable(
+                    (0x000001eea9192fd0 : "a_normal": 661..669),
+                ): 661..669),
+            }: 650..670),
+            (Assignment {
+                ident: (0x000001eea9192d60 : "v_position": 686..696),
+                expr: (Access {
+                    base: (BinaryOp {
+                        left: (Variable(
+                            (0x000001eea9193060 : "u_transform": 700..711),
+                        ): 700..711),
+                        op: (Multiplication: 712..713),
+                        right: (Call {
+                            name: (0x000001eea91930c0 : "vec4": 714..718),
+                            args: ([
+                                (Variable(
+                                    (0x000001eea91930f0 : "a_position": 719..729),
+                                ): 719..729),
+                                (Literal(
+                                    Float(
+                                        OrderedFloat(
+                                            1.0,
+                                        ),
+                                    ),
+                                ): 731..734),
+                            ]: 718..734),
+                        }: 714..735),
+                    }: 700..735),
+                    field: (0x000001eea9192cd0 : "xyz": 737..740),
+                }: 700..740),
+            }: 686..741),
+            (Assignment {
+                ident: (0x000001eea9192d00 : "gl_Position": 747..758),
+                expr: (BinaryOp {
+                    left: (BinaryOp {
+                        left: (Variable(
+                            (0x000001eea9193030 : "u_view_proj": 761..772),
+                        ): 761..772),
+                        op: (Multiplication: 773..774),
+                        right: (Variable(
+                            (0x000001eea9193060 : "u_transform": 775..786),
+                        ): 775..786),
+                    }: 761..786),
+                    op: (Multiplication: 787..788),
+                    right: (Call {
+                        name: (0x000001eea91930c0 : "vec4": 789..793),
+                        args: ([
+                            (Variable(
+                                (0x000001eea91930f0 : "a_position": 794..804),
+                            ): 794..804),
+                            (Literal(
+                                Float(
+                                    OrderedFloat(
+                                        1.0,
+                                    ),
+                                ),
+                            ): 806..809),
+                        ]: 793..809),
+                    }: 789..810),
+                }: 761..810),
+            }: 747..811),
+        ]: 619..814),
+    }: 602..814),
+]

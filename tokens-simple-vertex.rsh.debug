@@ -1,0 +1,447 @@
+[
+    (Global: 0..6),
+    (In: 7..9),
+    (Equal: 9..10),
+    (Literal(
+        Uint(
+            0,
+        ),
+    ): 10..11),
+    (Identifier(
+        0x000001eea91930f0 : "a_position",
+    ): 12..22),
+    (Colon: 22..23),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 24..30),
+    (Less: 30..31),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 31..32),
+    (Comma: 32..33),
+    (ScalarType(
+        Float,
+    ): 34..39),
+    (Greater: 39..40),
+    (SemiColon: 40..41),
+    (Global: 43..49),
+    (In: 50..52),
+    (Equal: 52..53),
+    (Literal(
+        Uint(
+            1,
+        ),
+    ): 53..54),
+    (Identifier(
+        0x000001eea9193120 : "a_color",
+    ): 55..62),
+    (Colon: 62..63),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 64..70),
+    (Less: 70..71),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 71..72),
+    (Comma: 72..73),
+    (ScalarType(
+        Float,
+    ): 74..79),
+    (Greater: 79..80),
+    (SemiColon: 80..81),
+    (Global: 83..89),
+    (In: 90..92),
+    (Equal: 92..93),
+    (Literal(
+        Uint(
+            2,
+        ),
+    ): 93..94),
+    (Identifier(
+        0x000001eea9192fd0 : "a_normal",
+    ): 95..103),
+    (Colon: 103..104),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 105..111),
+    (Less: 111..112),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 112..113),
+    (Comma: 113..114),
+    (ScalarType(
+        Float,
+    ): 115..120),
+    (Greater: 120..121),
+    (SemiColon: 121..122),
+    (Global: 134..140),
+    (Out: 141..144),
+    (Equal: 144..145),
+    (Literal(
+        Uint(
+            0,
+        ),
+    ): 145..146),
+    (Identifier(
+        0x000001eea9192d60 : "v_position",
+    ): 147..157),
+    (Colon: 157..158),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 159..165),
+    (Less: 165..166),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 166..167),
+    (Comma: 167..168),
+    (ScalarType(
+        Float,
+    ): 169..174),
+    (Greater: 174..175),
+    (SemiColon: 175..176),
+    (Global: 178..184),
+    (Out: 185..188),
+    (Equal: 188..189),
+    (Literal(
+        Uint(
+            1,
+        ),
+    ): 189..190),
+    (Identifier(
+        0x000001eea9193270 : "v_color",
+    ): 191..198),
+    (Colon: 198..199),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 200..206),
+    (Less: 206..207),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 207..208),
+    (Comma: 208..209),
+    (ScalarType(
+        Float,
+    ): 210..215),
+    (Greater: 215..216),
+    (SemiColon: 216..217),
+    (Global: 219..225),
+    (Out: 226..229),
+    (Equal: 229..230),
+    (Literal(
+        Uint(
+            2,
+        ),
+    ): 230..231),
+    (Identifier(
+        0x000001eea9193150 : "v_normal",
+    ): 232..240),
+    (Colon: 240..241),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 242..248),
+    (Less: 248..249),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 249..250),
+    (Comma: 250..251),
+    (ScalarType(
+        Float,
+    ): 252..257),
+    (Greater: 257..258),
+    (SemiColon: 258..259),
+    (Global: 263..269),
+    (Position: 270..278),
+    (Identifier(
+        0x000001eea9193180 : "gl_position",
+    ): 279..290),
+    (SemiColon: 290..291),
+    (Global: 295..301),
+    (Uniform: 302..309),
+    (Equal: 309..310),
+    (OpenDelimiter(
+        Parentheses,
+    ): 310..311),
+    (Set: 311..314),
+    (Equal: 314..315),
+    (Literal(
+        Uint(
+            0,
+        ),
+    ): 315..316),
+    (Comma: 316..317),
+    (Binding: 317..324),
+    (Equal: 324..325),
+    (Literal(
+        Uint(
+            0,
+        ),
+    ): 325..326),
+    (CloseDelimiter(
+        Parentheses,
+    ): 326..327),
+    (Identifier(
+        0x000001eea9192be0 : "globals",
+    ): 328..335),
+    (Colon: 335..336),
+    (Identifier(
+        0x000001eea9192e20 : "Globals",
+    ): 337..344),
+    (SemiColon: 344..345),
+    (Global: 347..353),
+    (Uniform: 354..361),
+    (Equal: 361..362),
+    (OpenDelimiter(
+        Parentheses,
+    ): 362..363),
+    (Set: 363..366),
+    (Equal: 366..367),
+    (Literal(
+        Uint(
+            2,
+        ),
+    ): 367..368),
+    (Comma: 368..369),
+    (Binding: 369..376),
+    (Equal: 376..377),
+    (Literal(
+        Uint(
+            0,
+        ),
+    ): 377..378),
+    (CloseDelimiter(
+        Parentheses,
+    ): 378..379),
+    (Identifier(
+        0x000001eea9193000 : "locals",
+    ): 380..386),
+    (Colon: 386..387),
+    (Identifier(
+        0x000001eea9192e80 : "Locals",
+    ): 388..394),
+    (SemiColon: 394..395),
+    (Struct: 399..405),
+    (Identifier(
+        0x000001eea9192e20 : "Globals",
+    ): 406..413),
+    (OpenDelimiter(
+        CurlyBraces,
+    ): 414..415),
+    (Identifier(
+        0x000001eea9193030 : "u_view_proj",
+    ): 421..432),
+    (Colon: 432..433),
+    (Identifier(
+        0x000001eea9192f10 : "Matrix",
+    ): 434..440),
+    (Less: 440..441),
+    (Literal(
+        Uint(
+            4,
+        ),
+    ): 441..442),
+    (Comma: 442..443),
+    (Literal(
+        Uint(
+            4,
+        ),
+    ): 444..445),
+    (Comma: 445..446),
+    (ScalarType(
+        Float,
+    ): 447..452),
+    (Greater: 452..453),
+    (Comma: 453..454),
+    (Identifier(
+        0x000001eea9193090 : "u_view_position",
+    ): 460..475),
+    (Colon: 475..476),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 477..483),
+    (Less: 483..484),
+    (Literal(
+        Uint(
+            3,
+        ),
+    ): 484..485),
+    (Comma: 485..486),
+    (ScalarType(
+        Float,
+    ): 487..492),
+    (Greater: 492..493),
+    (CloseDelimiter(
+        CurlyBraces,
+    ): 495..496),
+    (Struct: 500..506),
+    (Identifier(
+        0x000001eea9192e80 : "Locals",
+    ): 507..513),
+    (OpenDelimiter(
+        CurlyBraces,
+    ): 514..515),
+    (Identifier(
+        0x000001eea9193060 : "u_transform",
+    ): 521..532),
+    (Colon: 532..533),
+    (Identifier(
+        0x000001eea9192f10 : "Matrix",
+    ): 534..540),
+    (Less: 540..541),
+    (Literal(
+        Uint(
+            4,
+        ),
+    ): 541..542),
+    (Comma: 542..543),
+    (Literal(
+        Uint(
+            4,
+        ),
+    ): 544..545),
+    (Comma: 545..546),
+    (ScalarType(
+        Float,
+    ): 547..552),
+    (Greater: 552..553),
+    (Comma: 553..554),
+    (Identifier(
+        0x000001eea9192bb0 : "u_min_max",
+    ): 560..569),
+    (Colon: 569..570),
+    (Identifier(
+        0x000001eea9193240 : "Vector",
+    ): 571..577),
+    (Less: 577..578),
+    (Literal(
+        Uint(
+            2,
+        ),
+    ): 578..579),
+    (Comma: 579..580),
+    (ScalarType(
+        Float,
+    ): 581..586),
+    (Greater: 586..587),
+    (CloseDelimiter(
+        CurlyBraces,
+    ): 589..590),
+    (Fn: 602..604),
+    (FunctionModifier(
+        Vertex,
+    ): 605..611),
+    (Identifier(
+        0x000001eea9192df0 : "main",
+    ): 612..616),
+    (OpenDelimiter(
+        Parentheses,
+    ): 616..617),
+    (CloseDelimiter(
+        Parentheses,
+    ): 617..618),
+    (OpenDelimiter(
+        CurlyBraces,
+    ): 619..620),
+    (Identifier(
+        0x000001eea9193270 : "v_color",
+    ): 626..633),
+    (Equal: 634..635),
+    (Identifier(
+        0x000001eea9193120 : "a_color",
+    ): 636..643),
+    (SemiColon: 643..644),
+    (Identifier(
+        0x000001eea9193150 : "v_normal",
+    ): 650..658),
+    (Equal: 659..660),
+    (Identifier(
+        0x000001eea9192fd0 : "a_normal",
+    ): 661..669),
+    (SemiColon: 669..670),
+    (Identifier(
+        0x000001eea9192d60 : "v_position",
+    ): 686..696),
+    (Equal: 697..698),
+    (OpenDelimiter(
+        Parentheses,
+    ): 699..700),
+    (Identifier(
+        0x000001eea9193060 : "u_transform",
+    ): 700..711),
+    (Star: 712..713),
+    (Identifier(
+        0x000001eea91930c0 : "vec4",
+    ): 714..718),
+    (OpenDelimiter(
+        Parentheses,
+    ): 718..719),
+    (Identifier(
+        0x000001eea91930f0 : "a_position",
+    ): 719..729),
+    (Comma: 729..730),
+    (Literal(
+        Float(
+            OrderedFloat(
+                1.0,
+            ),
+        ),
+    ): 731..734),
+    (CloseDelimiter(
+        Parentheses,
+    ): 734..735),
+    (CloseDelimiter(
+        Parentheses,
+    ): 735..736),
+    (Dot: 736..737),
+    (Identifier(
+        0x000001eea9192cd0 : "xyz",
+    ): 737..740),
+    (SemiColon: 740..741),
+    (Identifier(
+        0x000001eea9192d00 : "gl_Position",
+    ): 747..758),
+    (Equal: 759..760),
+    (Identifier(
+        0x000001eea9193030 : "u_view_proj",
+    ): 761..772),
+    (Star: 773..774),
+    (Identifier(
+        0x000001eea9193060 : "u_transform",
+    ): 775..786),
+    (Star: 787..788),
+    (Identifier(
+        0x000001eea91930c0 : "vec4",
+    ): 789..793),
+    (OpenDelimiter(
+        Parentheses,
+    ): 793..794),
+    (Identifier(
+        0x000001eea91930f0 : "a_position",
+    ): 794..804),
+    (Comma: 804..805),
+    (Literal(
+        Float(
+            OrderedFloat(
+                1.0,
+            ),
+        ),
+    ): 806..809),
+    (CloseDelimiter(
+        Parentheses,
+    ): 809..810),
+    (SemiColon: 810..811),
+    (CloseDelimiter(
+        CurlyBraces,
+    ): 813..814),
+]

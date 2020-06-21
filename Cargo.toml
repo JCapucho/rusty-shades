@@ -1,0 +1,17 @@
+[package]
+name = "rusty_shades"
+version = "0.1.0"
+authors = ["Capucho <jcapucho7@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+internment = "0.3"
+parze = { git = "https://github.com/zesterer/parze-new.git" }
+ordered-float = { version = "1.0", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+codespan-reporting = { version = "0.9", optional = true }
+naga = { git="https://github.com/gfx-rs/naga.git" }
+
+[features]
+default = ["codespan-reporting"]
