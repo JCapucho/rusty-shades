@@ -4,9 +4,7 @@ use ordered_float::OrderedFloat;
 use parze::prelude::*;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Token {
     Identifier(ArcIntern<String>),
     FunctionModifier(FunctionModifier),
@@ -159,19 +157,19 @@ impl PartialEq<Token> for SrcNode<Token> {
         &**self == other
     }
 }
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum Delimiter {
     Parentheses,
     CurlyBraces,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum FunctionModifier {
     Vertex,
     Fragment,
 }
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy)]
 pub enum Literal {
     Int(i64),
     Uint(u64),
@@ -179,7 +177,7 @@ pub enum Literal {
     Boolean(bool),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum ScalarType {
     Int,
     Uint,

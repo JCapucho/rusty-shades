@@ -5,12 +5,10 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use serde::Serialize;
+#[derive(Clone, Hash)]
+pub struct Node<T, U = Span>(Box<T>, U);
 
-#[derive(Clone, Hash, Serialize)]
-pub struct Node<T: Serialize, U: Serialize = Span>(Box<T>, U);
-
-impl<T: Serialize, U: Serialize> Node<T, U> {
+impl<T, U> Node<T, U> {
     pub fn new(item: T, attr: U) -> Self {
         Self(Box::new(item), attr)
     }
@@ -23,12 +21,12 @@ impl<T: Serialize, U: Serialize> Node<T, U> {
         *self.0
     }
 
-    pub fn map_inner<V: Serialize>(self, f: impl FnOnce(T) -> V) -> Node<V, U> {
+    pub fn map_inner<V>(self, f: impl FnOnce(T) -> V) -> Node<V, U> {
         let Node(inner, meta) = self;
         Node::new(f(*inner), meta)
     }
 
-    pub fn map_meta<V: Serialize>(self, f: impl FnOnce(U) -> V) -> Node<T, V> {
+    pub fn map_meta<V>(self, f: impl FnOnce(U) -> V) -> Node<T, V> {
         let Node(inner, meta) = self;
         Node(inner, f(meta))
     }
@@ -49,7 +47,7 @@ impl<T: Serialize, U: Serialize> Node<T, U> {
     }
 }
 
-impl<T: Serialize, U: Serialize> Deref for Node<T, U> {
+impl<T, U> Deref for Node<T, U> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -57,13 +55,13 @@ impl<T: Serialize, U: Serialize> Deref for Node<T, U> {
     }
 }
 
-impl<T: Serialize, U: Serialize> DerefMut for Node<T, U> {
+impl<T, U> DerefMut for Node<T, U> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut *self.0
     }
 }
 
-impl<T: fmt::Debug + Serialize, U: fmt::Debug + Serialize> fmt::Debug for Node<T, U> {
+impl<T: fmt::Debug, U: fmt::Debug> fmt::Debug for Node<T, U> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
             write!(f, "({:#?}: {:#?})", self.0, self.attr())
@@ -73,17 +71,17 @@ impl<T: fmt::Debug + Serialize, U: fmt::Debug + Serialize> fmt::Debug for Node<T
     }
 }
 
-impl<T: PartialEq + Serialize, U: Serialize> PartialEq for Node<T, U> {
+impl<T: PartialEq, U> PartialEq for Node<T, U> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
-impl<T: Eq + Serialize, U: Serialize> Eq for Node<T, U> {}
+impl<T: Eq, U> Eq for Node<T, U> {}
 
 pub type SrcNode<T> = Node<T, Span>;
 
-impl<T: Serialize> SrcNode<T> {
+impl<T> SrcNode<T> {
     pub fn span(&self) -> Span {
         *self.attr()
     }

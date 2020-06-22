@@ -8,8 +8,7 @@ edition = "2018"
 [dependencies]
 internment = "0.3"
 parze = { git = "https://github.com/zesterer/parze-new.git" }
-ordered-float = { version = "1.0", features = ["serde"] }
-serde = { version = "1", features = ["derive"] }
+ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
 naga = { git="https://github.com/gfx-rs/naga.git" }
 

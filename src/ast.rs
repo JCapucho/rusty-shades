@@ -6,11 +6,9 @@ use crate::{
 use internment::ArcIntern;
 use parze::prelude::*;
 
-use serde::{Deserialize, Serialize};
-
 pub type Block = Vec<SrcNode<Statement>>;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TopLevelStatement {
     Global {
         modifier: SrcNode<GlobalModifier>,
@@ -35,7 +33,7 @@ pub enum TopLevelStatement {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     Expr(SrcNode<Expression>),
     Declaration {
@@ -56,7 +54,7 @@ pub enum Statement {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Expression {
     BinaryOp {
         left: SrcNode<Expression>,
@@ -79,7 +77,7 @@ pub enum Expression {
     Variable(SrcNode<ArcIntern<String>>),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum BinaryOp {
     LogicalOr,
     LogicalAnd,
@@ -104,19 +102,19 @@ pub enum BinaryOp {
     Remainder,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum UnaryOp {
     BitWiseNot,
     Negation,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct IdentTypePair {
     pub ident: SrcNode<ArcIntern<String>>,
     pub ty: SrcNode<Type>,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Type {
     ScalarType(ScalarType),
     CompositeType {
@@ -125,13 +123,13 @@ pub enum Type {
     },
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Generic {
     UInt(u64),
     ScalarType(ScalarType),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum GlobalModifier {
     Position,
     Input(u64 /* location */),

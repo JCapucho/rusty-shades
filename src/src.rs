@@ -2,9 +2,7 @@ use crate::node::SrcNode;
 use parze::span::Span as ParzeSpan;
 use std::{fmt, ops::Range};
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Loc(usize);
 
 impl Loc {
@@ -70,7 +68,7 @@ impl From<u64> for Loc {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub enum Span {
     None,
     Range(Loc, Loc),
@@ -209,7 +207,7 @@ impl ParzeSpan<char> for Span {
     }
 }
 
-impl<T: Serialize> ParzeSpan<SrcNode<T>> for Span {
+impl<T> ParzeSpan<SrcNode<T>> for Span {
     fn none() -> Self {
         Span::none()
     }
