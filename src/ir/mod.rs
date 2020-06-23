@@ -4,7 +4,7 @@ use crate::lex::ScalarType;
 use crate::node::SrcNode;
 use internment::ArcIntern;
 use naga::VectorSize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const BUILTIN_TYPES: &[&str] = &["Int", "UInt", "Float", "Double", "Vector", "Matrix"];
 
@@ -22,7 +22,7 @@ enum Type {
 
 pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>> {
     let mut errors = vec![];
-    let mut types_lookup: HashMap<ArcIntern<String>, SrcNode<Vec<IdentTypePair>>> =
+    let mut types_lookup: HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>> =
         HashMap::default();
 
     for statement in statements {
@@ -48,7 +48,7 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
                 types_lookup.insert(
                     ident.inner().clone(),
                     SrcNode::new(
-                        fields.iter().map(|f| f.inner()).cloned().collect(),
+                        fields.iter().map(|f| f).cloned().collect(),
                         statement.span(),
                     ),
                 );
@@ -71,6 +71,7 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
                 }
 
                 build_struct(
+                    &mut HashSet::default(),
                     ident.inner().clone(),
                     fields.clone(),
                     &mut types_lookup,
@@ -93,19 +94,21 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
 }
 
 fn build_struct(
+    parents: &mut HashSet<ArcIntern<String>>,
     struct_name: ArcIntern<String>,
     fields: Vec<SrcNode<IdentTypePair>>,
-    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<IdentTypePair>>>,
+    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>>,
     types: &mut HashMap<ArcIntern<String>, SrcNode<Type>>,
     errors: &mut Vec<Error>,
     span: crate::src::Span,
 ) {
     let mut constructed_fields = HashMap::default();
+    parents.insert(struct_name.clone());
 
     for field in fields {
         build_field(
-            &struct_name,
-            field.into_inner(),
+            parents,
+            field,
             types_lookup,
             types,
             &mut constructed_fields,
@@ -120,14 +123,14 @@ fn build_struct(
 }
 
 fn build_field(
-    struct_name: &ArcIntern<String>,
-    field: IdentTypePair,
-    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<IdentTypePair>>>,
+    parents: &mut HashSet<ArcIntern<String>>,
+    field: SrcNode<IdentTypePair>,
+    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>>,
     types: &mut HashMap<ArcIntern<String>, SrcNode<Type>>,
     fields: &mut HashMap<ArcIntern<String>, Type>,
     errors: &mut Vec<Error>,
 ) {
-    let child_ty = match field.ty.inner() {
+    let child_ty = match field.inner().ty.inner() {
         ast::Type::ScalarType(scalar) => Type::Scalar(*scalar),
         ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
             "Vector" => {
@@ -222,11 +225,56 @@ fn build_field(
                     return;
                 }
             }
-            _ => unimplemented!(),
+            _ => {
+                if parents.get(name.inner()).is_some() {
+                    errors.push(
+                        Error::custom(String::from("Recursive types aren't allowed"))
+                            .with_span(name.span()),
+                    );
+                    return;
+                }
+
+                if let Some(fields) = types_lookup.get(name.inner()) {
+                    if generics.is_some() && generics.as_ref().unwrap().len() != 0 {
+                        errors.push(
+                            Error::custom(format!(
+                                "Expected {} generics found {}",
+                                0,
+                                generics.as_ref().unwrap().len()
+                            ))
+                            .with_span(name.span()),
+                        );
+                        return;
+                    }
+
+                    if let Some(ty) = types.get(name.inner()) {
+                        ty.inner().clone()
+                    } else {
+                        build_struct(
+                            parents,
+                            name.inner().clone(),
+                            fields.inner().clone(),
+                            types_lookup,
+                            types,
+                            errors,
+                            fields.span(),
+                        );
+
+                        match types.get(name.inner()) {
+                            Some(ty) => ty.inner().clone(),
+                            None => return,
+                        }
+                    }
+                } else {
+                    errors
+                        .push(Error::custom(String::from("Type not found")).with_span(name.span()));
+                    return;
+                }
+            }
         },
     };
 
-    fields.insert(field.ident.into_inner(), child_ty);
+    fields.insert(field.ident.inner().clone(), child_ty);
 }
 
 fn build_vector_size(size: &SrcNode<Generic>) -> Result<VectorSize, Error> {

@@ -1,4 +1,3 @@
-use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::files::SimpleFiles;
 use codespan_reporting::term::{
     self,
