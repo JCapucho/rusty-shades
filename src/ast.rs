@@ -543,19 +543,19 @@ fn function_parser(
     just(Token::Fn)
         .padding_for(function_modifier_parser().or_not())
         .then(ident_parser())
-        .then(just(Token::Arrow).padding_for(type_parser()).or_not())
         .then(
             just(Token::OpenDelimiter(Delimiter::Parentheses))
                 .padding_for(ident_type_pair_parser().separated_by(just(Token::Comma)))
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
         )
+        .then(just(Token::Arrow).padding_for(type_parser()).or_not())
         .then(
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
                 .padding_for(statement_parser().repeated())
                 .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
                 .map_with_span(|body, span| SrcNode::new(body, span)),
         )
-        .map_with_span(|((((modifier, ident), ty), args), body), span| {
+        .map_with_span(|((((modifier, ident), args), ty), body), span| {
             SrcNode::new(
                 TopLevelStatement::Function {
                     modifier,

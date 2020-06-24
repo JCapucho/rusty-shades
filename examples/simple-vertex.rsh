@@ -28,3 +28,7 @@ fn vertex main() {
     v_position = (u_transform * vec4(a_position, 1.0)).xyz;
     gl_Position = u_view_proj * u_transform * vec4(a_position, 1.0);
 }
+
+fn call_me(globals: Globals) -> Matrix<3,3,Int> {
+
+}

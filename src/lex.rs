@@ -116,7 +116,7 @@ impl fmt::Display for Token {
             Token::Const => write!(f, "const"),
             Token::Equal => write!(f, "="),
             Token::Fn => write!(f, "fn"),
-            Token::Arrow => write!(f, "=>"),
+            Token::Arrow => write!(f, "->"),
             Token::Comma => write!(f, ","),
             Token::Return => write!(f, "return"),
             Token::SemiColon => write!(f, ";"),
@@ -237,6 +237,7 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
 
         let op = seq("||".chars())
             .to(Token::LogicalOr)
+            .or(seq("->".chars()).to(Token::Arrow))
             .or(seq("&&".chars()).to(Token::LogicalAnd))
             .or(seq("!=".chars()).to(Token::Inequality))
             .or(seq("==".chars()).to(Token::Equality))
@@ -257,7 +258,6 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
             .or(just(';').to(Token::SemiColon))
             .or(just('=').to(Token::Equal))
             .or(just('.').to(Token::Dot))
-            .or(seq("->".chars()).to(Token::Arrow))
             .or(just('%').to(Token::Percent))
             .boxed();
 
