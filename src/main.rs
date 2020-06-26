@@ -3,6 +3,7 @@ use codespan_reporting::term::{
     self,
     termcolor::{ColorChoice, StandardStream},
 };
+use naga::back::spv;
 use rusty_shades::{ast, error::Error, ir, lex};
 use std::fs::read_to_string;
 use std::io;
@@ -19,7 +20,13 @@ fn main() -> io::Result<()> {
 
     let ast = handle_errors(ast::parse(&tokens), &files, file_id)?;
 
-    handle_errors(ir::build(&ast), &files, file_id)?;
+    let module = handle_errors(ir::build(&ast), &files, file_id)?;
+
+    println!("{:#?}", module);
+
+    let spirv = spv::Writer::new(&module.header, spv::WriterFlags::DEBUG).write(&module);
+
+    println!("{:?}", spirv);
 
     Ok(())
 }

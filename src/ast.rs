@@ -77,7 +77,7 @@ pub enum Expression {
     Variable(SrcNode<ArcIntern<String>>),
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum BinaryOp {
     LogicalOr,
     LogicalAnd,
@@ -102,7 +102,7 @@ pub enum BinaryOp {
     Remainder,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum UnaryOp {
     BitWiseNot,
     Negation,

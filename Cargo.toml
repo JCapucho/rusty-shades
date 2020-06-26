@@ -6,11 +6,11 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-internment = "0.3"
+internment = { git = "https://github.com/JCapucho/internment.git" }
 parze = { git = "https://github.com/zesterer/parze-new.git" }
 ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
-naga = { git="https://github.com/gfx-rs/naga.git" }
+naga = { git="https://github.com/gfx-rs/naga.git", features=["spirv"] }
 
 [features]
 default = ["codespan-reporting"]

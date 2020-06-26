@@ -1,16 +1,35 @@
-use crate::ast::{self, Generic, IdentTypePair, TopLevelStatement};
+use crate::ast::{self, Generic, GlobalModifier, IdentTypePair, TopLevelStatement};
 use crate::error::Error;
-use crate::lex::ScalarType;
+use crate::lex::{FunctionModifier, ScalarType};
 use crate::node::SrcNode;
 use internment::ArcIntern;
-use naga::{Arena, Handle, Module, ScalarKind, StructMember, Type, TypeInner, VectorSize};
+use naga::{
+    Arena, Binding, BuiltIn, EntryPoint, Function, GlobalUse, GlobalVariable, Handle, Header,
+    Module, ScalarKind, ShaderStage, StorageClass, StructMember, Type, TypeInner, VectorSize,
+};
 use std::collections::{HashMap, HashSet};
+
+mod expressions;
 
 const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
 
-type FuncDef = (Vec<SrcNode<Handle<Type>>>, Option<SrcNode<Handle<Type>>>);
+#[derive(Clone, Debug, PartialEq, Hash)]
+pub(self) struct FuncDef {
+    pub modifier: Option<SrcNode<FunctionModifier>>,
+    pub args: Vec<SrcNode<Handle<Type>>>,
+    pub ret: Option<SrcNode<Handle<Type>>>,
+}
 
-pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>> {
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
+pub enum ContextGlobal {
+    Independent(Handle<GlobalVariable>),
+    Dependent {
+        vert: Handle<GlobalVariable>,
+        frag: Handle<GlobalVariable>,
+    },
+}
+
+pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<Module, Vec<Error>> {
     let mut errors = vec![];
     let mut types_lookup: HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>> =
         HashMap::default();
@@ -54,6 +73,8 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
     let mut structs: HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>> = HashMap::default();
     let mut types: Arena<Type> = Arena::new();
     let mut functions_lookup: HashMap<ArcIntern<String>, SrcNode<FuncDef>> = HashMap::default();
+    let mut globals = Arena::new();
+    let mut globals_lookup: HashMap<ArcIntern<String>, SrcNode<ContextGlobal>> = HashMap::default();
 
     for statement in statements {
         match &**statement {
@@ -78,6 +99,7 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
                 };
             }
             TopLevelStatement::Function {
+                modifier,
                 ident,
                 args,
                 ty: return_ty,
@@ -124,10 +146,160 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
                     }
                 };
 
-                functions_lookup.insert(
+                if let Some(func) = functions_lookup.insert(
                     ident.inner().clone(),
-                    SrcNode::new((args, ret), statement.span()),
-                );
+                    SrcNode::new(
+                        FuncDef {
+                            modifier: modifier.clone(),
+                            args,
+                            ret,
+                        },
+                        statement.span(),
+                    ),
+                ) {
+                    errors.push(
+                        Error::custom(String::from("Function already defined"))
+                            .with_span(statement.span())
+                            .with_span(func.span()),
+                    )
+                }
+            }
+            TopLevelStatement::Global {
+                modifier,
+                ident,
+                ty,
+                ..
+            } => {
+                let base = match ty
+                    .as_ref()
+                    .map(|t| {
+                        build_field(
+                            &mut HashSet::default(),
+                            t.clone(),
+                            &mut types_lookup,
+                            &mut structs,
+                            &mut types,
+                        )
+                        .map(|(ty, _)| ty)
+                    })
+                    .transpose()
+                {
+                    Ok(ty) => ty,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        continue;
+                    }
+                };
+
+                let global = match modifier.inner() {
+                    GlobalModifier::Position => {
+                        let vec4 = types.fetch_or_append(Type {
+                            name: None,
+                            inner: TypeInner::Vector {
+                                size: VectorSize::Quad,
+                                kind: ScalarKind::Float,
+                                width: 4,
+                            },
+                        });
+
+                        if let Some(base) = base {
+                            if base != vec4 {
+                                errors.push(
+                                    Error::custom(String::from("Type must be Vector<4,Float>"))
+                                        .with_span(ty.as_ref().unwrap().span()),
+                                );
+                                continue;
+                            }
+                        }
+
+                        let vert_handle = globals.append(GlobalVariable {
+                            name: Some(ident.inner().clone().to_string()),
+                            class: StorageClass::Output,
+                            binding: Some(Binding::BuiltIn(BuiltIn::Position)),
+                            ty: vec4,
+                        });
+
+                        let frag_handle = globals.append(GlobalVariable {
+                            name: Some(ident.inner().clone().to_string()),
+                            class: StorageClass::Input,
+                            binding: Some(Binding::BuiltIn(BuiltIn::Position)),
+                            ty: vec4,
+                        });
+
+                        ContextGlobal::Dependent {
+                            vert: vert_handle,
+                            frag: frag_handle,
+                        }
+                    }
+                    GlobalModifier::Input(location) => {
+                        if let Some(base) = base {
+                            let handle = globals.append(GlobalVariable {
+                                name: Some(ident.inner().clone().to_string()),
+                                class: StorageClass::Input,
+                                binding: Some(Binding::Location(*location as u32)),
+                                ty: base,
+                            });
+
+                            ContextGlobal::Independent(handle)
+                        } else {
+                            errors.push(
+                                Error::custom(String::from("Type must be specified"))
+                                    .with_span(statement.span()),
+                            );
+                            continue;
+                        }
+                    }
+                    GlobalModifier::Output(location) => {
+                        if let Some(base) = base {
+                            let handle = globals.append(GlobalVariable {
+                                name: Some(ident.inner().clone().to_string()),
+                                class: StorageClass::Output,
+                                binding: Some(Binding::Location(*location as u32)),
+                                ty: base,
+                            });
+
+                            ContextGlobal::Independent(handle)
+                        } else {
+                            errors.push(
+                                Error::custom(String::from("Type must be specified"))
+                                    .with_span(statement.span()),
+                            );
+                            continue;
+                        }
+                    }
+                    GlobalModifier::Uniform { set, binding } => {
+                        if let Some(base) = base {
+                            let handle = globals.append(GlobalVariable {
+                                name: Some(ident.inner().clone().to_string()),
+                                class: StorageClass::Uniform,
+                                binding: Some(Binding::Descriptor {
+                                    set: *set as u32,
+                                    binding: *binding as u32,
+                                }),
+                                ty: base,
+                            });
+
+                            ContextGlobal::Independent(handle)
+                        } else {
+                            errors.push(
+                                Error::custom(String::from("Type must be specified"))
+                                    .with_span(statement.span()),
+                            );
+                            continue;
+                        }
+                    }
+                };
+
+                if let Some(global) = globals_lookup.insert(
+                    ident.inner().clone(),
+                    SrcNode::new(global, statement.span()),
+                ) {
+                    errors.push(
+                        Error::custom(String::from("Global already defined"))
+                            .with_span(statement.span())
+                            .with_span(global.span()),
+                    )
+                }
             }
             _ => {}
         }
@@ -137,17 +309,77 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<(), Vec<Error>
         return Err(errors);
     }
 
-    println!("{:#?}", types);
-    println!("{:#?}", functions_lookup);
+    let mut functions = Arena::new();
+    let mut constants = Arena::new();
+    let mut entry_points = vec![];
+
+    let mut context = expressions::Context::new(
+        &mut types,
+        &mut constants,
+        &globals_lookup,
+        &globals,
+        &functions_lookup,
+        &structs,
+    );
+
+    for statement in statements {
+        match &**statement {
+            TopLevelStatement::Function { ident, body, .. } => {
+                let def = functions_lookup.get(ident.inner()).unwrap();
+                let mut locals = Arena::new();
+
+                let (expressions, body) =
+                    match context.build_function_body(body, &mut locals, &def.ret, &def.modifier) {
+                        Ok(res) => res,
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            continue;
+                        }
+                    };
+
+                let handle = functions.append(Function {
+                    name: Some(ident.inner().to_string()),
+                    parameter_types: def.args.iter().map(|p| *p.inner()).collect(),
+                    return_type: def.ret.as_ref().map(|p| *p.inner()),
+                    global_usage: GlobalUse::scan(&expressions, &body, &globals),
+                    local_variables: locals,
+                    expressions,
+                    body,
+                });
+
+                if let Some(modifier) = &def.modifier {
+                    entry_points.push(EntryPoint {
+                        stage: match modifier.inner() {
+                            FunctionModifier::Vertex => ShaderStage::Vertex,
+                            FunctionModifier::Fragment => ShaderStage::Fragment,
+                        },
+                        name: ident.inner().to_string(),
+                        function: handle,
+                    })
+                }
+            }
+            _ => {}
+        }
+    }
 
     if errors.len() == 0 {
-        Ok(())
+        Ok(Module {
+            header: Header {
+                version: (1, 0, 0),
+                generator: 0,
+            },
+            types,
+            constants,
+            global_variables: globals,
+            functions,
+            entry_points,
+        })
     } else {
         Err(errors)
     }
 }
 
-fn build_type(
+pub(self) fn build_type(
     ty: ast::Type,
     structs: &HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>>,
     types: &mut Arena<Type>,
