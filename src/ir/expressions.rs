@@ -401,7 +401,7 @@ impl<'a> Context<'a> {
                     name: None,
                     inner: TypeInner::Scalar {
                         kind: ScalarKind::Sint,
-                        width: 4,
+                        width: 32,
                     },
                 }),
             ),
@@ -411,7 +411,7 @@ impl<'a> Context<'a> {
                     name: None,
                     inner: TypeInner::Scalar {
                         kind: ScalarKind::Uint,
-                        width: 4,
+                        width: 32,
                     },
                 }),
             ),
@@ -421,7 +421,7 @@ impl<'a> Context<'a> {
                     name: None,
                     inner: TypeInner::Scalar {
                         kind: ScalarKind::Float,
-                        width: 4,
+                        width: 32,
                     },
                 }),
             ),

@@ -5,8 +5,8 @@ use codespan_reporting::term::{
 };
 use naga::back::spv;
 use rusty_shades::{ast, error::Error, ir, lex};
-use std::fs::read_to_string;
-use std::io;
+use std::fs::{read_to_string, File, OpenOptions};
+use std::io::{self, Write};
 
 const NAME: &str = "simple-vertex.rsh";
 
@@ -26,7 +26,18 @@ fn main() -> io::Result<()> {
 
     let spirv = spv::Writer::new(&module.header, spv::WriterFlags::DEBUG).write(&module);
 
-    println!("{:?}", spirv);
+    let output = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open("debug.spv")?;
+
+    let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
+        f.write(&x.to_le_bytes())?;
+        Ok(f)
+    });
+
+    let output = x?;
 
     Ok(())
 }

@@ -198,7 +198,7 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<Module, Vec<Er
                             inner: TypeInner::Vector {
                                 size: VectorSize::Quad,
                                 kind: ScalarKind::Float,
-                                width: 4,
+                                width: 32,
                             },
                         });
 
@@ -572,10 +572,10 @@ fn build_scalar(scalar: ScalarType) -> (Type, u32) {
 
 fn scalar_to_kind_bytes(scalar: ScalarType) -> (ScalarKind, u8) {
     match scalar {
-        ScalarType::Int => (ScalarKind::Sint, 4),
-        ScalarType::Uint => (ScalarKind::Uint, 4),
-        ScalarType::Float => (ScalarKind::Float, 4),
-        ScalarType::Double => (ScalarKind::Float, 8),
+        ScalarType::Int => (ScalarKind::Sint, 32),
+        ScalarType::Uint => (ScalarKind::Uint, 32),
+        ScalarType::Float => (ScalarKind::Float, 32),
+        ScalarType::Double => (ScalarKind::Float, 64),
     }
 }
 
