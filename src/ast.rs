@@ -18,7 +18,7 @@ pub enum TopLevelStatement {
     Const {
         ident: SrcNode<ArcIntern<String>>,
         ty: SrcNode<Type>,
-        init: (),
+        init: SrcNode<Expression>,
     },
     Function {
         modifier: Option<SrcNode<FunctionModifier>>,
@@ -569,12 +569,24 @@ fn function_parser(
         })
 }
 
+fn const_parser(
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TopLevelStatement>>, Error> {
+    just(Token::Const)
+        .padding_for(ident_parser())
+        .then(just(Token::Colon).padding_for(type_parser()))
+        .then(just(Token::Equal).padding_for(expr_parser()))
+        .map_with_span(|((ident, ty), init), span| {
+            SrcNode::new(TopLevelStatement::Const { ident, ty, init }, span)
+        })
+}
+
 fn top_statement_parser(
 ) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Vec<SrcNode<TopLevelStatement>>>, Error>
 {
     global_parser()
         .or(struct_parser())
         .or(function_parser())
+        .or(const_parser())
         .repeated()
 }
 

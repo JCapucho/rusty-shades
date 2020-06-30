@@ -37,7 +37,7 @@ fn main() -> io::Result<()> {
         Ok(f)
     });
 
-    let output = x?;
+    x?;
 
     Ok(())
 }

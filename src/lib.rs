@@ -10,7 +10,6 @@ use codespan_reporting::term::{
     self,
     termcolor::{ColorChoice, StandardStream},
 };
-use error::Error;
 use naga::back::spv;
 
 macro_rules! handle_errors {

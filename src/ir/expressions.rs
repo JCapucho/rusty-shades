@@ -125,13 +125,6 @@ impl<'a> Context<'a> {
                     })
                 }
                 ast::Statement::Return(expr) => {
-                    if model.is_some() {
-                        errors.push(
-                            Error::custom(String::from("Cannot return from entry point"))
-                                .with_span(statement.span()),
-                        );
-                    }
-
                     let value = expr
                         .as_ref()
                         .map(|e| self.build_expression(e, expressions, &variables, locals, &model))

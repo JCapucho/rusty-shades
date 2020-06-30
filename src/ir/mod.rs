@@ -75,6 +75,7 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<Module, Vec<Er
     let mut functions_lookup: HashMap<ArcIntern<String>, SrcNode<FuncDef>> = HashMap::default();
     let mut globals = Arena::new();
     let mut globals_lookup: HashMap<ArcIntern<String>, SrcNode<ContextGlobal>> = HashMap::default();
+    let mut constants = Arena::new();
 
     for statement in statements {
         match &**statement {
@@ -310,7 +311,6 @@ pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<Module, Vec<Er
     }
 
     let mut functions = Arena::new();
-    let mut constants = Arena::new();
     let mut entry_points = vec![];
 
     let mut context = expressions::Context::new(
