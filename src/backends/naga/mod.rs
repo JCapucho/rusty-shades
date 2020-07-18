@@ -433,16 +433,6 @@ impl Statement<TypedNode> {
         iter: usize,
     ) -> Result<NagaStatement, Error> {
         Ok(match self {
-            Statement::Local(id, expr) => {
-                let value =
-                    expr.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
-
-                NagaStatement::Store {
-                    pointer: expressions
-                        .append(Expression::LocalVariable(*locals_lookup.get(id).unwrap())),
-                    value: expressions.append(value),
-                }
-            }
             Statement::Assign(tgt, expr) => {
                 let pointer = expressions.append(match tgt {
                     AssignTarget::Local(id) => {

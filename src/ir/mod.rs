@@ -65,7 +65,6 @@ pub enum AssignTarget {
 
 #[derive(Debug, Clone)]
 pub enum Statement<M> {
-    Local(u32, M),
     Assign(AssignTarget, M),
     Return(Option<M>),
     If {
@@ -79,7 +78,6 @@ pub enum Statement<M> {
 impl Statement<InferNode> {
     fn to_statement(self, infer_ctx: &mut InferContext) -> Result<Statement<TypedNode>, Error> {
         Ok(match self {
-            Statement::Local(id, expr) => Statement::Local(id, to_expr(&expr, infer_ctx)?),
             Statement::Assign(id, expr) => Statement::Assign(id, to_expr(&expr, infer_ctx)?),
             Statement::Return(expr) => {
                 Statement::Return(expr.map(|e| to_expr(&e, infer_ctx)).transpose()?)
@@ -1064,7 +1062,7 @@ impl SrcNode<ast::Statement> {
 
                 locals_lookup.insert(ident.inner().clone(), (*locals, expr.type_id()));
 
-                let sta = Statement::Local(*locals, expr);
+                let sta = Statement::Assign(AssignTarget::Local(*locals), expr);
 
                 *locals += 1;
 
@@ -1358,9 +1356,11 @@ impl SrcNode<ast::Expression> {
                 let accept = accept
                     .iter()
                     .map(|sta| {
+                        let mut locals_lookup = locals_lookup.clone();
+
                         sta.build_ir(
                             infer_ctx,
-                            locals_lookup,
+                            &mut locals_lookup,
                             args,
                             globals_lookup,
                             statements,
@@ -1399,6 +1399,7 @@ impl SrcNode<ast::Expression> {
                             Ok(_) => {}
                             Err(e) => return Err(vec![e]),
                         };
+                        let mut locals_lookup = locals_lookup.clone();
 
                         Ok((
                             condition,
@@ -1407,7 +1408,7 @@ impl SrcNode<ast::Expression> {
                                 .map(|sta| {
                                     sta.build_ir(
                                         infer_ctx,
-                                        locals_lookup,
+                                        &mut locals_lookup,
                                         args,
                                         globals_lookup,
                                         statements,
@@ -1428,9 +1429,11 @@ impl SrcNode<ast::Expression> {
                     .map::<Result<_, Vec<Error>>, _>(|r| {
                         Ok(r.iter()
                             .map(|sta| {
+                                let mut locals_lookup = locals_lookup.clone();
+
                                 sta.build_ir(
                                     infer_ctx,
-                                    locals_lookup,
+                                    &mut locals_lookup,
                                     args,
                                     globals_lookup,
                                     statements,
