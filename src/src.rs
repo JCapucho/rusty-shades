@@ -158,10 +158,10 @@ impl Span {
         }
     }
 
-    pub fn as_range(self) -> Range<usize> {
+    pub fn as_range(self) -> Option<Range<usize>> {
         match self {
-            Span::None => 0..0,
-            Span::Range(start, end) => start.as_usize()..end.as_usize(),
+            Span::None => None,
+            Span::Range(start, end) => Some(start.as_usize()..end.as_usize()),
         }
     }
 }

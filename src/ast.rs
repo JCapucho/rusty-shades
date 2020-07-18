@@ -2,9 +2,10 @@ use crate::{
     error::Error,
     lex::{Delimiter, FunctionModifier, Literal, ScalarType, Token},
     node::{Node, SrcNode},
+    Ident,
 };
-use internment::ArcIntern;
 use parze::prelude::*;
+use std::fmt;
 
 pub type Block = Vec<SrcNode<Statement>>;
 
@@ -12,23 +13,23 @@ pub type Block = Vec<SrcNode<Statement>>;
 pub enum TopLevelStatement {
     Global {
         modifier: SrcNode<GlobalModifier>,
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         ty: Option<SrcNode<Type>>,
     },
     Const {
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         ty: SrcNode<Type>,
         init: SrcNode<Expression>,
     },
     Function {
         modifier: Option<SrcNode<FunctionModifier>>,
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         ty: Option<SrcNode<Type>>,
         args: Vec<SrcNode<IdentTypePair>>,
         body: SrcNode<Block>,
     },
     StructDef {
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         fields: Vec<SrcNode<IdentTypePair>>,
     },
 }
@@ -37,21 +38,15 @@ pub enum TopLevelStatement {
 pub enum Statement {
     Expr(SrcNode<Expression>),
     Declaration {
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         ty: Option<SrcNode<Type>>,
         init: SrcNode<Expression>,
     },
     Assignment {
-        ident: SrcNode<ArcIntern<String>>,
+        ident: SrcNode<Ident>,
         expr: SrcNode<Expression>,
     },
     Return(Option<SrcNode<Expression>>),
-    If {
-        condition: SrcNode<Expression>,
-        accept: SrcNode<Block>,
-        else_ifs: Vec<(SrcNode<Expression>, SrcNode<Block>)>,
-        reject: Option<SrcNode<Block>>,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -66,15 +61,21 @@ pub enum Expression {
         op: SrcNode<UnaryOp>,
     },
     Call {
-        name: SrcNode<ArcIntern<String>>,
+        name: SrcNode<Ident>,
         args: SrcNode<Vec<SrcNode<Expression>>>,
     },
     Literal(Literal),
     Access {
         base: SrcNode<Expression>,
-        field: SrcNode<ArcIntern<String>>,
+        field: SrcNode<Ident>,
     },
-    Variable(SrcNode<ArcIntern<String>>),
+    Variable(SrcNode<Ident>),
+    If {
+        condition: SrcNode<Expression>,
+        accept: SrcNode<Block>,
+        else_ifs: Vec<(SrcNode<Expression>, SrcNode<Block>)>,
+        reject: Option<SrcNode<Block>>,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
@@ -102,15 +103,52 @@ pub enum BinaryOp {
     Remainder,
 }
 
+impl fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BinaryOp::LogicalOr => write!(f, "||"),
+            BinaryOp::LogicalAnd => write!(f, "&&"),
+
+            BinaryOp::Equality => write!(f, "=="),
+            BinaryOp::Inequality => write!(f, "!="),
+
+            BinaryOp::Greater => write!(f, ">"),
+            BinaryOp::GreaterEqual => write!(f, ">="),
+            BinaryOp::Less => write!(f, "<"),
+            BinaryOp::LessEqual => write!(f, "<="),
+
+            BinaryOp::BitWiseOr => write!(f, "|"),
+            BinaryOp::BitWiseXor => write!(f, "^"),
+            BinaryOp::BitWiseAnd => write!(f, "&"),
+
+            BinaryOp::Addition => write!(f, "+"),
+            BinaryOp::Subtraction => write!(f, "-"),
+
+            BinaryOp::Multiplication => write!(f, "*"),
+            BinaryOp::Division => write!(f, "/"),
+            BinaryOp::Remainder => write!(f, "%"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum UnaryOp {
     BitWiseNot,
     Negation,
 }
 
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            UnaryOp::BitWiseNot => write!(f, "!"),
+            UnaryOp::Negation => write!(f, "-"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct IdentTypePair {
-    pub ident: SrcNode<ArcIntern<String>>,
+    pub ident: SrcNode<Ident>,
     pub ty: SrcNode<Type>,
 }
 
@@ -118,7 +156,7 @@ pub struct IdentTypePair {
 pub enum Type {
     ScalarType(ScalarType),
     CompositeType {
-        name: SrcNode<ArcIntern<String>>,
+        name: SrcNode<Ident>,
         generics: Option<SrcNode<Vec<SrcNode<Generic>>>>,
     },
 }
@@ -132,13 +170,13 @@ pub enum Generic {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum GlobalModifier {
     Position,
-    Input(u64 /* location */),
-    Output(u64 /* location */),
-    Uniform { set: u64, binding: u64 },
+    Input(u32 /* location */),
+    Output(u32 /* location */),
+    Uniform { set: u32, binding: u32 },
 }
 
-fn ident_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<ArcIntern<String>>>, Error> {
+fn ident_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Ident>>, Error>
+{
     permit_map(|token: Node<_>| match &*token {
         Token::Identifier(ident) => Some(ident.clone()),
         _ => None,
@@ -170,10 +208,10 @@ fn global_modifier_parser(
         .to(GlobalModifier::Position)
         .or(just(Token::In)
             .padding_for(just(Token::Equal).padding_for(uint_parser()))
-            .map(|location| GlobalModifier::Input(location)))
+            .map(|location| GlobalModifier::Input(location as u32)))
         .or(just(Token::Out)
             .padding_for(just(Token::Equal).padding_for(uint_parser()))
-            .map(|location| GlobalModifier::Output(location)))
+            .map(|location| GlobalModifier::Output(location as u32)))
         .or(just(Token::Uniform).padding_for(
             seq(iter::once(Token::Equal)
                 .chain(iter::once(Token::OpenDelimiter(Delimiter::Parentheses)))
@@ -186,7 +224,10 @@ fn global_modifier_parser(
                     .padding_for(uint_parser()),
             )
             .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
-            .map(|(set, binding)| GlobalModifier::Uniform { set, binding }),
+            .map(|(set, binding)| GlobalModifier::Uniform {
+                set: set as u32,
+                binding: binding as u32,
+            }),
         ))
         .map_with_span(|modifier, span| SrcNode::new(modifier, span))
 }
@@ -226,10 +267,81 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
         .map_with_span(|generic, span| SrcNode::new(generic, span))
 }
 
+fn declaration_parser(
+    expr: Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error>,
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
+    just(Token::Let)
+        .padding_for(ident_parser())
+        .then(just(Token::Colon).padding_for(type_parser()).or_not())
+        .then(just(Token::Equal).padding_for(expr))
+        .padded_by(just(Token::SemiColon))
+        .map_with_span(|((ident, ty), init), span| {
+            SrcNode::new(Statement::Declaration { ident, ty, init }, span)
+        })
+}
+
+fn assignment_parser(
+    expr: Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error>,
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
+    ident_parser()
+        .then(just(Token::Equal).padding_for(expr))
+        .padded_by(just(Token::SemiColon))
+        .map_with_span(|(ident, expr), span| {
+            SrcNode::new(Statement::Assignment { ident, expr }, span)
+        })
+}
+
+fn return_parser(
+    expr: Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error>,
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
+    just(Token::Return)
+        .padding_for(expr.or_not())
+        .padded_by(just(Token::SemiColon))
+        .map_with_span(|expr, span| SrcNode::new(Statement::Return(expr), span))
+}
+
 fn expr_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error> {
-    recursive(|expr| {
+    statement: Parser<
+        impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>> + 'static,
+        Error,
+    >,
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>> + 'static, Error>
+{
+    recursive(move |expr| {
+        use std::iter;
+
         let expr = expr.link();
+
+        let block = just(Token::OpenDelimiter(Delimiter::CurlyBraces))
+            .padding_for(statement.clone().repeated())
+            .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
+            .map_with_span(|block, span| SrcNode::new(block, span))
+            .boxed();
+
+        let else_if = seq(iter::once(Token::Else).chain(iter::once(Token::If)))
+            .padding_for(expr.clone())
+            .then(block.clone())
+            .boxed();
+
+        let else_block = just(Token::Else).padding_for(block.clone()).boxed();
+
+        let if_block = just(Token::If)
+            .padding_for(expr.clone())
+            .then(block)
+            .then(else_if.repeated())
+            .then(else_block.or_not())
+            .map_with_span(|(((condition, accept), else_ifs), reject), span| {
+                SrcNode::new(
+                    Expression::If {
+                        condition,
+                        accept,
+                        else_ifs,
+                        reject,
+                    },
+                    span,
+                )
+            })
+            .boxed();
 
         let call = ident_parser()
             .then(
@@ -256,6 +368,7 @@ fn expr_parser(
             .or(call)
             .or(ident_parser()
                 .map_with_span(|name, span| SrcNode::new(Expression::Variable(name), span)))
+            .or(if_block)
             .boxed();
 
         let struct_access = atom
@@ -423,76 +536,17 @@ fn expr_parser(
     })
 }
 
-fn declaration_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
-    just(Token::Let)
-        .padding_for(ident_parser())
-        .then(just(Token::Colon).padding_for(type_parser()).or_not())
-        .then(just(Token::Equal).padding_for(expr_parser()))
-        .padded_by(just(Token::SemiColon))
-        .map_with_span(|((ident, ty), init), span| {
-            SrcNode::new(Statement::Declaration { ident, ty, init }, span)
-        })
-}
-
-fn assignment_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
-    ident_parser()
-        .then(just(Token::Equal).padding_for(expr_parser()))
-        .padded_by(just(Token::SemiColon))
-        .map_with_span(|(ident, expr), span| {
-            SrcNode::new(Statement::Assignment { ident, expr }, span)
-        })
-}
-
-fn return_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
-    just(Token::Return)
-        .padding_for(expr_parser().or_not())
-        .padded_by(just(Token::SemiColon))
-        .map_with_span(|expr, span| SrcNode::new(Statement::Return(expr), span))
-}
-
 fn statement_parser(
 ) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
-    use std::iter;
-
     recursive(|statement| {
         let statement = statement.link();
 
-        let block = just(Token::OpenDelimiter(Delimiter::CurlyBraces))
-            .padding_for(statement.repeated())
-            .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
-            .map_with_span(|block, span| SrcNode::new(block, span));
+        let expr = expr_parser(statement);
 
-        let else_if = seq(iter::once(Token::Else).chain(iter::once(Token::If)))
-            .padding_for(expr_parser())
-            .then(block.clone());
-
-        let else_block = just(Token::Else).padding_for(block.clone());
-
-        let if_block = just(Token::If)
-            .padding_for(expr_parser())
-            .then(block)
-            .then(else_if.repeated())
-            .then(else_block.or_not())
-            .map_with_span(|(((condition, accept), else_ifs), reject), span| {
-                SrcNode::new(
-                    Statement::If {
-                        condition,
-                        accept,
-                        else_ifs,
-                        reject,
-                    },
-                    span,
-                )
-            });
-
-        assignment_parser()
-            .or(declaration_parser())
-            .or(return_parser())
-            .or(expr_parser().map_with_span(|expr, span| SrcNode::new(Statement::Expr(expr), span)))
-            .or(if_block)
+        assignment_parser(expr.clone())
+            .or(declaration_parser(expr.clone()))
+            .or(return_parser(expr.clone()))
+            .or(expr.map_with_span(|expr, span| SrcNode::new(Statement::Expr(expr), span)))
     })
 }
 
@@ -574,7 +628,7 @@ fn const_parser(
     just(Token::Const)
         .padding_for(ident_parser())
         .then(just(Token::Colon).padding_for(type_parser()))
-        .then(just(Token::Equal).padding_for(expr_parser()))
+        .then(just(Token::Equal).padding_for(expr_parser(statement_parser())))
         .map_with_span(|((ident, ty), init), span| {
             SrcNode::new(TopLevelStatement::Const { ident, ty, init }, span)
         })

@@ -6,14 +6,16 @@ global out=1 f_color: Vector<4, Float>;
 
 global position gl_position;
 
+// single line comment
 fn vertex vertex_main() {
-    f_position = 1.0 * v_position;
-    f_color = 1.0 * color;
-    gl_position = 1.0 * v_position;
-    return;
+    let a = v_position.x;
+    f_position = a * v_position * if a > 2. { 2. } else if a < 3. { 3. } else { 1. };
+    f_color = color;
+    gl_position = v_position;
 }
 
+/* Multi line comment */
 fn fragment frag_main() {
-	f_position = 1.0 * color;
-	return;
+	f_position = color;
 }
+ 

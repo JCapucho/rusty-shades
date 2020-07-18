@@ -133,7 +133,8 @@ mod codespan {
                 .with_labels(
                     self.spans
                         .into_iter()
-                        .map(|span| Label::primary(file_id.clone(), span.as_range()))
+                        .filter_map(|span| span.as_range())
+                        .map(|span| Label::primary(file_id.clone(), span))
                         .collect(),
                 )
                 .with_notes(self.hints)

@@ -12,19 +12,19 @@ global uniform=(set=0,binding=0) globals: Globals;
 global uniform=(set=2,binding=0) locals: Locals;
 
 struct Globals {
-    u_view_proj: Matrix<4, 4, Float>,
-    u_view_position: Vector<3, Float>
+    view_proj: Matrix<4, 4, Float>,
+    view_position: Vector<3, Float>
 }
 
 struct Locals {
-    u_transform: Matrix<4, 4, Float>,
-    u_min_max: Vector<2, Float>
+    transform: Matrix<4, 4, Float>,
+    min_max: Vector<2, Float>
 }
         
 fn vertex main() {
     v_color = a_color;
     v_normal = a_normal;
         
-    v_position = (u_transform * vec4(a_position, 1.0)).xyz;
-    gl_Position = u_view_proj * u_transform * vec4(a_position, 1.0);
+    v_position = (locals.transform * vec4(a_position, 1.0)).xyz;
+    gl_Position = globals.view_proj * locals.transform * vec4(a_position, 1.0);
 }

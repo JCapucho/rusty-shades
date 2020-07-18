@@ -1,459 +1,672 @@
-use crate::ast::{self, Generic, GlobalModifier, IdentTypePair, TopLevelStatement};
-use crate::error::Error;
-use crate::lex::{FunctionModifier, ScalarType};
-use crate::node::SrcNode;
-use internment::ArcIntern;
-use naga::{
-    Arena, Binding, BuiltIn, EntryPoint, Function, GlobalUse, GlobalVariable, Handle, Header,
-    Module, ScalarKind, ShaderStage, StorageClass, StructMember, Type, TypeInner, VectorSize,
+use crate::ast::{
+    self, BinaryOp, Block, GlobalModifier, IdentTypePair, TopLevelStatement, UnaryOp,
 };
-use std::collections::{HashMap, HashSet};
+use crate::error::Error;
+use crate::lex::{FunctionModifier, Literal, ScalarType};
+use crate::node::{Node, SrcNode};
+use crate::src::Span;
+use crate::ty::Type;
+use crate::Ident;
+use internment::ArcIntern;
+use naga::{FastHashMap, VectorSize};
 
-mod expressions;
+mod infer;
 
-const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
+use infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
 
-#[derive(Clone, Debug, PartialEq, Hash)]
-pub(self) struct FuncDef {
-    pub modifier: Option<SrcNode<FunctionModifier>>,
-    pub args: Vec<SrcNode<Handle<Type>>>,
-    pub ret: Option<SrcNode<Handle<Type>>>,
+type InferNode = Node<TypedExpr, (TypeId, Span)>;
+pub type TypedNode = Node<Expr, (Type, Span)>;
+
+impl InferNode {
+    pub fn type_id(&self) -> TypeId {
+        self.attr().0
+    }
+
+    pub fn span(&self) -> Span {
+        self.attr().1
+    }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Hash)]
-pub enum ContextGlobal {
-    Independent(Handle<GlobalVariable>),
-    Dependent {
-        vert: Handle<GlobalVariable>,
-        frag: Handle<GlobalVariable>,
+impl TypedNode {
+    pub fn ty(&self) -> &Type {
+        &self.attr().0
+    }
+
+    pub fn span(&self) -> Span {
+        self.attr().1
+    }
+}
+
+impl Literal {
+    pub fn scalar_info(&self) -> ScalarInfo {
+        match self {
+            Literal::Int(_) => ScalarInfo::Int,
+            Literal::Uint(_) => ScalarInfo::Int,
+            Literal::Float(_) => ScalarInfo::Float,
+            Literal::Boolean(_) => ScalarInfo::Concrete(ScalarType::Bool),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Function {
+    pub modifier: Option<FunctionModifier>,
+    pub args: Vec<Type>,
+    pub ret: Type,
+    pub body: Vec<Statement<TypedNode>>,
+    pub locals: FastHashMap<u32, Type>,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum AssignTarget {
+    Local(u32),
+    Global(u32),
+}
+
+#[derive(Debug, Clone)]
+pub enum Statement<M> {
+    Local(u32, M),
+    Assign(AssignTarget, M),
+    Return(Option<M>),
+    If {
+        condition: M,
+        accept: Vec<Statement<M>>,
+        else_ifs: Vec<(M, Vec<Statement<M>>)>,
+        reject: Option<Vec<Statement<M>>>,
     },
 }
 
-pub fn build(statements: &[SrcNode<TopLevelStatement>]) -> Result<Module, Vec<Error>> {
-    let mut errors = vec![];
-    let mut types_lookup: HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>> =
-        HashMap::default();
-
-    for statement in statements {
-        match &**statement {
-            TopLevelStatement::StructDef { ident, fields } => {
-                if BUILTIN_TYPES.contains(&&***ident.inner()) {
-                    errors.push(
-                        Error::custom(String::from("Cannot define a type with a builtin name"))
-                            .with_span(ident.span()),
-                    );
-                    continue;
-                }
-
-                if let Some(node) = types_lookup.get(ident.inner()) {
-                    errors.push(
-                        Error::custom(String::from("Cannot redefine a type"))
-                            .with_span(ident.span())
-                            .with_span(node.span()),
-                    );
-                    continue;
-                }
-
-                types_lookup.insert(
-                    ident.inner().clone(),
-                    SrcNode::new(
-                        fields.iter().map(|f| f).cloned().collect(),
-                        statement.span(),
-                    ),
-                );
+impl Statement<InferNode> {
+    fn to_statement(self, infer_ctx: &mut InferContext) -> Result<Statement<TypedNode>, Error> {
+        Ok(match self {
+            Statement::Local(id, expr) => Statement::Local(id, to_expr(&expr, infer_ctx)?),
+            Statement::Assign(id, expr) => Statement::Assign(id, to_expr(&expr, infer_ctx)?),
+            Statement::Return(expr) => {
+                Statement::Return(expr.map(|e| to_expr(&e, infer_ctx)).transpose()?)
             }
-            _ => {}
-        }
-    }
-
-    if errors.len() != 0 {
-        return Err(errors);
-    }
-
-    let mut structs: HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>> = HashMap::default();
-    let mut types: Arena<Type> = Arena::new();
-    let mut functions_lookup: HashMap<ArcIntern<String>, SrcNode<FuncDef>> = HashMap::default();
-    let mut globals = Arena::new();
-    let mut globals_lookup: HashMap<ArcIntern<String>, SrcNode<ContextGlobal>> = HashMap::default();
-    let mut constants = Arena::new();
-
-    for statement in statements {
-        match &**statement {
-            TopLevelStatement::StructDef { ident, fields } => {
-                if structs.get(ident.inner()).is_some() {
-                    continue;
-                }
-
-                match build_struct(
-                    &mut HashSet::default(),
-                    ident.inner().clone(),
-                    fields.clone(),
-                    &mut types_lookup,
-                    &mut structs,
-                    &mut types,
-                    statement.span(),
-                ) {
-                    Ok(_) => {}
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                    }
-                };
-            }
-            TopLevelStatement::Function {
-                modifier,
-                ident,
-                args,
-                ty: return_ty,
-                ..
-            } => {
-                let args = match args
-                    .iter()
-                    .map(|arg| {
-                        build_field(
-                            &mut HashSet::default(),
-                            arg.inner().ty.clone(),
-                            &mut types_lookup,
-                            &mut structs,
-                            &mut types,
-                        )
-                        .map(|(ty, _)| SrcNode::new(ty, arg.span()))
+            Statement::If {
+                condition,
+                accept,
+                else_ifs,
+                reject,
+            } => Statement::If {
+                condition: to_expr(&condition, infer_ctx)?,
+                accept: accept
+                    .into_iter()
+                    .map(|a| a.clone().to_statement(infer_ctx))
+                    .collect::<Result<_, _>>()?,
+                else_ifs: else_ifs
+                    .into_iter()
+                    .map(|(expr, a)| {
+                        Ok((
+                            to_expr(&expr, infer_ctx)?,
+                            a.into_iter()
+                                .map(|s| s.clone().to_statement(infer_ctx))
+                                .collect::<Result<_, _>>()?,
+                        ))
                     })
-                    .collect()
-                {
-                    Ok(v) => v,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        continue;
-                    }
-                };
-
-                let ret = match (return_ty.as_ref().map(|t| {
-                    build_field(
-                        &mut HashSet::default(),
-                        t.clone(),
-                        &mut types_lookup,
-                        &mut structs,
-                        &mut types,
-                    )
-                }))
-                .transpose()
-                {
-                    Ok(res) => {
-                        res.map(|(ty, _)| SrcNode::new(ty, return_ty.as_ref().unwrap().span()))
-                    }
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        continue;
-                    }
-                };
-
-                if let Some(func) = functions_lookup.insert(
-                    ident.inner().clone(),
-                    SrcNode::new(
-                        FuncDef {
-                            modifier: modifier.clone(),
-                            args,
-                            ret,
-                        },
-                        statement.span(),
-                    ),
-                ) {
-                    errors.push(
-                        Error::custom(String::from("Function already defined"))
-                            .with_span(statement.span())
-                            .with_span(func.span()),
-                    )
-                }
-            }
-            TopLevelStatement::Global {
-                modifier,
-                ident,
-                ty,
-                ..
-            } => {
-                let base = match ty
+                    .collect::<Result<_, _>>()?,
+                reject: reject
                     .as_ref()
-                    .map(|t| {
-                        build_field(
-                            &mut HashSet::default(),
-                            t.clone(),
-                            &mut types_lookup,
-                            &mut structs,
-                            &mut types,
-                        )
-                        .map(|(ty, _)| ty)
+                    .map(|r| {
+                        Ok(r.into_iter()
+                            .map(|a| a.clone().to_statement(infer_ctx))
+                            .collect::<Result<_, _>>()?)
                     })
-                    .transpose()
-                {
-                    Ok(ty) => ty,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        continue;
+                    .transpose()?,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Expr {
+    BinaryOp {
+        left: TypedNode,
+        op: BinaryOp,
+        right: TypedNode,
+    },
+    UnaryOp {
+        tgt: TypedNode,
+        op: UnaryOp,
+    },
+    Call {
+        name: Ident,
+        args: Vec<TypedNode>,
+    },
+    Literal(Literal),
+    Access {
+        base: TypedNode,
+        fields: Vec<u32>,
+    },
+    // Constructor {
+    //     elements: Vec<Self>,
+    // },
+    Arg(u32),
+    Local(u32),
+    Global(u32),
+}
+
+#[derive(Debug, Clone)]
+enum TypedExpr {
+    BinaryOp {
+        left: InferNode,
+        op: BinaryOp,
+        right: InferNode,
+    },
+    UnaryOp {
+        tgt: InferNode,
+        op: UnaryOp,
+    },
+    Call {
+        name: Ident,
+        args: Vec<InferNode>,
+    },
+    Literal(Literal),
+    Access {
+        base: InferNode,
+        field: Ident,
+    },
+    // Constructor {
+    //     elements: Vec<InferNode<Self>>,
+    // },
+    Arg(u32),
+    Local(u32),
+    Global(u32),
+}
+
+fn to_expr(expr: &InferNode, infer_ctx: &mut InferContext) -> Result<TypedNode, Error> {
+    let (ty, span) = expr.attr();
+
+    Ok(TypedNode::new(
+        match expr.inner() {
+            TypedExpr::BinaryOp { left, op, right } => Expr::BinaryOp {
+                left: to_expr(left, infer_ctx)?,
+                op: *op,
+                right: to_expr(right, infer_ctx)?,
+            },
+            TypedExpr::UnaryOp { tgt, op } => Expr::UnaryOp {
+                tgt: to_expr(tgt, infer_ctx)?,
+                op: *op,
+            },
+            TypedExpr::Call { name, args } => Expr::Call {
+                name: name.clone(),
+                args: args
+                    .into_iter()
+                    .map(|a| Ok(to_expr(a, infer_ctx)?))
+                    .collect::<Result<_, _>>()?,
+            },
+            TypedExpr::Literal(lit) => Expr::Literal(*lit),
+            TypedExpr::Access { base, field } => {
+                let node = to_expr(base, infer_ctx)?;
+
+                let fields = match node.ty() {
+                    Type::Vector(_, _) => {
+                        const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
+
+                        Ok(field
+                            .chars()
+                            .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
+                            .collect())
                     }
-                };
+                    Type::Struct(fields) => Ok(vec![fields
+                        .iter()
+                        .position(|(f, _)| f == field)
+                        .unwrap() as u32]),
+                    _ => Err(Error::custom(format!(
+                        "Type '{}' does not support field access",
+                        infer_ctx.display_type_info(expr.type_id()),
+                    ))),
+                }?;
 
-                let global = match modifier.inner() {
-                    GlobalModifier::Position => {
-                        let vec4 = types.fetch_or_append(Type {
-                            name: None,
-                            inner: TypeInner::Vector {
-                                size: VectorSize::Quad,
-                                kind: ScalarKind::Float,
-                                width: 32,
-                            },
-                        });
+                Expr::Access { base: node, fields }
+            }
+            TypedExpr::Arg(id) => Expr::Arg(*id),
+            TypedExpr::Local(id) => Expr::Local(*id),
+            TypedExpr::Global(id) => Expr::Global(*id),
+        },
+        (infer_ctx.reconstruct(*ty, *span)?.into_inner(), *span),
+    ))
+}
 
-                        if let Some(base) = base {
-                            if base != vec4 {
-                                errors.push(
-                                    Error::custom(String::from("Type must be Vector<4,Float>"))
-                                        .with_span(ty.as_ref().unwrap().span()),
-                                );
-                                continue;
-                            }
-                        }
+#[derive(Debug)]
+pub struct Global {
+    pub name: Ident,
+    pub modifier: GlobalModifier,
+    pub ty: Type,
+}
 
-                        let vert_handle = globals.append(GlobalVariable {
-                            name: Some(ident.inner().clone().to_string()),
-                            class: StorageClass::Output,
-                            binding: Some(Binding::BuiltIn(BuiltIn::Position)),
-                            ty: vec4,
-                        });
+#[derive(Debug)]
+pub struct Struct {
+    pub fields: FastHashMap<Ident, (u32, Type)>,
+}
 
-                        let frag_handle = globals.append(GlobalVariable {
-                            name: Some(ident.inner().clone().to_string()),
-                            class: StorageClass::Input,
-                            binding: Some(Binding::BuiltIn(BuiltIn::Position)),
-                            ty: vec4,
-                        });
+#[derive(Debug)]
+pub struct Module {
+    pub globals: FastHashMap<u32, Global>,
+    pub structs: FastHashMap<Ident, Struct>,
+    pub functions: FastHashMap<Ident, Function>,
+}
 
-                        ContextGlobal::Dependent {
-                            vert: vert_handle,
-                            frag: frag_handle,
-                        }
-                    }
-                    GlobalModifier::Input(location) => {
-                        if let Some(base) = base {
-                            let handle = globals.append(GlobalVariable {
-                                name: Some(ident.inner().clone().to_string()),
-                                class: StorageClass::Input,
-                                binding: Some(Binding::Location(*location as u32)),
-                                ty: base,
-                            });
+const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
 
-                            ContextGlobal::Independent(handle)
-                        } else {
-                            errors.push(
-                                Error::custom(String::from("Type must be specified"))
-                                    .with_span(statement.span()),
-                            );
-                            continue;
-                        }
-                    }
-                    GlobalModifier::Output(location) => {
-                        if let Some(base) = base {
-                            let handle = globals.append(GlobalVariable {
-                                name: Some(ident.inner().clone().to_string()),
-                                class: StorageClass::Output,
-                                binding: Some(Binding::Location(*location as u32)),
-                                ty: base,
-                            });
+#[derive(Debug)]
+struct PartialGlobal {
+    modifier: GlobalModifier,
+    ty: TypeId,
+}
 
-                            ContextGlobal::Independent(handle)
-                        } else {
-                            errors.push(
-                                Error::custom(String::from("Type must be specified"))
-                                    .with_span(statement.span()),
-                            );
-                            continue;
-                        }
-                    }
-                    GlobalModifier::Uniform { set, binding } => {
-                        if let Some(base) = base {
-                            let handle = globals.append(GlobalVariable {
-                                name: Some(ident.inner().clone().to_string()),
-                                class: StorageClass::Uniform,
-                                binding: Some(Binding::Descriptor {
-                                    set: *set as u32,
-                                    binding: *binding as u32,
-                                }),
-                                ty: base,
-                            });
+#[derive(Debug)]
+struct PartialFunction {
+    modifier: Option<FunctionModifier>,
+    args: FastHashMap<Ident, (u32, TypeId)>,
+    ret: TypeId,
+    body: SrcNode<Block>,
+}
 
-                            ContextGlobal::Independent(handle)
-                        } else {
-                            errors.push(
-                                Error::custom(String::from("Type must be specified"))
-                                    .with_span(statement.span()),
-                            );
-                            continue;
-                        }
-                    }
-                };
+#[derive(Debug)]
+struct PartialStruct {
+    ty: TypeId,
+    fields: FastHashMap<Ident, (u32, TypeId)>,
+}
 
-                if let Some(global) = globals_lookup.insert(
-                    ident.inner().clone(),
-                    SrcNode::new(global, statement.span()),
+#[derive(Debug)]
+struct PartialModule {
+    structs: FastHashMap<Ident, PartialStruct>,
+    globals: FastHashMap<Ident, PartialGlobal>,
+    functions: FastHashMap<Ident, PartialFunction>,
+}
+
+impl Module {
+    pub fn build(statements: &[SrcNode<ast::TopLevelStatement>]) -> Result<Module, Vec<Error>> {
+        let mut infer_ctx = InferContext::default();
+        let mut partial = Self::first_pass(statements, &mut infer_ctx)?;
+
+        let mut errors = vec![];
+        let mut functions = FastHashMap::default();
+
+        let mut globals_counter = 0;
+        let mut globals_lookup = FastHashMap::default();
+
+        let globals = {
+            let (globals, e): (Vec<_>, Vec<_>) = partial
+                .globals
+                .iter()
+                .map(|(name, global)| {
+                    let key = globals_counter;
+                    globals_counter += 1;
+
+                    globals_lookup.insert(name.clone(), (key, global.ty));
+
+                    let global = Global {
+                        name: name.clone(),
+                        modifier: global.modifier,
+                        ty: infer_ctx.reconstruct(global.ty, Span::None)?.into_inner(),
+                    };
+
+                    Ok((key, global))
+                })
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err));
+
+            globals.into_iter().map(Result::unwrap).collect()
+        };
+
+        for (name, func) in partial.functions.iter() {
+            let mut body = vec![];
+            let mut locals_lookup = FastHashMap::default();
+            let mut locals = 0;
+
+            for sta in func.body.inner() {
+                match sta.build_ir(
+                    &mut infer_ctx,
+                    &mut locals_lookup,
+                    &func.args,
+                    &globals_lookup,
+                    statements,
+                    &mut partial.structs,
+                    &mut body,
+                    &mut locals,
+                    func.ret,
+                    func.ret,
+                    None,
                 ) {
-                    errors.push(
-                        Error::custom(String::from("Global already defined"))
-                            .with_span(statement.span())
-                            .with_span(global.span()),
-                    )
+                    Ok(s) => body.push(s),
+                    Err(mut e) => errors.append(&mut e),
                 }
             }
-            _ => {}
+
+            match infer_ctx.solve_all() {
+                Ok(_) => {}
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            };
+
+            let ret = match infer_ctx.reconstruct(func.ret, Span::None) {
+                Ok(t) => t.into_inner(),
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            };
+
+            let args = {
+                let mut sorted: Vec<_> = func.args.values().collect();
+                sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+                let (args, e): (Vec<_>, Vec<_>) = sorted
+                    .into_iter()
+                    .map(|(_, ty)| {
+                        infer_ctx
+                            .reconstruct(*ty, Span::None)
+                            .map(|i| i.into_inner())
+                    })
+                    .partition(Result::is_ok);
+                let args: Vec<_> = args.into_iter().map(Result::unwrap).collect();
+                errors.extend(e.into_iter().map(Result::unwrap_err));
+
+                args
+            };
+
+            let locals = {
+                let (locals, e): (Vec<_>, Vec<_>) = locals_lookup
+                    .iter()
+                    .map(|(key, (id, val))| {
+                        let ty = infer_ctx.reconstruct(*val, Span::None)?.into_inner();
+
+                        Ok((*id, ty))
+                    })
+                    .partition(Result::is_ok);
+                errors.extend(e.into_iter().map(Result::unwrap_err));
+
+                locals.into_iter().map(Result::unwrap).collect()
+            };
+
+            let body = {
+                let (body, e): (Vec<_>, Vec<_>) = body
+                    .into_iter()
+                    .map(|sta| sta.to_statement(&mut infer_ctx))
+                    .partition(Result::is_ok);
+                errors.extend(e.into_iter().map(Result::unwrap_err));
+
+                body.into_iter().map(Result::unwrap).collect()
+            };
+
+            functions.insert(
+                name.clone(),
+                Function {
+                    modifier: func.modifier,
+                    args,
+                    ret,
+                    body,
+                    locals,
+                },
+            );
+        }
+
+        let structs = {
+            let (structs, e): (Vec<_>, Vec<_>) = partial
+                .structs
+                .iter()
+                .map(|(key, strct)| {
+                    let fields: Result<_, _> = strct
+                        .fields
+                        .iter()
+                        .map(|(key, (pos, ty))| {
+                            let ty = infer_ctx.reconstruct(*ty, Span::None)?.into_inner();
+
+                            Ok((key.clone(), (*pos, ty)))
+                        })
+                        .collect();
+
+                    let strct = Struct { fields: fields? };
+
+                    Ok((key.clone(), strct))
+                })
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err));
+
+            structs.into_iter().map(Result::unwrap).collect()
+        };
+
+        if errors.len() == 0 {
+            Ok(Module {
+                functions,
+                globals,
+                structs,
+            })
+        } else {
+            Err(errors)
         }
     }
 
-    if errors.len() != 0 {
-        return Err(errors);
-    }
+    fn first_pass(
+        statements: &[SrcNode<ast::TopLevelStatement>],
+        infer_ctx: &mut InferContext,
+    ) -> Result<PartialModule, Vec<Error>> {
+        let mut errors = Vec::new();
 
-    let mut functions = Arena::new();
-    let mut entry_points = vec![];
+        let mut globals = FastHashMap::default();
+        let mut structs = FastHashMap::default();
+        let mut functions = FastHashMap::default();
+        let mut names = FastHashMap::default();
 
-    let mut context = expressions::Context::new(
-        &mut types,
-        &mut constants,
-        &globals_lookup,
-        &globals,
-        &functions_lookup,
-        &structs,
-    );
+        for statement in statements {
+            match statement.inner() {
+                TopLevelStatement::StructDef { ident, fields } => {
+                    if let Some(span) = names.get(ident.inner()) {
+                        errors.push(
+                            Error::custom(String::from("Name already defined"))
+                                .with_span(ident.span())
+                                .with_span(*span),
+                        );
+                        continue;
+                    }
 
-    for statement in statements {
-        match &**statement {
-            TopLevelStatement::Function { ident, body, .. } => {
-                let def = functions_lookup.get(ident.inner()).unwrap();
-                let mut locals = Arena::new();
+                    names.insert(ident.inner().clone(), ident.span());
 
-                let (expressions, body) =
-                    match context.build_function_body(body, &mut locals, &def.ret, &def.modifier) {
-                        Ok(res) => res,
+                    match build_struct(
+                        ident,
+                        fields,
+                        statement.span(),
+                        statements,
+                        &mut structs,
+                        infer_ctx,
+                        0,
+                    ) {
+                        Ok(_) => {}
+                        Err(mut e) => errors.append(&mut e),
+                    }
+                }
+                TopLevelStatement::Global {
+                    modifier,
+                    ident,
+                    ty,
+                } => {
+                    if let Some(span) = names.get(ident.inner()) {
+                        errors.push(
+                            Error::custom(String::from("Name already defined"))
+                                .with_span(ident.span())
+                                .with_span(*span),
+                        );
+                        continue;
+                    }
+
+                    names.insert(ident.inner().clone(), ident.span());
+
+                    let ty = match ty
+                        .as_ref()
+                        .map(|ty| build_ast_ty(statements, &mut structs, infer_ctx, 0, ty))
+                        .transpose()
+                    {
+                        Ok(t) => t,
                         Err(mut e) => {
                             errors.append(&mut e);
                             continue;
                         }
                     };
 
-                let handle = functions.append(Function {
-                    name: Some(ident.inner().to_string()),
-                    parameter_types: def.args.iter().map(|p| *p.inner()).collect(),
-                    return_type: def.ret.as_ref().map(|p| *p.inner()),
-                    global_usage: GlobalUse::scan(&expressions, &body, &globals),
-                    local_variables: locals,
-                    expressions,
-                    body,
-                });
-
-                if let Some(modifier) = &def.modifier {
-                    entry_points.push(EntryPoint {
-                        stage: match modifier.inner() {
-                            FunctionModifier::Vertex => ShaderStage::Vertex,
-                            FunctionModifier::Fragment => ShaderStage::Fragment,
+                    let ty = match modifier.inner() {
+                        GlobalModifier::Input(_)
+                        | GlobalModifier::Output(_)
+                        | GlobalModifier::Uniform { .. } => match ty {
+                            Some(t) => t,
+                            None => {
+                                errors.push(
+                                    Error::custom(String::from("Type annotation required"))
+                                        .with_span(statement.span()),
+                                );
+                                continue;
+                            }
                         },
-                        name: ident.inner().to_string(),
-                        function: handle,
-                    })
-                }
-            }
-            _ => {}
-        }
-    }
+                        GlobalModifier::Position => {
+                            let base =
+                                infer_ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Float));
 
-    if errors.len() == 0 {
-        Ok(Module {
-            header: Header {
-                version: (1, 0, 0),
-                generator: 0,
-            },
-            types,
-            constants,
-            global_variables: globals,
-            functions,
-            entry_points,
-        })
-    } else {
-        Err(errors)
-    }
-}
+                            let vec4 = infer_ctx.insert(
+                                TypeInfo::Vector(base, SizeInfo::Concrete(VectorSize::Quad)),
+                                Span::None,
+                            );
 
-pub(self) fn build_type(
-    ty: ast::Type,
-    structs: &HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>>,
-    types: &mut Arena<Type>,
-) -> Result<Handle<Type>, Vec<Error>> {
-    let mut errors = vec![];
+                            if let Some(ty) = ty {
+                                match infer_ctx.unify(ty, vec4) {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        errors.push(e);
+                                        continue;
+                                    }
+                                }
+                            }
 
-    Ok(match ty {
-        ast::Type::ScalarType(scalar) => {
-            let (ty, _) = build_scalar(scalar);
-            types.fetch_or_append(ty)
-        }
-        ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
-            "Vector" => match build_vector(&generics, name.span()) {
-                Ok((ty, _)) => types.fetch_or_append(ty),
-                Err(mut e) => {
-                    errors.append(&mut e);
-                    return Err(errors);
+                            vec4
+                        }
+                    };
+
+                    globals.insert(
+                        ident.inner().clone(),
+                        PartialGlobal {
+                            modifier: *modifier.inner(),
+                            ty,
+                        },
+                    );
                 }
-            },
-            "Matrix" => match build_matrix(&generics, name.span()) {
-                Ok((ty, _)) => types.fetch_or_append(ty),
-                Err(mut e) => {
-                    errors.append(&mut e);
-                    return Err(errors);
-                }
-            },
-            _ => {
-                if let Some(ty) = structs.get(name.inner()) {
-                    if generics.is_some() {
+                TopLevelStatement::Function {
+                    modifier,
+                    ident,
+                    ty,
+                    args,
+                    body,
+                } => {
+                    if let Some(span) = names.get(ident.inner()) {
                         errors.push(
-                            Error::custom(format!(
-                                "Expected {} generics found {}",
-                                0,
-                                generics.as_ref().unwrap().len()
-                            ))
-                            .with_span(name.span()),
+                            Error::custom(String::from("Name already defined"))
+                                .with_span(ident.span())
+                                .with_span(*span),
                         );
-                        return Err(errors);
                     }
 
-                    ty.inner().0
-                } else {
-                    errors
-                        .push(Error::custom(String::from("Type not found")).with_span(name.span()));
-                    return Err(errors);
+                    names.insert(ident.inner().clone(), ident.span());
+
+                    if let (Some(modifier), Some(ret)) = (modifier, ty) {
+                        errors.push(
+                            Error::custom(String::from("Entry point function can't return"))
+                                .with_span(modifier.span())
+                                .with_span(ret.span()),
+                        );
+                    }
+
+                    let ret = match ty
+                        .as_ref()
+                        .map(|r| build_ast_ty(statements, &mut structs, infer_ctx, 0, r))
+                        .transpose()
+                    {
+                        Ok(t) => t.unwrap_or(infer_ctx.insert(TypeInfo::Empty, Span::None)),
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            continue;
+                        }
+                    };
+
+                    let mut constructed_args =
+                        FastHashMap::with_capacity_and_hasher(args.len(), Default::default());
+
+                    for (pos, arg) in args.iter().enumerate() {
+                        constructed_args.insert(
+                            arg.ident.inner().clone(),
+                            (
+                                pos as u32,
+                                match build_ast_ty(statements, &mut structs, infer_ctx, 0, &arg.ty)
+                                {
+                                    Ok(t) => t,
+                                    Err(mut e) => {
+                                        errors.append(&mut e);
+                                        continue;
+                                    }
+                                },
+                            ),
+                        );
+                    }
+
+                    if errors.len() != 0 {
+                        continue;
+                    }
+
+                    functions.insert(
+                        ident.inner().clone(),
+                        PartialFunction {
+                            modifier: modifier.as_ref().map(|i| *i.inner()),
+                            body: body.clone(),
+                            args: constructed_args,
+                            ret,
+                        },
+                    );
                 }
+                TopLevelStatement::Const { .. } => unimplemented!(),
             }
-        },
-    })
+        }
+
+        if errors.len() != 0 {
+            return Err(errors);
+        }
+
+        Ok(PartialModule {
+            functions,
+            globals,
+            structs,
+        })
+    }
 }
 
 fn build_struct(
-    parents: &mut HashSet<ArcIntern<String>>,
-    struct_name: ArcIntern<String>,
-    fields: Vec<SrcNode<IdentTypePair>>,
-    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>>,
-    structs: &mut HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>>,
-    types: &mut Arena<Type>,
-    span: crate::src::Span,
-) -> Result<(Handle<Type>, u32), Vec<Error>> {
+    ident: &SrcNode<ArcIntern<String>>,
+    fields: &Vec<SrcNode<IdentTypePair>>,
+    span: Span,
+    statements: &[SrcNode<ast::TopLevelStatement>],
+    structs: &mut FastHashMap<Ident, PartialStruct>,
+    infer_ctx: &mut InferContext,
+    iter: usize,
+) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
-    let mut offset = 0;
 
-    let mut members = vec![];
-    parents.insert(struct_name.clone());
+    const MAX_ITERS: usize = 1024;
+    if iter > MAX_ITERS {
+        errors.push(Error::custom(String::from("Recursive type")).with_span(span));
+        return Err(errors);
+    }
 
-    for field in fields {
-        let (ty, field_offset) = match build_field(
-            parents,
-            field.inner().ty.clone(),
-            types_lookup,
-            structs,
-            types,
-        ) {
+    if BUILTIN_TYPES.contains(&&***ident.inner()) {
+        errors.push(
+            Error::custom(String::from("Cannot define a type with a builtin name"))
+                .with_span(ident.span()),
+        );
+    }
+
+    let mut resolved_fields = FastHashMap::default();
+
+    for (pos, field) in fields.into_iter().enumerate() {
+        let ty = match build_ast_ty(statements, structs, infer_ctx, iter + 1, &field.ty) {
             Ok(ty) => ty,
             Err(mut e) => {
                 errors.append(&mut e);
@@ -461,128 +674,112 @@ fn build_struct(
             }
         };
 
-        members.push(StructMember {
-            name: Some(field.inner().ident.inner().clone().to_string()),
-            binding: None,
-            ty: ty,
-            offset: offset,
-        });
-
-        offset += field_offset;
+        resolved_fields.insert(field.ident.inner().clone(), (pos as u32, ty));
     }
 
-    if errors.len() != 0 {
-        Err(errors)
+    let id = infer_ctx.insert(
+        TypeInfo::Struct(
+            resolved_fields
+                .iter()
+                .map(|(key, val)| (key.clone(), val.1))
+                .collect(),
+        ),
+        span,
+    );
+
+    structs.insert(
+        ident.inner().clone(),
+        PartialStruct {
+            fields: resolved_fields,
+            ty: id,
+        },
+    );
+
+    if errors.len() == 0 {
+        Ok(id)
     } else {
-        let handle = types.append(Type {
-            name: Some(struct_name.clone().to_string()),
-            inner: TypeInner::Struct { members },
-        });
-        structs.insert(struct_name, SrcNode::new((handle, offset), span));
-        Ok((handle, offset))
+        Err(errors)
     }
 }
 
-fn build_field(
-    parents: &mut HashSet<ArcIntern<String>>,
-    field: SrcNode<ast::Type>,
-    types_lookup: &HashMap<ArcIntern<String>, SrcNode<Vec<SrcNode<IdentTypePair>>>>,
-    structs: &mut HashMap<ArcIntern<String>, SrcNode<(Handle<Type>, u32)>>,
-    types: &mut Arena<Type>,
-) -> Result<(Handle<Type>, u32), Vec<Error>> {
+fn build_ast_ty(
+    statements: &[SrcNode<ast::TopLevelStatement>],
+    structs: &mut FastHashMap<Ident, PartialStruct>,
+    infer_ctx: &mut InferContext,
+    iter: usize,
+    ty: &SrcNode<ast::Type>,
+) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
 
-    Ok(match field.inner() {
+    let ty = match ty.inner() {
         ast::Type::ScalarType(scalar) => {
-            let (ty, offset) = build_scalar(*scalar);
-            (types.fetch_or_append(ty), offset)
+            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
+            infer_ctx.insert(TypeInfo::Scalar(base), ty.span())
         }
         ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
-            "Vector" => match build_vector(generics, name.span()) {
-                Ok((ty, offset)) => (types.fetch_or_append(ty), offset),
+            "Vector" => match build_vector(generics, infer_ctx, ty.span()) {
+                Ok(t) => t,
                 Err(mut e) => {
                     errors.append(&mut e);
                     return Err(errors);
                 }
             },
-            "Matrix" => match build_matrix(generics, name.span()) {
-                Ok((ty, offset)) => (types.fetch_or_append(ty), offset),
+            "Matrix" => match build_matrix(generics, infer_ctx, ty.span()) {
+                Ok(t) => t,
                 Err(mut e) => {
                     errors.append(&mut e);
                     return Err(errors);
                 }
             },
             _ => {
-                if parents.get(name.inner()).is_some() {
-                    errors.push(
-                        Error::custom(String::from("Recursive types aren't allowed"))
-                            .with_span(name.span()),
-                    );
-
-                    return Err(errors);
-                }
-
-                if let Some(fields) = types_lookup.get(name.inner()) {
-                    if generics.is_some() {
-                        errors.push(
-                            Error::custom(format!(
-                                "Expected {} generics found {}",
-                                0,
-                                generics.as_ref().unwrap().len()
-                            ))
-                            .with_span(name.span()),
-                        );
-                        return Err(errors);
-                    }
-
-                    if let Some(ty) = structs.get(name.inner()) {
-                        ty.inner().clone()
-                    } else {
-                        build_struct(
-                            parents,
-                            name.inner().clone(),
-                            fields.inner().clone(),
-                            types_lookup,
-                            structs,
-                            types,
-                            fields.span(),
-                        )?
+                if let Some(ty) = structs.get(name.inner()) {
+                    ty.ty
+                } else if let Some((ident, fields, span)) =
+                    statements
+                        .iter()
+                        .find_map(|statement| match statement.inner() {
+                            TopLevelStatement::StructDef { ident, fields } if ident == name => {
+                                Some((ident, fields, statement.span()))
+                            }
+                            _ => None,
+                        })
+                {
+                    match build_struct(
+                        ident,
+                        fields,
+                        span,
+                        statements,
+                        structs,
+                        infer_ctx,
+                        iter + 1,
+                    ) {
+                        Ok(t) => t,
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            return Err(errors);
+                        }
                     }
                 } else {
-                    errors
-                        .push(Error::custom(String::from("Type not found")).with_span(name.span()));
+                    errors.push(Error::custom(String::from("Not defined")).with_span(ty.span()));
+
                     return Err(errors);
                 }
             }
         },
-    })
-}
+    };
 
-fn build_scalar(scalar: ScalarType) -> (Type, u32) {
-    let (kind, width) = scalar_to_kind_bytes(scalar);
-
-    (
-        Type {
-            name: None,
-            inner: TypeInner::Scalar { kind, width },
-        },
-        width as u32,
-    )
-}
-
-fn scalar_to_kind_bytes(scalar: ScalarType) -> (ScalarKind, u8) {
-    match scalar {
-        ScalarType::Int => (ScalarKind::Sint, 32),
-        ScalarType::Uint => (ScalarKind::Uint, 32),
-        ScalarType::Float => (ScalarKind::Float, 32),
-        ScalarType::Double => (ScalarKind::Float, 64),
+    if errors.len() == 0 {
+        Ok(ty)
+    } else {
+        Err(errors)
     }
 }
 
 fn build_vector(
-    generics: &Option<SrcNode<Vec<SrcNode<Generic>>>>,
-    name_span: crate::src::Span,
-) -> Result<(Type, u32), Vec<Error>> {
+    generics: &Option<SrcNode<Vec<SrcNode<ast::Generic>>>>,
+    infer_ctx: &mut InferContext,
+    span: Span,
+) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
 
     if let Some(generics) = generics {
@@ -591,26 +788,21 @@ fn build_vector(
                 Error::custom(format!("Expected {} generics found {}", 2, generics.len()))
                     .with_span(generics.span()),
             );
-
-            return Err(errors);
         }
 
-        let size = if let Generic::UInt(val) = generics[0].inner() {
-            Some((
-                match val {
-                    2 => VectorSize::Bi,
-                    3 => VectorSize::Tri,
-                    4 => VectorSize::Quad,
-                    _ => {
-                        errors.push(
-                            Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                                .with_span(generics[0].span()),
-                        );
-                        VectorSize::Bi
-                    }
-                },
-                val,
-            ))
+        let size = if let ast::Generic::UInt(val) = generics[0].inner() {
+            Some(match val {
+                2 => VectorSize::Bi,
+                3 => VectorSize::Tri,
+                4 => VectorSize::Quad,
+                _ => {
+                    errors.push(
+                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
+                            .with_span(generics[0].span()),
+                    );
+                    VectorSize::Bi
+                }
+            })
         } else {
             errors.push(
                 Error::custom(String::from("Size must be a Uint")).with_span(generics[0].span()),
@@ -618,8 +810,8 @@ fn build_vector(
             None
         };
 
-        let kind = if let Generic::ScalarType(scalar) = generics[1].inner() {
-            Some(scalar_to_kind_bytes(*scalar))
+        let kind = if let ast::Generic::ScalarType(scalar) = generics[1].inner() {
+            Some(scalar)
         } else {
             errors.push(
                 Error::custom(String::from("Expecting a scalar type"))
@@ -631,31 +823,25 @@ fn build_vector(
         if errors.len() != 0 {
             Err(errors)
         } else {
-            Ok((
-                Type {
-                    name: None,
-                    inner: TypeInner::Vector {
-                        size: size.unwrap().0,
-                        kind: kind.unwrap().0,
-                        width: kind.unwrap().1,
-                    },
-                },
-                kind.unwrap().1 as u32 * *size.unwrap().1 as u32,
+            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
+
+            Ok(infer_ctx.insert(
+                TypeInfo::Vector(base, SizeInfo::Concrete(size.unwrap())),
+                span,
             ))
         }
     } else {
-        errors.push(
-            Error::custom(format!("Expected {} generics found {}", 2, 0)).with_span(name_span),
-        );
+        errors.push(Error::custom(format!("Expected {} generics found {}", 2, 0)).with_span(span));
 
         Err(errors)
     }
 }
 
 fn build_matrix(
-    generics: &Option<SrcNode<Vec<SrcNode<Generic>>>>,
-    name_span: crate::src::Span,
-) -> Result<(Type, u32), Vec<Error>> {
+    generics: &Option<SrcNode<Vec<SrcNode<ast::Generic>>>>,
+    infer_ctx: &mut InferContext,
+    span: Span,
+) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
 
     if let Some(generics) = generics {
@@ -664,26 +850,21 @@ fn build_matrix(
                 Error::custom(format!("Expected {} generics found {}", 3, generics.len()))
                     .with_span(generics.span()),
             );
-
-            return Err(errors);
         }
 
-        let columns = if let Generic::UInt(val) = generics[0].inner() {
-            Some((
-                match val {
-                    2 => VectorSize::Bi,
-                    3 => VectorSize::Tri,
-                    4 => VectorSize::Quad,
-                    _ => {
-                        errors.push(
-                            Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                                .with_span(generics[0].span()),
-                        );
-                        VectorSize::Bi
-                    }
-                },
-                val,
-            ))
+        let columns = if let ast::Generic::UInt(val) = generics[0].inner() {
+            Some(match val {
+                2 => VectorSize::Bi,
+                3 => VectorSize::Tri,
+                4 => VectorSize::Quad,
+                _ => {
+                    errors.push(
+                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
+                            .with_span(generics[0].span()),
+                    );
+                    VectorSize::Bi
+                }
+            })
         } else {
             errors.push(
                 Error::custom(String::from("Size must be a Uint")).with_span(generics[0].span()),
@@ -691,22 +872,19 @@ fn build_matrix(
             None
         };
 
-        let rows = if let Generic::UInt(val) = generics[1].inner() {
-            Some((
-                match val {
-                    2 => VectorSize::Bi,
-                    3 => VectorSize::Tri,
-                    4 => VectorSize::Quad,
-                    _ => {
-                        errors.push(
-                            Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                                .with_span(generics[1].span()),
-                        );
-                        VectorSize::Bi
-                    }
-                },
-                val,
-            ))
+        let rows = if let ast::Generic::UInt(val) = generics[1].inner() {
+            Some(match val {
+                2 => VectorSize::Bi,
+                3 => VectorSize::Tri,
+                4 => VectorSize::Quad,
+                _ => {
+                    errors.push(
+                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
+                            .with_span(generics[1].span()),
+                    );
+                    VectorSize::Bi
+                }
+            })
         } else {
             errors.push(
                 Error::custom(String::from("Size must be a Uint")).with_span(generics[1].span()),
@@ -714,8 +892,8 @@ fn build_matrix(
             None
         };
 
-        let kind = if let Generic::ScalarType(scalar) = generics[2].inner() {
-            Some(scalar_to_kind_bytes(*scalar))
+        let kind = if let ast::Generic::ScalarType(scalar) = generics[2].inner() {
+            Some(scalar)
         } else {
             errors.push(
                 Error::custom(String::from("Expecting a scalar type"))
@@ -727,24 +905,485 @@ fn build_matrix(
         if errors.len() != 0 {
             Err(errors)
         } else {
-            Ok((
-                Type {
-                    name: None,
-                    inner: TypeInner::Matrix {
-                        columns: columns.unwrap().0,
-                        rows: rows.unwrap().0,
-                        kind: kind.unwrap().0,
-                        width: kind.unwrap().1,
-                    },
+            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
+
+            Ok(infer_ctx.insert(
+                TypeInfo::Matrix {
+                    columns: SizeInfo::Concrete(columns.unwrap()),
+                    rows: SizeInfo::Concrete(columns.unwrap()),
+                    base,
                 },
-                kind.unwrap().1 as u32 * *columns.unwrap().1 as u32 * *rows.unwrap().1 as u32,
+                span,
             ))
         }
     } else {
-        errors.push(
-            Error::custom(format!("Expected {} generics found {}", 3, 0)).with_span(name_span),
-        );
+        errors.push(Error::custom(format!("Expected {} generics found {}", 3, 0)).with_span(span));
 
         Err(errors)
+    }
+}
+
+impl SrcNode<ast::Statement> {
+    fn build_ir<'a>(
+        &self,
+        infer_ctx: &mut InferContext<'a>,
+        locals_lookup: &mut FastHashMap<Ident, (u32, TypeId)>,
+        args: &FastHashMap<Ident, (u32, TypeId)>,
+        globals_lookup: &FastHashMap<Ident, (u32, TypeId)>,
+        statements: &[SrcNode<ast::TopLevelStatement>],
+        structs: &mut FastHashMap<Ident, PartialStruct>,
+        body: &mut Vec<Statement<InferNode>>,
+        locals: &mut u32,
+        ret: TypeId,
+        out: TypeId,
+        nested: Option<u32>,
+    ) -> Result<Statement<InferNode>, Vec<Error>> {
+        let sta = match self.inner() {
+            ast::Statement::Expr(expr) => {
+                let expr = expr.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                )?;
+
+                match infer_ctx.unify(expr.type_id(), out) {
+                    Ok(_) => infer_ctx.link(expr.type_id(), out),
+                    Err(e) => return Err(vec![e]),
+                }
+
+                if let Some(local) = nested {
+                    Statement::Assign(AssignTarget::Local(local), expr)
+                } else {
+                    Statement::Return(Some(expr))
+                }
+            }
+            ast::Statement::Declaration { ident, ty, init } => {
+                let expr = init.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                )?;
+
+                if let Some(ty) = ty {
+                    let user_id = build_ast_ty(statements, structs, infer_ctx, 0, &ty)?;
+
+                    match infer_ctx.unify(expr.type_id(), user_id) {
+                        Ok(_) => {}
+                        Err(e) => return Err(vec![e]),
+                    }
+                }
+
+                locals_lookup.insert(ident.inner().clone(), (*locals, expr.type_id()));
+
+                let sta = Statement::Local(*locals, expr);
+
+                *locals += 1;
+
+                sta
+            }
+            ast::Statement::Assignment { ident, expr } => {
+                let expr = expr.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                )?;
+
+                if let Some((var, ty)) = locals_lookup.get(ident.inner()) {
+                    match infer_ctx.unify(expr.type_id(), *ty) {
+                        Ok(_) => {}
+                        Err(e) => return Err(vec![e]),
+                    }
+
+                    Statement::Assign(AssignTarget::Local(*var), expr)
+                } else if let Some((var, ty)) = globals_lookup.get(ident.inner()) {
+                    match infer_ctx.unify(expr.type_id(), *ty) {
+                        Ok(_) => {}
+                        Err(e) => return Err(vec![e]),
+                    }
+
+                    Statement::Assign(AssignTarget::Global(*var), expr)
+                } else {
+                    return Err(vec![
+                        Error::custom(String::from("Variable not found")).with_span(ident.span())
+                    ]);
+                }
+            }
+            ast::Statement::Return(expr) => {
+                let expr = expr
+                    .as_ref()
+                    .map(|e| {
+                        e.build_ir(
+                            infer_ctx,
+                            locals_lookup,
+                            args,
+                            globals_lookup,
+                            statements,
+                            structs,
+                            body,
+                            locals,
+                            ret,
+                            out,
+                            nested,
+                        )
+                    })
+                    .transpose()?;
+
+                let id = expr
+                    .as_ref()
+                    .map(|e| e.type_id())
+                    .unwrap_or(infer_ctx.insert(TypeInfo::Empty, Span::None));
+
+                match infer_ctx.unify(id, ret) {
+                    Ok(_) => {}
+                    Err(e) => return Err(vec![e]),
+                };
+
+                Statement::Return(expr.map(|e| e))
+            }
+        };
+
+        Ok(sta)
+    }
+}
+
+impl SrcNode<ast::Expression> {
+    fn build_ir<'a>(
+        &self,
+        infer_ctx: &mut InferContext<'a>,
+        locals_lookup: &mut FastHashMap<Ident, (u32, TypeId)>,
+        args: &FastHashMap<Ident, (u32, TypeId)>,
+        globals_lookup: &FastHashMap<Ident, (u32, TypeId)>,
+        statements: &[SrcNode<ast::TopLevelStatement>],
+        structs: &mut FastHashMap<Ident, PartialStruct>,
+        body: &mut Vec<Statement<InferNode>>,
+        locals: &mut u32,
+        ret: TypeId,
+        out: TypeId,
+        nested: Option<u32>,
+    ) -> Result<InferNode, Vec<Error>> {
+        let mut errors = vec![];
+
+        Ok(match self.inner() {
+            ast::Expression::BinaryOp { left, op, right } => {
+                let left = match left.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                ) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        return Err(errors);
+                    }
+                };
+                let right = match right.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                ) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        return Err(errors);
+                    }
+                };
+
+                let out = infer_ctx.insert(TypeInfo::Unknown, self.span());
+                infer_ctx.add_constraint(Constraint::Binary {
+                    a: left.type_id(),
+                    op: op.clone(),
+                    b: right.type_id(),
+                    out,
+                });
+
+                InferNode::new(
+                    TypedExpr::BinaryOp {
+                        left: left,
+                        op: *op.inner(),
+                        right: right,
+                    },
+                    (out, self.span()),
+                )
+            }
+            ast::Expression::UnaryOp { tgt, op } => {
+                let tgt = match tgt.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                ) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        return Err(errors);
+                    }
+                };
+
+                let out = infer_ctx.insert(TypeInfo::Unknown, self.span());
+                infer_ctx.add_constraint(Constraint::Unary {
+                    a: tgt.type_id(),
+                    op: op.clone(),
+                    out,
+                });
+
+                InferNode::new(
+                    TypedExpr::UnaryOp {
+                        tgt: tgt,
+                        op: *op.inner(),
+                    },
+                    (out, self.span()),
+                )
+            }
+            ast::Expression::Call { name, args } => unimplemented!(),
+            ast::Expression::Literal(lit) => {
+                let base = infer_ctx.add_scalar(lit.scalar_info());
+                let out = infer_ctx.insert(TypeInfo::Scalar(base), self.span());
+
+                InferNode::new(TypedExpr::Literal(*lit), (out, self.span()))
+            }
+            ast::Expression::Access { base, field } => {
+                let base = match base.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                ) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        return Err(errors);
+                    }
+                };
+
+                let out = infer_ctx.insert(TypeInfo::Unknown, self.span());
+                infer_ctx.add_constraint(Constraint::Access {
+                    record: base.type_id(),
+                    field: field.clone(),
+                    out,
+                });
+
+                InferNode::new(
+                    TypedExpr::Access {
+                        base: base,
+                        field: field.inner().clone(),
+                    },
+                    (out, self.span()),
+                )
+            }
+            ast::Expression::Variable(var) => {
+                if let Some((var, local)) = locals_lookup.get(var.inner()) {
+                    InferNode::new(TypedExpr::Local(*var), (*local, self.span()))
+                } else if let Some((id, ty)) = args.get(var.inner()) {
+                    InferNode::new(TypedExpr::Arg(*id), (*ty, self.span()))
+                } else if let Some((var, ty)) = globals_lookup.get(var.inner()) {
+                    InferNode::new(TypedExpr::Global(*var), (*ty, self.span()))
+                } else {
+                    errors.push(
+                        Error::custom(String::from("Variable not found")).with_span(var.span()),
+                    );
+
+                    return Err(errors);
+                }
+            }
+            ast::Expression::If {
+                condition,
+                accept,
+                else_ifs,
+                reject,
+            } => {
+                let out = infer_ctx.insert(
+                    if reject.is_some() {
+                        TypeInfo::Unknown
+                    } else {
+                        TypeInfo::Empty
+                    },
+                    Span::None,
+                );
+
+                let local = *locals;
+
+                *locals += 1;
+
+                let condition = condition.build_ir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    body,
+                    locals,
+                    ret,
+                    out,
+                    nested,
+                )?;
+
+                let boolean = {
+                    let base = infer_ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
+                    infer_ctx.insert(TypeInfo::Scalar(base), condition.span())
+                };
+
+                match infer_ctx.unify(condition.type_id(), boolean) {
+                    Ok(_) => {}
+                    Err(e) => return Err(vec![e]),
+                };
+
+                let accept = accept
+                    .iter()
+                    .map(|sta| {
+                        sta.build_ir(
+                            infer_ctx,
+                            locals_lookup,
+                            args,
+                            globals_lookup,
+                            statements,
+                            structs,
+                            body,
+                            locals,
+                            ret,
+                            out,
+                            Some(local),
+                        )
+                    })
+                    .collect::<Result<_, _>>()?;
+                let else_ifs = else_ifs
+                    .iter()
+                    .map::<Result<_, Vec<Error>>, _>(|(condition, block)| {
+                        let condition = condition.build_ir(
+                            infer_ctx,
+                            locals_lookup,
+                            args,
+                            globals_lookup,
+                            statements,
+                            structs,
+                            body,
+                            locals,
+                            ret,
+                            out,
+                            nested,
+                        )?;
+
+                        let boolean = {
+                            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
+                            infer_ctx.insert(TypeInfo::Scalar(base), condition.span())
+                        };
+
+                        match infer_ctx.unify(condition.type_id(), boolean) {
+                            Ok(_) => {}
+                            Err(e) => return Err(vec![e]),
+                        };
+
+                        Ok((
+                            condition,
+                            block
+                                .iter()
+                                .map(|sta| {
+                                    sta.build_ir(
+                                        infer_ctx,
+                                        locals_lookup,
+                                        args,
+                                        globals_lookup,
+                                        statements,
+                                        structs,
+                                        body,
+                                        locals,
+                                        ret,
+                                        out,
+                                        Some(local),
+                                    )
+                                })
+                                .collect::<Result<_, _>>()?,
+                        ))
+                    })
+                    .collect::<Result<_, _>>()?;
+                let reject = reject
+                    .as_ref()
+                    .map::<Result<_, Vec<Error>>, _>(|r| {
+                        Ok(r.iter()
+                            .map(|sta| {
+                                sta.build_ir(
+                                    infer_ctx,
+                                    locals_lookup,
+                                    args,
+                                    globals_lookup,
+                                    statements,
+                                    structs,
+                                    body,
+                                    locals,
+                                    ret,
+                                    out,
+                                    Some(local),
+                                )
+                            })
+                            .collect::<Result<_, _>>()?)
+                    })
+                    .transpose()?;
+
+                locals_lookup.insert(Ident::new(format!("${}", local)), (local, out));
+
+                body.push(Statement::If {
+                    accept,
+                    condition,
+                    else_ifs,
+                    reject,
+                });
+
+                InferNode::new(TypedExpr::Local(local), (out, self.span()))
+            }
+        })
     }
 }

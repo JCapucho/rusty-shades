@@ -4,7 +4,7 @@ use codespan_reporting::term::{
     termcolor::{ColorChoice, StandardStream},
 };
 use naga::back::spv;
-use rusty_shades::{ast, error::Error, ir, lex};
+use rusty_shades::{ast, backends, error::Error, ir, lex};
 use std::fs::{read_to_string, File, OpenOptions};
 use std::io::{self, Write};
 
@@ -20,11 +20,13 @@ fn main() -> io::Result<()> {
 
     let ast = handle_errors(ast::parse(&tokens), &files, file_id)?;
 
-    let module = handle_errors(ir::build(&ast), &files, file_id)?;
+    let module = handle_errors(ir::Module::build(&ast), &files, file_id)?;
 
-    println!("{:#?}", module);
+    let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
 
-    let spirv = spv::Writer::new(&module.header, spv::WriterFlags::DEBUG).write(&module);
+    println!("{:#?}", naga_ir);
+
+    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
     let output = OpenOptions::new()
         .write(true)

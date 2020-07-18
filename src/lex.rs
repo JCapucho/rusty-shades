@@ -1,12 +1,11 @@
-use crate::{error::Error, node::SrcNode, src::Span};
-use internment::ArcIntern;
+use crate::{error::Error, node::SrcNode, src::Span, Ident};
 use ordered_float::OrderedFloat;
 use parze::prelude::*;
 use std::fmt;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Token {
-    Identifier(ArcIntern<String>),
+    Identifier(Ident),
     FunctionModifier(FunctionModifier),
     OpenDelimiter(Delimiter),
     CloseDelimiter(Delimiter),
@@ -109,6 +108,7 @@ impl fmt::Display for Token {
                     ScalarType::Float => "Float",
                     ScalarType::Int => "Int",
                     ScalarType::Uint => "Uint",
+                    ScalarType::Bool => "Bool",
                 }
             ),
             Token::Global => write!(f, "global"),
@@ -177,17 +177,49 @@ pub enum Literal {
     Boolean(bool),
 }
 
+#[repr(u8)]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum ScalarType {
+    Uint = 0,
     Int,
-    Uint,
     Float,
     Double,
+    Bool = 0xFF,
+}
+
+impl fmt::Display for ScalarType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ScalarType::Uint => write!(f, "uint"),
+            ScalarType::Int => write!(f, "sint"),
+            ScalarType::Float => write!(f, "float"),
+            ScalarType::Double => write!(f, "double"),
+            ScalarType::Bool => write!(f, "bool"),
+        }
+    }
 }
 
 pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
     let tokens = {
-        let whitespace = permit(|c: &char| c.is_whitespace()).to(());
+        let single_line_comment = seq("//".chars())
+            .padding_for(permit(|c: &char| *c != '\n').repeated())
+            .to(());
+        let multi_line_comment = {
+            let tail = recursive(|tail| {
+                seq("/*".chars())
+                    .then(tail.link())
+                    .to(())
+                    .or(seq("*/".chars()).to(()))
+                    .or(any().then(tail.link()).to(()))
+            });
+
+            seq("/*".chars()).padded_by(tail).to(())
+        };
+
+        let whitespace = permit(|c: &char| c.is_whitespace())
+            .to(())
+            .or(single_line_comment)
+            .or(multi_line_comment);
 
         let space = whitespace.repeated();
 
@@ -196,9 +228,9 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
         let number = just('-')
             .or_not()
             .then(integer.clone())
-            .then(just('.').padding_for(integer.clone()).or_not())
+            .then(just('.').padding_for(integer.clone().or_not()).or_not())
             .map(|((minus, mut int), fract)| {
-                if let Some(mut fract) = fract {
+                if let Some(fract) = fract {
                     let mut num = Vec::with_capacity(3);
 
                     if let Some(_) = minus {
@@ -207,7 +239,9 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
 
                     num.append(&mut int);
                     num.push('.');
-                    num.append(&mut fract);
+                    if let Some(mut fract) = fract {
+                        num.append(&mut fract);
+                    }
                     Token::Literal(Literal::Float(
                         num.into_iter().collect::<String>().parse().unwrap(),
                     ))
@@ -280,6 +314,7 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
                 "Int" => Token::ScalarType(ScalarType::Int),
                 "Uint" => Token::ScalarType(ScalarType::Uint),
                 "Float" => Token::ScalarType(ScalarType::Float),
+                "Bool" => Token::ScalarType(ScalarType::Bool),
                 "Double" => Token::ScalarType(ScalarType::Double),
                 "position" => Token::Position,
                 "in" => Token::In,
@@ -291,7 +326,7 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
                 "fragment" => Token::FunctionModifier(FunctionModifier::Fragment),
                 "set" => Token::Set,
                 "binding" => Token::Binding,
-                _ => Token::Identifier(ArcIntern::new(s)),
+                _ => Token::Identifier(Ident::new(s)),
             }))
             .or(op)
             .or(delimiter)
