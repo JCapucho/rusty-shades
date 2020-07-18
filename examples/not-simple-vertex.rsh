@@ -20,7 +20,7 @@ struct Locals {
     transform: Matrix<4, 4, Float>,
     min_max: Vector<2, Float>
 }
-        
+
 fn vertex main() {
     v_color = a_color;
     v_normal = a_normal;

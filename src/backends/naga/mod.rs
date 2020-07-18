@@ -26,6 +26,8 @@ pub enum GlobalLookup {
 pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
     let mut errors = vec![];
 
+    let mut structs_lookup = FastHashMap::default();
+
     let mut types = Arena::new();
     let mut constants = Arena::new();
     let mut globals = Arena::new();
@@ -35,22 +37,23 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
 
     let mut entry_points = vec![];
 
-    for (name, strct) in module.structs.iter() {
-        let ty = match strct.build_naga(name.to_string(), &mut types) {
-            Ok(t) => t,
-            Err(e) => {
-                errors.push(e);
-                continue;
-            }
-        };
+    for (id, strct) in module.structs.iter() {
+        let (ty, offset) =
+            match strct.build_naga(strct.name.to_string(), &mut types, &structs_lookup) {
+                Ok(t) => t,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
+            };
 
-        types.fetch_or_append(ty);
+        structs_lookup.insert(*id, (types.append(ty), offset));
     }
 
     for (id, global) in module.globals.iter() {
-        let inner = match global
+        let ty = match global
             .ty
-            .build_naga(&mut types)
+            .build_naga(&mut types, &structs_lookup)
             .and_then(|ty| ty.ok_or(Error::custom(String::from("Global cannot be of type ()"))))
         {
             Ok(t) => t.0,
@@ -59,8 +62,6 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
                 continue;
             }
         };
-
-        let ty = types.fetch_or_append(NagaType { name: None, inner });
 
         match global.modifier {
             crate::ast::GlobalModifier::Position => {
@@ -122,10 +123,11 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         globals: &globals,
         globals_lookup: &globals_lookup,
         types: &mut types,
+        structs_lookup: &structs_lookup,
     };
 
     for (name, function) in module.functions.iter() {
-        match function.build_naga(name, &mut func_builder, 0) {
+        match function.build_naga(module, name, &mut func_builder, 0) {
             Ok(_) => {}
             Err(mut e) => {
                 errors.append(&mut e);
@@ -160,11 +162,13 @@ struct FunctionBuilder<'a> {
     entry_points: &'a mut Vec<EntryPoint>,
     functions_lookup: FastHashMap<Ident, Handle<NagaFunction>>,
     functions: &'a FastHashMap<Ident, Function>,
+    structs_lookup: &'a FastHashMap<u32, (Handle<NagaType>, u32)>,
 }
 
 impl Function {
     fn build_naga<'a>(
         &self,
+        module: &Module,
         name: &Ident,
         builder: &mut FunctionBuilder<'a>,
         iter: usize,
@@ -186,14 +190,12 @@ impl Function {
                 .args
                 .iter()
                 .map(|ty| {
-                    let inner = ty
-                        .build_naga(builder.types)?
+                    let ty = ty
+                        .build_naga(builder.types, builder.structs_lookup)?
                         .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
                         .0;
 
-                    Ok(builder
-                        .types
-                        .fetch_or_append(NagaType { name: None, inner }))
+                    Ok(ty)
                 })
                 .partition(Result::is_ok);
             let parameter_types: Vec<_> = parameter_types.into_iter().map(Result::unwrap).collect();
@@ -202,25 +204,20 @@ impl Function {
             parameter_types
         };
 
-        let return_type = match self.ret.build_naga(builder.types) {
-            Ok(t) => t,
+        let return_type = match self.ret.build_naga(builder.types, builder.structs_lookup) {
+            Ok(t) => t.map(|t| t.0),
             Err(e) => {
                 errors.push(e);
                 return Err(errors);
             }
-        }
-        .map(|(inner, _)| {
-            builder
-                .types
-                .fetch_or_append(NagaType { name: None, inner })
-        });
+        };
 
         let mut local_variables = Arena::new();
         let mut locals_lookup = FastHashMap::default();
 
         for (id, ty) in self.locals.iter() {
-            let inner = match ty
-                .build_naga(builder.types)
+            let ty = match ty
+                .build_naga(builder.types, builder.structs_lookup)
                 .and_then(|ty| ty.ok_or(Error::custom(String::from("Global cannot be of type ()"))))
             {
                 Ok(t) => t.0,
@@ -229,10 +226,6 @@ impl Function {
                     continue;
                 }
             };
-
-            let ty = builder
-                .types
-                .fetch_or_append(NagaType { name: None, inner });
 
             let handle = local_variables.append(LocalVariable {
                 name: None,
@@ -251,6 +244,7 @@ impl Function {
                 .iter()
                 .map(|sta| {
                     sta.build_naga(
+                        module,
                         &mut locals_lookup,
                         &mut expressions,
                         self.modifier,
@@ -316,12 +310,17 @@ impl Function {
 }
 
 impl Struct {
-    fn build_naga(&self, name: String, types: &mut Arena<NagaType>) -> Result<NagaType, Error> {
+    fn build_naga(
+        &self,
+        name: String,
+        types: &mut Arena<NagaType>,
+        structs_lookup: &FastHashMap<u32, (Handle<NagaType>, u32)>,
+    ) -> Result<(NagaType, u32), Error> {
         let mut offset = 0;
         let mut members = vec![];
 
         for (name, (_, ty)) in self.fields.iter() {
-            let (inner, size) = match ty.build_naga(types)? {
+            let (ty, size) = match ty.build_naga(types, structs_lookup)? {
                 Some(t) => t,
                 None => {
                     return Err(Error::custom(String::from(
@@ -333,7 +332,7 @@ impl Struct {
             members.push(StructMember {
                 name: Some(name.to_string()),
                 origin: MemberOrigin::Offset(offset),
-                ty: types.fetch_or_append(NagaType { name: None, inner }),
+                ty,
             });
 
             offset += size;
@@ -341,31 +340,47 @@ impl Struct {
 
         let inner = TypeInner::Struct { members };
 
-        Ok(NagaType {
-            name: Some(name),
-            inner,
-        })
+        Ok((
+            NagaType {
+                name: Some(name),
+                inner,
+            },
+            offset,
+        ))
     }
 }
 
 impl Type {
-    fn build_naga(&self, types: &mut Arena<NagaType>) -> Result<Option<(TypeInner, u32)>, Error> {
+    fn build_naga(
+        &self,
+        types: &mut Arena<NagaType>,
+        structs_lookup: &FastHashMap<u32, (Handle<NagaType>, u32)>,
+    ) -> Result<Option<(Handle<NagaType>, u32)>, Error> {
         Ok(match self {
             Type::Empty => None,
             Type::Scalar(scalar) => {
                 let (kind, width) = scalar.build_naga();
 
-                Some((TypeInner::Scalar { kind, width: width }, width as u32))
+                Some((
+                    types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: TypeInner::Scalar { kind, width: width },
+                    }),
+                    width as u32,
+                ))
             }
             Type::Vector(scalar, size) => {
                 let (kind, width) = scalar.build_naga();
 
                 Some((
-                    TypeInner::Vector {
-                        size: *size,
-                        kind,
-                        width,
-                    },
+                    types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: TypeInner::Vector {
+                            size: *size,
+                            kind,
+                            width,
+                        },
+                    }),
                     width as u32,
                 ))
             }
@@ -377,41 +392,19 @@ impl Type {
                 let (kind, width) = base.build_naga();
 
                 Some((
-                    TypeInner::Matrix {
-                        columns: *columns,
-                        rows: *rows,
-                        kind,
-                        width,
-                    },
+                    types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: TypeInner::Matrix {
+                            columns: *columns,
+                            rows: *rows,
+                            kind,
+                            width,
+                        },
+                    }),
                     width as u32,
                 ))
             }
-            Type::Struct(fields) => {
-                let mut offset = 0;
-                let mut members = vec![];
-
-                for (name, ty) in fields {
-                    let (inner, size) = match ty.build_naga(types)? {
-                        Some(t) => t,
-                        None => {
-                            return Err(Error::custom(String::from(
-                                "Struct member cannot be of type ()",
-                            ))
-                            .with_span(ty.span()))
-                        }
-                    };
-
-                    members.push(StructMember {
-                        name: Some(name.to_string()),
-                        origin: MemberOrigin::Offset(offset),
-                        ty: types.fetch_or_append(NagaType { name: None, inner }),
-                    });
-
-                    offset += size;
-                }
-
-                Some((TypeInner::Struct { members }, offset))
-            }
+            Type::Struct(id) => Some(structs_lookup.get(id).unwrap().clone()),
             Type::Func(_, _) => unimplemented!(),
         })
     }
@@ -432,6 +425,7 @@ impl ScalarType {
 impl Statement<TypedNode> {
     fn build_naga<'a>(
         &self,
+        module: &Module,
         locals_lookup: &FastHashMap<u32, Handle<LocalVariable>>,
         expressions: &mut Arena<Expression>,
         modifier: Option<FunctionModifier>,
@@ -440,7 +434,8 @@ impl Statement<TypedNode> {
     ) -> Result<NagaStatement, Error> {
         Ok(match self {
             Statement::Local(id, expr) => {
-                let value = expr.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let value =
+                    expr.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
 
                 NagaStatement::Store {
                     pointer: expressions
@@ -473,7 +468,8 @@ impl Statement<TypedNode> {
                     ),
                 });
 
-                let value = expr.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let value =
+                    expr.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
 
                 NagaStatement::Store {
                     pointer,
@@ -484,8 +480,14 @@ impl Statement<TypedNode> {
                 value: expr
                     .as_ref()
                     .map(|e| {
-                        let expr =
-                            e.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                        let expr = e.build_naga(
+                            module,
+                            locals_lookup,
+                            expressions,
+                            modifier,
+                            builder,
+                            iter,
+                        )?;
 
                         Ok(expressions.append(expr))
                     })
@@ -499,7 +501,9 @@ impl Statement<TypedNode> {
             } => {
                 let accept = accept
                     .iter()
-                    .map(|s| s.build_naga(locals_lookup, expressions, modifier, builder, iter))
+                    .map(|s| {
+                        s.build_naga(module, locals_lookup, expressions, modifier, builder, iter)
+                    })
                     .collect::<Result<_, _>>()?;
                 let mut reject_block = reject
                     .as_ref()
@@ -507,7 +511,14 @@ impl Statement<TypedNode> {
                         block
                             .iter()
                             .map(|s| {
-                                s.build_naga(locals_lookup, expressions, modifier, builder, iter)
+                                s.build_naga(
+                                    module,
+                                    locals_lookup,
+                                    expressions,
+                                    modifier,
+                                    builder,
+                                    iter,
+                                )
                             })
                             .collect::<Result<_, _>>()
                     })
@@ -516,6 +527,7 @@ impl Statement<TypedNode> {
 
                 for (condition, body) in else_ifs.iter().rev() {
                     let condition = condition.build_naga(
+                        module,
                         locals_lookup,
                         expressions,
                         modifier,
@@ -525,7 +537,16 @@ impl Statement<TypedNode> {
 
                     let accept = body
                         .iter()
-                        .map(|s| s.build_naga(locals_lookup, expressions, modifier, builder, iter))
+                        .map(|s| {
+                            s.build_naga(
+                                module,
+                                locals_lookup,
+                                expressions,
+                                modifier,
+                                builder,
+                                iter,
+                            )
+                        })
                         .collect::<Result<_, _>>()?;
 
                     reject_block = vec![NagaStatement::If {
@@ -535,8 +556,14 @@ impl Statement<TypedNode> {
                     }]
                 }
 
-                let condition =
-                    condition.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let condition = condition.build_naga(
+                    module,
+                    locals_lookup,
+                    expressions,
+                    modifier,
+                    builder,
+                    iter,
+                )?;
 
                 NagaStatement::If {
                     condition: expressions.append(condition),
@@ -551,6 +578,7 @@ impl Statement<TypedNode> {
 impl TypedNode {
     fn build_naga<'a>(
         &self,
+        module: &Module,
         locals_lookup: &FastHashMap<u32, Handle<LocalVariable>>,
         expressions: &mut Arena<Expression>,
         modifier: Option<FunctionModifier>,
@@ -559,9 +587,16 @@ impl TypedNode {
     ) -> Result<Expression, Error> {
         Ok(match self.inner() {
             Expr::BinaryOp { left, op, right } => {
-                let left = left.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
-                let right =
-                    right.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let left =
+                    left.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
+                let right = right.build_naga(
+                    module,
+                    locals_lookup,
+                    expressions,
+                    modifier,
+                    builder,
+                    iter,
+                )?;
 
                 Expression::Binary {
                     op: op.build_naga(),
@@ -570,7 +605,8 @@ impl TypedNode {
                 }
             }
             Expr::UnaryOp { tgt, op } => {
-                let tgt = tgt.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let tgt =
+                    tgt.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
 
                 Expression::Unary {
                     op: op.build_naga(),
@@ -581,8 +617,14 @@ impl TypedNode {
                 let arguments = args
                     .iter()
                     .map(|arg| {
-                        let handle =
-                            arg.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                        let handle = arg.build_naga(
+                            module,
+                            locals_lookup,
+                            expressions,
+                            modifier,
+                            builder,
+                            iter,
+                        )?;
 
                         Ok(expressions.append(handle))
                     })
@@ -590,7 +632,9 @@ impl TypedNode {
 
                 let origin = {
                     if let Some(function) = builder.functions.get(name) {
-                        function.build_naga(name, builder, iter + 1).unwrap()
+                        function
+                            .build_naga(module, name, builder, iter + 1)
+                            .unwrap()
                     } else {
                         todo!()
                     }
@@ -602,15 +646,11 @@ impl TypedNode {
                 }
             }
             Expr::Literal(literal) => {
-                let inner = self
+                let ty = self
                     .ty()
-                    .build_naga(builder.types)?
+                    .build_naga(builder.types, builder.structs_lookup)?
                     .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
                     .0;
-
-                let ty = builder
-                    .types
-                    .fetch_or_append(NagaType { name: None, inner });
 
                 let handle = builder.constants.fetch_or_append(Constant {
                     name: None,
@@ -622,7 +662,8 @@ impl TypedNode {
                 Expression::Constant(handle)
             }
             Expr::Access { base, fields } => {
-                let base = base.build_naga(locals_lookup, expressions, modifier, builder, iter)?;
+                let base =
+                    base.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
 
                 let handle = expressions.append(base);
 
@@ -632,15 +673,11 @@ impl TypedNode {
                         index: fields[0],
                     }
                 } else {
-                    let inner = self
+                    let ty = self
                         .ty()
-                        .build_naga(builder.types)?
+                        .build_naga(builder.types, builder.structs_lookup)?
                         .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
                         .0;
-
-                    let ty = builder
-                        .types
-                        .fetch_or_append(NagaType { name: None, inner });
 
                     let mut components = vec![];
 

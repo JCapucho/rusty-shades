@@ -1,6 +1,5 @@
 use crate::lex::ScalarType;
 use crate::node::SrcNode;
-use crate::Ident;
 use naga::VectorSize;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +12,6 @@ pub enum Type {
         rows: VectorSize,
         base: ScalarType,
     },
-    Struct(Vec<(Ident, SrcNode<Type>)>),
+    Struct(u32),
     Func(Vec<SrcNode<Type>>, SrcNode<Type>),
 }

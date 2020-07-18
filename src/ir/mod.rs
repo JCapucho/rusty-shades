@@ -209,7 +209,8 @@ fn to_expr(expr: &InferNode, infer_ctx: &mut InferContext) -> Result<TypedNode, 
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
                             .collect())
                     }
-                    Type::Struct(fields) => Ok(vec![fields
+                    Type::Struct(id) => Ok(vec![infer_ctx
+                        .get_fields(*id)
                         .iter()
                         .position(|(f, _)| f == field)
                         .unwrap() as u32]),
@@ -238,13 +239,14 @@ pub struct Global {
 
 #[derive(Debug)]
 pub struct Struct {
-    pub fields: FastHashMap<Ident, (u32, Type)>,
+    pub name: Ident,
+    pub fields: FastHashMap<Ident, (u32, SrcNode<Type>)>,
 }
 
 #[derive(Debug)]
 pub struct Module {
     pub globals: FastHashMap<u32, Global>,
-    pub structs: FastHashMap<Ident, Struct>,
+    pub structs: FastHashMap<u32, Struct>,
     pub functions: FastHashMap<Ident, Function>,
 }
 
@@ -266,6 +268,7 @@ struct PartialFunction {
 
 #[derive(Debug)]
 struct PartialStruct {
+    id: u32,
     ty: TypeId,
     fields: FastHashMap<Ident, (u32, TypeId)>,
 }
@@ -373,7 +376,7 @@ impl Module {
             let locals = {
                 let (locals, e): (Vec<_>, Vec<_>) = locals_lookup
                     .iter()
-                    .map(|(key, (id, val))| {
+                    .map(|(_, (id, val))| {
                         let ty = infer_ctx.reconstruct(*val, Span::None)?.into_inner();
 
                         Ok((*id, ty))
@@ -410,20 +413,23 @@ impl Module {
             let (structs, e): (Vec<_>, Vec<_>) = partial
                 .structs
                 .iter()
-                .map(|(key, strct)| {
-                    let fields: Result<_, _> = strct
+                .map(|(key, partial_strct)| {
+                    let fields: Result<_, _> = partial_strct
                         .fields
                         .iter()
                         .map(|(key, (pos, ty))| {
-                            let ty = infer_ctx.reconstruct(*ty, Span::None)?.into_inner();
+                            let ty = infer_ctx.reconstruct(*ty, Span::None)?;
 
                             Ok((key.clone(), (*pos, ty)))
                         })
                         .collect();
 
-                    let strct = Struct { fields: fields? };
+                    let strct = Struct {
+                        name: key.clone(),
+                        fields: fields?,
+                    };
 
-                    Ok((key.clone(), strct))
+                    Ok((partial_strct.id, strct))
                 })
                 .partition(Result::is_ok);
             errors.extend(e.into_iter().map(Result::unwrap_err));
@@ -453,6 +459,8 @@ impl Module {
         let mut functions = FastHashMap::default();
         let mut names = FastHashMap::default();
 
+        let mut struct_id = 0;
+
         for statement in statements {
             match statement.inner() {
                 TopLevelStatement::StructDef { ident, fields } => {
@@ -474,6 +482,7 @@ impl Module {
                         statements,
                         &mut structs,
                         infer_ctx,
+                        &mut struct_id,
                         0,
                     ) {
                         Ok(_) => {}
@@ -498,7 +507,9 @@ impl Module {
 
                     let ty = match ty
                         .as_ref()
-                        .map(|ty| build_ast_ty(statements, &mut structs, infer_ctx, 0, ty))
+                        .map(|ty| {
+                            build_ast_ty(statements, &mut structs, infer_ctx, 0, ty, &mut struct_id)
+                        })
                         .transpose()
                     {
                         Ok(t) => t,
@@ -579,7 +590,9 @@ impl Module {
 
                     let ret = match ty
                         .as_ref()
-                        .map(|r| build_ast_ty(statements, &mut structs, infer_ctx, 0, r))
+                        .map(|r| {
+                            build_ast_ty(statements, &mut structs, infer_ctx, 0, r, &mut struct_id)
+                        })
                         .transpose()
                     {
                         Ok(t) => t.unwrap_or(infer_ctx.insert(TypeInfo::Empty, Span::None)),
@@ -597,8 +610,14 @@ impl Module {
                             arg.ident.inner().clone(),
                             (
                                 pos as u32,
-                                match build_ast_ty(statements, &mut structs, infer_ctx, 0, &arg.ty)
-                                {
+                                match build_ast_ty(
+                                    statements,
+                                    &mut structs,
+                                    infer_ctx,
+                                    0,
+                                    &arg.ty,
+                                    &mut struct_id,
+                                ) {
                                     Ok(t) => t,
                                     Err(mut e) => {
                                         errors.append(&mut e);
@@ -646,6 +665,7 @@ fn build_struct(
     statements: &[SrcNode<ast::TopLevelStatement>],
     structs: &mut FastHashMap<Ident, PartialStruct>,
     infer_ctx: &mut InferContext,
+    struct_id: &mut u32,
     iter: usize,
 ) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
@@ -663,10 +683,21 @@ fn build_struct(
         );
     }
 
+    if let Some(ty) = structs.get(ident.inner()) {
+        return Ok(ty.ty);
+    }
+
     let mut resolved_fields = FastHashMap::default();
 
     for (pos, field) in fields.into_iter().enumerate() {
-        let ty = match build_ast_ty(statements, structs, infer_ctx, iter + 1, &field.ty) {
+        let ty = match build_ast_ty(
+            statements,
+            structs,
+            infer_ctx,
+            iter + 1,
+            &field.ty,
+            struct_id,
+        ) {
             Ok(ty) => ty,
             Err(mut e) => {
                 errors.append(&mut e);
@@ -677,23 +708,18 @@ fn build_struct(
         resolved_fields.insert(field.ident.inner().clone(), (pos as u32, ty));
     }
 
-    let id = infer_ctx.insert(
-        TypeInfo::Struct(
-            resolved_fields
-                .iter()
-                .map(|(key, val)| (key.clone(), val.1))
-                .collect(),
-        ),
-        span,
-    );
+    let id = infer_ctx.insert(TypeInfo::Struct(*struct_id), span);
 
     structs.insert(
         ident.inner().clone(),
         PartialStruct {
             fields: resolved_fields,
             ty: id,
+            id: *struct_id,
         },
     );
+
+    *struct_id += 1;
 
     if errors.len() == 0 {
         Ok(id)
@@ -708,6 +734,7 @@ fn build_ast_ty(
     infer_ctx: &mut InferContext,
     iter: usize,
     ty: &SrcNode<ast::Type>,
+    struct_id: &mut u32,
 ) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
 
@@ -751,6 +778,7 @@ fn build_ast_ty(
                         statements,
                         structs,
                         infer_ctx,
+                        struct_id,
                         iter + 1,
                     ) {
                         Ok(t) => t,
@@ -910,7 +938,7 @@ fn build_matrix(
             Ok(infer_ctx.insert(
                 TypeInfo::Matrix {
                     columns: SizeInfo::Concrete(columns.unwrap()),
-                    rows: SizeInfo::Concrete(columns.unwrap()),
+                    rows: SizeInfo::Concrete(rows.unwrap()),
                     base,
                 },
                 span,
@@ -923,6 +951,52 @@ fn build_matrix(
     }
 }
 
+fn build_ir_ty(
+    structs: &FastHashMap<Ident, PartialStruct>,
+    infer_ctx: &mut InferContext,
+    ty: &SrcNode<ast::Type>,
+) -> Result<TypeId, Vec<Error>> {
+    let mut errors = vec![];
+
+    let ty = match ty.inner() {
+        ast::Type::ScalarType(scalar) => {
+            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
+            infer_ctx.insert(TypeInfo::Scalar(base), ty.span())
+        }
+        ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
+            "Vector" => match build_vector(generics, infer_ctx, ty.span()) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
+                    return Err(errors);
+                }
+            },
+            "Matrix" => match build_matrix(generics, infer_ctx, ty.span()) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
+                    return Err(errors);
+                }
+            },
+            _ => {
+                if let Some(ty) = structs.get(name.inner()) {
+                    ty.ty
+                } else {
+                    errors.push(Error::custom(String::from("Not defined")).with_span(ty.span()));
+
+                    return Err(errors);
+                }
+            }
+        },
+    };
+
+    if errors.len() == 0 {
+        Ok(ty)
+    } else {
+        Err(errors)
+    }
+}
+
 impl SrcNode<ast::Statement> {
     fn build_ir<'a>(
         &self,
@@ -931,7 +1005,7 @@ impl SrcNode<ast::Statement> {
         args: &FastHashMap<Ident, (u32, TypeId)>,
         globals_lookup: &FastHashMap<Ident, (u32, TypeId)>,
         statements: &[SrcNode<ast::TopLevelStatement>],
-        structs: &mut FastHashMap<Ident, PartialStruct>,
+        structs: &FastHashMap<Ident, PartialStruct>,
         body: &mut Vec<Statement<InferNode>>,
         locals: &mut u32,
         ret: TypeId,
@@ -981,8 +1055,7 @@ impl SrcNode<ast::Statement> {
                 )?;
 
                 if let Some(ty) = ty {
-                    let user_id = build_ast_ty(statements, structs, infer_ctx, 0, &ty)?;
-
+                    let user_id = build_ir_ty(structs, infer_ctx, &ty)?;
                     match infer_ctx.unify(expr.type_id(), user_id) {
                         Ok(_) => {}
                         Err(e) => return Err(vec![e]),
@@ -1078,7 +1151,7 @@ impl SrcNode<ast::Expression> {
         args: &FastHashMap<Ident, (u32, TypeId)>,
         globals_lookup: &FastHashMap<Ident, (u32, TypeId)>,
         statements: &[SrcNode<ast::TopLevelStatement>],
-        structs: &mut FastHashMap<Ident, PartialStruct>,
+        structs: &FastHashMap<Ident, PartialStruct>,
         body: &mut Vec<Statement<InferNode>>,
         locals: &mut u32,
         ret: TypeId,

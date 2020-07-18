@@ -71,7 +71,7 @@ pub enum TypeInfo {
         rows: SizeInfo,
         base: ScalarId,
     },
-    Struct(Vec<(Ident, TypeId)>),
+    Struct(u32),
     Func(Vec<TypeId>, TypeId),
 }
 
@@ -108,6 +108,8 @@ pub struct InferContext<'a> {
 
     constraint_id_counter: usize,
     constraints: FastHashMap<ConstraintId, Constraint>,
+
+    structs: FastHashMap<u32, Vec<(Ident, TypeId)>>,
 }
 
 impl<'a> InferContext<'a> {
@@ -124,12 +126,18 @@ impl<'a> InferContext<'a> {
 
             constraint_id_counter: self.constraint_id_counter,
             constraints: FastHashMap::default(),
+
+            structs: self.structs.clone(),
         }
     }
 
     fn new_id(&mut self) -> TypeId {
         self.types_id_counter += 1;
         TypeId::new(self.types_id_counter)
+    }
+
+    pub fn get_fields(&self, strct: u32) -> &Vec<(Ident, TypeId)> {
+        self.structs.get(&strct).unwrap()
     }
 
     pub fn insert(&mut self, ty: impl Into<TypeInfo>, span: Span) -> TypeId {
@@ -315,7 +323,9 @@ impl<'a> InferContext<'a> {
                             id: base
                         }
                     ),
-                    Struct(fields) => {
+                    Struct(id) => {
+                        let fields = self.ctx.structs.get(&id).unwrap();
+
                         write!(f, "{{{}", if fields.len() > 0 { " " } else { "" })?;
                         write!(
                             f,
@@ -417,16 +427,7 @@ impl<'a> InferContext<'a> {
                 .zip(bi.into_iter())
                 .try_for_each(|(a, b)| self.unify_inner(iter + 1, a, b))
                 .and_then(|()| self.unify_inner(iter + 1, ao, bo)),
-            (Struct(a_fields), Struct(b_fields)) if a_fields.len() == b_fields.len() => a_fields
-                .into_iter()
-                .zip(b_fields.into_iter())
-                .try_for_each(|((a_name, a_field), (b_name, b_field))| {
-                    if *a_name == *b_name {
-                        self.unify_inner(iter + 1, a_field, b_field)
-                    } else {
-                        Err((a, b))
-                    }
-                }),
+            (Struct(a_id), Struct(b_id)) if a_id == b_id => Ok(()),
             (_, _) => Err((a, b)),
         }
     }
@@ -687,7 +688,7 @@ impl<'a> InferContext<'a> {
                             && this.unify(boolean, a).is_ok()
                             && this.unify(boolean, b).is_ok()
                         {
-                            Some(|this: &mut Self, a, b| {
+                            Some(|this: &mut Self, _, _| {
                                 (
                                     TypeInfo::Scalar(
                                         this.add_scalar(ScalarInfo::Concrete(ScalarType::Bool)),
@@ -831,9 +832,12 @@ impl<'a> InferContext<'a> {
             Constraint::Access { out, record, field } => {
                 match self.get(self.get_base(record)) {
                     TypeInfo::Unknown => Ok(false), // Can't infer yet
-                    TypeInfo::Struct(fields) => {
+                    TypeInfo::Struct(id) => {
+                        let fields = self.structs.get(&id).unwrap();
+
                         if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == *field) {
-                            self.unify(out, *ty)?;
+                            let ty = *ty;
+                            self.unify(out, ty)?;
                             Ok(true)
                         } else {
                             Err(Error::custom(format!(
@@ -957,12 +961,7 @@ impl<'a> InferContext<'a> {
                 self.reconstruct_scalar(a)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
-            Struct(fields) => Type::Struct(
-                fields
-                    .into_iter()
-                    .map(|(name, field)| Ok((name, self.reconstruct_inner(iter + 1, field)?)))
-                    .collect::<Result<_, _>>()?,
-            ),
+            Struct(id) => Type::Struct(id),
             TypeInfo::Vector(scalar, size) => {
                 if let (base, SizeInfo::Concrete(size)) = (scalar, size) {
                     Type::Vector(

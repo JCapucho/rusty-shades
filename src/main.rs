@@ -24,8 +24,6 @@ fn main() -> io::Result<()> {
 
     let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
 
-    println!("{:#?}", naga_ir);
-
     let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
     let output = OpenOptions::new()
