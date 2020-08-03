@@ -405,7 +405,6 @@ impl Type {
                 ))
             }
             Type::Struct(id) => Some(structs_lookup.get(id).unwrap().clone()),
-            Type::Func(_, _) => unimplemented!(),
         })
     }
 }

@@ -17,13 +17,9 @@ impl Error {
         }
     }
 
-    pub fn at(self, _span: Span) -> Self {
-        self
-    }
+    pub fn at(self, _span: Span) -> Self { self }
 
-    pub fn merge(self, _other: Self) -> Self {
-        self
-    }
+    pub fn merge(self, _other: Self) -> Self { self }
 
     pub fn with_span(mut self, span: Span) -> Self {
         self.spans.push(span);
@@ -37,55 +33,43 @@ impl Error {
 }
 
 impl parze::error::Error<char> for Error {
+    type Context = ();
     type Span = Span;
     type Thing = Thing;
-    type Context = ();
 
     fn unexpected_sym(c: &char, span: Span) -> Self {
         Self::custom(format!("Unexpected character '{}'", c)).with_span(span)
     }
 
-    fn unexpected_end() -> Self {
-        Self::custom(format!("Unexpected end of input"))
-    }
+    fn unexpected_end() -> Self { Self::custom(format!("Unexpected end of input")) }
 
     fn expected_end(c: &char, span: Span) -> Self {
         Self::custom(format!("Expected end of input, found '{}'", c)).with_span(span)
     }
 
-    fn expected(self, _thing: Self::Thing) -> Self {
-        self
-    }
+    fn expected(self, _thing: Self::Thing) -> Self { self }
 
-    fn merge(self, other: Self) -> Self {
-        self.merge(other)
-    }
+    fn merge(self, other: Self) -> Self { self.merge(other) }
 }
 
 impl parze::error::Error<SrcNode<Token>> for Error {
+    type Context = ();
     type Span = Span;
     type Thing = Thing;
-    type Context = ();
 
     fn unexpected_sym(sym: &SrcNode<Token>, span: Span) -> Self {
         Self::custom(format!("Unexpected token '{}'", **sym)).with_span(span)
     }
 
-    fn unexpected_end() -> Self {
-        Self::custom(format!("Unexpected end of input"))
-    }
+    fn unexpected_end() -> Self { Self::custom(format!("Unexpected end of input")) }
 
     fn expected_end(sym: &SrcNode<Token>, span: Span) -> Self {
         Self::custom(format!("Expected end of input, found '{}'", **sym)).with_span(span)
     }
 
-    fn expected(self, _thing: Self::Thing) -> Self {
-        self
-    }
+    fn expected(self, _thing: Self::Thing) -> Self { self }
 
-    fn merge(self, other: Self) -> Self {
-        self.merge(other)
-    }
+    fn merge(self, other: Self) -> Self { self.merge(other) }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -95,21 +79,15 @@ pub enum Thing {
 }
 
 impl From<char> for Thing {
-    fn from(c: char) -> Self {
-        Thing::Char(c)
-    }
+    fn from(c: char) -> Self { Thing::Char(c) }
 }
 
 impl From<Token> for Thing {
-    fn from(token: Token) -> Self {
-        Thing::Token(token)
-    }
+    fn from(token: Token) -> Self { Thing::Token(token) }
 }
 
 impl From<SrcNode<Token>> for Thing {
-    fn from(token: SrcNode<Token>) -> Self {
-        Self::from(token.into_inner())
-    }
+    fn from(token: SrcNode<Token>) -> Self { Self::from(token.into_inner()) }
 }
 
 impl fmt::Display for Thing {

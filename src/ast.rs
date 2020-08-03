@@ -1,16 +1,15 @@
 use crate::{
     error::Error,
-    lex::{Delimiter, FunctionModifier, Literal, ScalarType, Token},
+    lex::{Delimiter, Token},
     node::{Node, SrcNode},
-    Ident,
+    BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
 };
 use parze::prelude::*;
-use std::fmt;
 
 pub type Block = Vec<SrcNode<Statement>>;
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum TopLevelStatement {
+pub enum Item {
     Global {
         modifier: SrcNode<GlobalModifier>,
         ident: SrcNode<Ident>,
@@ -37,7 +36,8 @@ pub enum TopLevelStatement {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Statement {
     Expr(SrcNode<Expression>),
-    Declaration {
+    ExprSemi(SrcNode<Expression>),
+    Local {
         ident: SrcNode<Ident>,
         ty: Option<SrcNode<Type>>,
         init: SrcNode<Expression>,
@@ -46,7 +46,6 @@ pub enum Statement {
         ident: SrcNode<Ident>,
         expr: SrcNode<Expression>,
     },
-    Return(Option<SrcNode<Expression>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -76,74 +75,7 @@ pub enum Expression {
         else_ifs: Vec<(SrcNode<Expression>, SrcNode<Block>)>,
         reject: Option<SrcNode<Block>>,
     },
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub enum BinaryOp {
-    LogicalOr,
-    LogicalAnd,
-
-    Equality,
-    Inequality,
-
-    Greater,
-    GreaterEqual,
-    Less,
-    LessEqual,
-
-    BitWiseOr,
-    BitWiseXor,
-    BitWiseAnd,
-
-    Addition,
-    Subtraction,
-
-    Multiplication,
-    Division,
-    Remainder,
-}
-
-impl fmt::Display for BinaryOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            BinaryOp::LogicalOr => write!(f, "||"),
-            BinaryOp::LogicalAnd => write!(f, "&&"),
-
-            BinaryOp::Equality => write!(f, "=="),
-            BinaryOp::Inequality => write!(f, "!="),
-
-            BinaryOp::Greater => write!(f, ">"),
-            BinaryOp::GreaterEqual => write!(f, ">="),
-            BinaryOp::Less => write!(f, "<"),
-            BinaryOp::LessEqual => write!(f, "<="),
-
-            BinaryOp::BitWiseOr => write!(f, "|"),
-            BinaryOp::BitWiseXor => write!(f, "^"),
-            BinaryOp::BitWiseAnd => write!(f, "&"),
-
-            BinaryOp::Addition => write!(f, "+"),
-            BinaryOp::Subtraction => write!(f, "-"),
-
-            BinaryOp::Multiplication => write!(f, "*"),
-            BinaryOp::Division => write!(f, "/"),
-            BinaryOp::Remainder => write!(f, "%"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub enum UnaryOp {
-    BitWiseNot,
-    Negation,
-}
-
-impl fmt::Display for UnaryOp {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            UnaryOp::BitWiseNot => write!(f, "!"),
-            UnaryOp::Negation => write!(f, "-"),
-        }
-    }
+    Return(Option<SrcNode<Expression>>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -200,8 +132,8 @@ fn generic_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = 
         }))
 }
 
-fn global_modifier_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<GlobalModifier>>, Error> {
+fn global_modifier_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<GlobalModifier>>, Error> {
     use std::iter;
 
     just(Token::Position)
@@ -232,8 +164,8 @@ fn global_modifier_parser(
         .map_with_span(|modifier, span| SrcNode::new(modifier, span))
 }
 
-fn function_modifier_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<FunctionModifier>>, Error> {
+fn function_modifier_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<FunctionModifier>>, Error> {
     permit_map(|token: Node<_>| match &*token {
         Token::FunctionModifier(modifier) => Some(*modifier),
         _ => None,
@@ -276,7 +208,7 @@ fn declaration_parser(
         .then(just(Token::Equal).padding_for(expr))
         .padded_by(just(Token::SemiColon))
         .map_with_span(|((ident, ty), init), span| {
-            SrcNode::new(Statement::Declaration { ident, ty, init }, span)
+            SrcNode::new(Statement::Local { ident, ty, init }, span)
         })
 }
 
@@ -293,16 +225,15 @@ fn assignment_parser(
 
 fn return_parser(
     expr: Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error>,
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
+) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>>, Error> {
     just(Token::Return)
         .padding_for(expr.or_not())
-        .padded_by(just(Token::SemiColon))
-        .map_with_span(|expr, span| SrcNode::new(Statement::Return(expr), span))
+        .map_with_span(|expr, span| SrcNode::new(Expression::Return(expr), span))
 }
 
 fn expr_parser(
     statement: Parser<
-        impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>> + 'static,
+        impl Pattern<Error, Input = Node<Token>, Output = Vec<SrcNode<Statement>>> + 'static,
         Error,
     >,
 ) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Expression>> + 'static, Error>
@@ -313,7 +244,7 @@ fn expr_parser(
         let expr = expr.link();
 
         let block = just(Token::OpenDelimiter(Delimiter::CurlyBraces))
-            .padding_for(statement.clone().repeated())
+            .padding_for(statement.clone())
             .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
             .map_with_span(|block, span| SrcNode::new(block, span))
             .boxed();
@@ -375,7 +306,7 @@ fn expr_parser(
             .then(just(Token::Dot).padding_for(ident_parser()).repeated())
             .reduce_left(|base, field| {
                 let span = base.span().union(field.span());
-                SrcNode::new(Expression::Access { base: base, field }, span)
+                SrcNode::new(Expression::Access { base, field }, span)
             })
             .boxed();
 
@@ -532,26 +463,43 @@ fn expr_parser(
             })
             .boxed();
 
-        logical_or
+        let return_expr = return_parser(expr).or(logical_or);
+
+        return_expr
     })
 }
 
-fn statement_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Statement>>, Error> {
+fn statement_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = Vec<SrcNode<Statement>>>, Error> {
     recursive(|statement| {
         let statement = statement.link();
 
         let expr = expr_parser(statement);
+        let stmt_expr = expr
+            .clone()
+            .map_with_span(|expr, span| SrcNode::new(Statement::Expr(expr), span));
+        let expr_semi = expr
+            .clone()
+            .padded_by(just(Token::SemiColon))
+            .map_with_span(|expr, span| SrcNode::new(Statement::ExprSemi(expr), span));
 
-        assignment_parser(expr.clone())
-            .or(declaration_parser(expr.clone()))
-            .or(return_parser(expr.clone()))
-            .or(expr.map_with_span(|expr, span| SrcNode::new(Statement::Expr(expr), span)))
+        declaration_parser(expr.clone())
+            .or(assignment_parser(expr.clone()))
+            .or(expr_semi)
+            .repeated()
+            .then(stmt_expr.or_not())
+            .map(|(mut stmts, trailing)| {
+                if let Some(stmt) = trailing {
+                    stmts.push(stmt);
+                }
+
+                stmts
+            })
     })
 }
 
-fn global_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TopLevelStatement>>, Error> {
+fn global_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error>
+{
     just(Token::Global)
         .padding_for(global_modifier_parser())
         .then(ident_parser())
@@ -560,7 +508,7 @@ fn global_parser(
         .map_with_span(|((modifier, ident), ty), span| {
             SrcNode::new(
                 {
-                    TopLevelStatement::Global {
+                    Item::Global {
                         ident,
                         modifier,
                         ty,
@@ -571,15 +519,15 @@ fn global_parser(
         })
 }
 
-fn ident_type_pair_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair>>, Error> {
+fn ident_type_pair_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair>>, Error> {
     ident_parser()
         .then(just(Token::Colon).padding_for(type_parser()))
         .map_with_span(|(ident, ty), span| SrcNode::new(IdentTypePair { ident, ty }, span))
 }
 
-fn struct_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TopLevelStatement>>, Error> {
+fn struct_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error>
+{
     just(Token::Struct)
         .padding_for(ident_parser())
         .then(
@@ -588,12 +536,12 @@ fn struct_parser(
                 .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces))),
         )
         .map_with_span(|(ident, fields), span| {
-            SrcNode::new(TopLevelStatement::StructDef { ident, fields }, span)
+            SrcNode::new(Item::StructDef { ident, fields }, span)
         })
 }
 
-fn function_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TopLevelStatement>>, Error> {
+fn function_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error> {
     just(Token::Fn)
         .padding_for(function_modifier_parser().or_not())
         .then(ident_parser())
@@ -605,13 +553,13 @@ fn function_parser(
         .then(just(Token::Arrow).padding_for(type_parser()).or_not())
         .then(
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
-                .padding_for(statement_parser().repeated())
+                .padding_for(statement_parser())
                 .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
                 .map_with_span(|body, span| SrcNode::new(body, span)),
         )
         .map_with_span(|((((modifier, ident), args), ty), body), span| {
             SrcNode::new(
-                TopLevelStatement::Function {
+                Item::Function {
                     modifier,
                     ident,
                     ty,
@@ -623,20 +571,19 @@ fn function_parser(
         })
 }
 
-fn const_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TopLevelStatement>>, Error> {
+fn const_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error>
+{
     just(Token::Const)
         .padding_for(ident_parser())
         .then(just(Token::Colon).padding_for(type_parser()))
         .then(just(Token::Equal).padding_for(expr_parser(statement_parser())))
         .map_with_span(|((ident, ty), init), span| {
-            SrcNode::new(TopLevelStatement::Const { ident, ty, init }, span)
+            SrcNode::new(Item::Const { ident, ty, init }, span)
         })
 }
 
-fn top_statement_parser(
-) -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Vec<SrcNode<TopLevelStatement>>>, Error>
-{
+fn top_statement_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = Vec<SrcNode<Item>>>, Error> {
     global_parser()
         .or(struct_parser())
         .or(function_parser())
@@ -644,7 +591,7 @@ fn top_statement_parser(
         .repeated()
 }
 
-pub fn parse(tokens: &[Node<Token>]) -> Result<Vec<SrcNode<TopLevelStatement>>, Vec<Error>> {
+pub fn parse(tokens: &[Node<Token>]) -> Result<Vec<SrcNode<Item>>, Vec<Error>> {
     top_statement_parser()
         .padded_by(end())
         .parse(tokens.iter().cloned())

@@ -1,19 +1,24 @@
 pub mod ast;
-pub mod backends;
+//pub mod backends;
 pub mod error;
+pub mod hir;
 pub mod ir;
 pub mod lex;
 pub mod node;
 pub mod src;
 pub mod ty;
 
-use codespan_reporting::files::SimpleFiles;
-use codespan_reporting::term::{
-    self,
-    termcolor::{ColorChoice, StandardStream},
+use codespan_reporting::{
+    files::SimpleFiles,
+    term::{
+        self,
+        termcolor::{ColorChoice, StandardStream},
+    },
 };
 use internment::ArcIntern;
 use naga::back::spv;
+use ordered_float::OrderedFloat;
+use std::fmt;
 
 pub type Ident = ArcIntern<String>;
 
@@ -32,7 +37,7 @@ macro_rules! handle_errors {
                 }
 
                 return Err(());
-            }
+            },
         }
     };
 }
@@ -47,11 +52,118 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, ()> {
 
     let ast = handle_errors!(ast::parse(&tokens), &files, file_id);
 
-    let module = handle_errors!(ir::Module::build(&ast), &files, file_id);
+    let module = handle_errors!(hir::Module::build(&ast), &files, file_id);
+    let module = handle_errors!(module.build_ir(), &files, file_id);
 
-    let naga_ir = handle_errors!(backends::naga::build(&module), &files, file_id);
+    //let naga_ir = handle_errors!(backends::naga::build(&module), &files,
+    // file_id);
 
-    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
+    //let spirv = spv::Writer::new(&naga_ir.header,
+    // spv::WriterFlags::DEBUG).write(&naga_ir);
 
-    Ok(spirv)
+    todo!();
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+pub enum FunctionModifier {
+    Vertex,
+    Fragment,
+}
+
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy)]
+pub enum Literal {
+    Int(i64),
+    Uint(u64),
+    Float(OrderedFloat<f64>),
+    Boolean(bool),
+}
+
+#[repr(u8)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+pub enum ScalarType {
+    Uint = 0,
+    Int,
+    Float,
+    Double,
+    Bool = 0xFF,
+}
+
+impl fmt::Display for ScalarType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ScalarType::Uint => write!(f, "uint"),
+            ScalarType::Int => write!(f, "sint"),
+            ScalarType::Float => write!(f, "float"),
+            ScalarType::Double => write!(f, "double"),
+            ScalarType::Bool => write!(f, "bool"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+pub enum BinaryOp {
+    LogicalOr,
+    LogicalAnd,
+
+    Equality,
+    Inequality,
+
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+
+    BitWiseOr,
+    BitWiseXor,
+    BitWiseAnd,
+
+    Addition,
+    Subtraction,
+
+    Multiplication,
+    Division,
+    Remainder,
+}
+
+impl fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            BinaryOp::LogicalOr => write!(f, "||"),
+            BinaryOp::LogicalAnd => write!(f, "&&"),
+
+            BinaryOp::Equality => write!(f, "=="),
+            BinaryOp::Inequality => write!(f, "!="),
+
+            BinaryOp::Greater => write!(f, ">"),
+            BinaryOp::GreaterEqual => write!(f, ">="),
+            BinaryOp::Less => write!(f, "<"),
+            BinaryOp::LessEqual => write!(f, "<="),
+
+            BinaryOp::BitWiseOr => write!(f, "|"),
+            BinaryOp::BitWiseXor => write!(f, "^"),
+            BinaryOp::BitWiseAnd => write!(f, "&"),
+
+            BinaryOp::Addition => write!(f, "+"),
+            BinaryOp::Subtraction => write!(f, "-"),
+
+            BinaryOp::Multiplication => write!(f, "*"),
+            BinaryOp::Division => write!(f, "/"),
+            BinaryOp::Remainder => write!(f, "%"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+pub enum UnaryOp {
+    BitWiseNot,
+    Negation,
+}
+
+impl fmt::Display for UnaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            UnaryOp::BitWiseNot => write!(f, "!"),
+            UnaryOp::Negation => write!(f, "-"),
+        }
+    }
 }

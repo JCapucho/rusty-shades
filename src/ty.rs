@@ -1,8 +1,7 @@
-use crate::lex::ScalarType;
-use crate::node::SrcNode;
+use crate::ScalarType;
 use naga::VectorSize;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Type {
     Empty,
     Scalar(ScalarType),
@@ -13,5 +12,4 @@ pub enum Type {
         base: ScalarType,
     },
     Struct(u32),
-    Func(Vec<SrcNode<Type>>, SrcNode<Type>),
 }

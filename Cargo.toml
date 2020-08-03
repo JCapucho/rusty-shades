@@ -6,11 +6,13 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-internment = { git = "https://github.com/droundy/internment.git" }
-parze = { git = "https://github.com/zesterer/parze-new.git" }
+internment = "0.4.0"
+parze = { git = "https://github.com/zesterer/parze-new.git", rev = "d42e00dbd0d6efe083a266d7d456a822440c54e3" }
 ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
-naga = { git = "https://github.com/gfx-rs/naga.git", features = ["spirv"] }
+naga = { git = "https://github.com/gfx-rs/naga.git", features = [
+    "spirv"
+], rev = "1eb637038dd15fc1dad770eca8e6943424dbc122" }
 
 [features]
 default = ["codespan-reporting"]

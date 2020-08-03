@@ -78,8 +78,9 @@ dependencies = [
 
 [[package]]
 name = "internment"
-version = "0.3.13"
-source = "git+https://github.com/droundy/internment.git#7c573b6f2386e3d3cd2ab00cfe5a37f6b1a22b16"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e674c13abf4b23da884931b189fa03f4df086f024e7360b2109a2ec84cbb3cf"
 dependencies = [
  "hashbrown",
  "lazy_static",
@@ -120,7 +121,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "0.1.0"
-source = "git+https://github.com/gfx-rs/naga.git#d26f75485304a574b4500a116794ee451e0c072c"
+source = "git+https://github.com/gfx-rs/naga.git?rev=1eb637038dd15fc1dad770eca8e6943424dbc122#1eb637038dd15fc1dad770eca8e6943424dbc122"
 dependencies = [
  "bitflags",
  "fxhash",
@@ -151,7 +152,7 @@ dependencies = [
 [[package]]
 name = "parze"
 version = "0.1.0"
-source = "git+https://github.com/zesterer/parze-new.git#d42e00dbd0d6efe083a266d7d456a822440c54e3"
+source = "git+https://github.com/zesterer/parze-new.git?rev=d42e00dbd0d6efe083a266d7d456a822440c54e3#d42e00dbd0d6efe083a266d7d456a822440c54e3"
 
 [[package]]
 name = "ppv-lite86"

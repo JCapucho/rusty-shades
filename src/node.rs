@@ -9,17 +9,11 @@ use std::{
 pub struct Node<T, U = Span>(Box<T>, U);
 
 impl<T, U> Node<T, U> {
-    pub fn new(item: T, attr: U) -> Self {
-        Self(Box::new(item), attr)
-    }
+    pub fn new(item: T, attr: U) -> Self { Self(Box::new(item), attr) }
 
-    pub fn inner(&self) -> &T {
-        &self.0
-    }
+    pub fn inner(&self) -> &T { &self.0 }
 
-    pub fn into_inner(self) -> T {
-        *self.0
-    }
+    pub fn into_inner(self) -> T { *self.0 }
 
     pub fn map_inner<V>(self, f: impl FnOnce(T) -> V) -> Node<V, U> {
         let Node(inner, meta) = self;
@@ -38,27 +32,19 @@ impl<T, U> Node<T, U> {
         Node::new(&*self, self.1.clone())
     }
 
-    pub fn attr(&self) -> &U {
-        &self.1
-    }
+    pub fn attr(&self) -> &U { &self.1 }
 
-    pub fn attr_mut(&mut self) -> &mut U {
-        &mut self.1
-    }
+    pub fn attr_mut(&mut self) -> &mut U { &mut self.1 }
 }
 
 impl<T, U> Deref for Node<T, U> {
     type Target = T;
 
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
+    fn deref(&self) -> &Self::Target { &*self.0 }
 }
 
 impl<T, U> DerefMut for Node<T, U> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.0
-    }
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut *self.0 }
 }
 
 impl<T: fmt::Debug, U: fmt::Debug> fmt::Debug for Node<T, U> {
@@ -72,9 +58,7 @@ impl<T: fmt::Debug, U: fmt::Debug> fmt::Debug for Node<T, U> {
 }
 
 impl<T: PartialEq, U> PartialEq for Node<T, U> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
+    fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
 }
 
 impl<T: Eq, U> Eq for Node<T, U> {}
@@ -82,7 +66,5 @@ impl<T: Eq, U> Eq for Node<T, U> {}
 pub type SrcNode<T> = Node<T, Span>;
 
 impl<T> SrcNode<T> {
-    pub fn span(&self) -> Span {
-        *self.attr()
-    }
+    pub fn span(&self) -> Span { *self.attr() }
 }

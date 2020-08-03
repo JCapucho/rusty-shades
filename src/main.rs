@@ -1,12 +1,16 @@
-use codespan_reporting::files::SimpleFiles;
-use codespan_reporting::term::{
-    self,
-    termcolor::{ColorChoice, StandardStream},
+use codespan_reporting::{
+    files::SimpleFiles,
+    term::{
+        self,
+        termcolor::{ColorChoice, StandardStream},
+    },
 };
 use naga::back::spv;
-use rusty_shades::{ast, backends, error::Error, ir, lex};
-use std::fs::{read_to_string, File, OpenOptions};
-use std::io::{self, Write};
+use rusty_shades::{ast, error::Error, hir, ir, lex};
+use std::{
+    fs::{read_to_string, File, OpenOptions},
+    io::{self, Write},
+};
 
 const NAME: &str = "simple-vertex.rsh";
 
@@ -20,24 +24,29 @@ fn main() -> io::Result<()> {
 
     let ast = handle_errors(ast::parse(&tokens), &files, file_id)?;
 
-    let module = handle_errors(ir::Module::build(&ast), &files, file_id)?;
+    let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
+    let module = handle_errors(module.build_ir(), &files, file_id)?;
 
-    let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
+    println!("{:#?}", module);
 
-    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
+    // let naga_ir = handle_errors(backends::naga::build(&module), &files,
+    // file_id)?;
 
-    let output = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open("debug.spv")?;
+    // let spirv = spv::Writer::new(&naga_ir.header,
+    // spv::WriterFlags::DEBUG).write(&naga_ir);
 
-    let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
-        f.write(&x.to_le_bytes())?;
-        Ok(f)
-    });
+    // let output = OpenOptions::new()
+    //     .write(true)
+    //     .truncate(true)
+    //     .create(true)
+    //     .open("debug.spv")?;
 
-    x?;
+    // let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
+    //     f.write(&x.to_le_bytes())?;
+    //     Ok(f)
+    // });
+
+    // x?;
 
     Ok(())
 }
@@ -60,6 +69,6 @@ fn handle_errors<T>(
             }
 
             std::process::exit(1);
-        }
+        },
     }
 }

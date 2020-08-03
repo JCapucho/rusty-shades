@@ -1,5 +1,4 @@
-use crate::{error::Error, node::SrcNode, src::Span, Ident};
-use ordered_float::OrderedFloat;
+use crate::{error::Error, node::SrcNode, src::Span, FunctionModifier, Ident, Literal, ScalarType};
 use parze::prelude::*;
 use std::fmt;
 
@@ -57,60 +56,38 @@ pub enum Token {
 }
 
 impl Token {
-    fn at(self, span: Span) -> SrcNode<Self> {
-        SrcNode::new(self, span)
-    }
+    fn at(self, span: Span) -> SrcNode<Self> { SrcNode::new(self, span) }
 }
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Token::Identifier(ident) => write!(f, "{}", ident),
-            Token::FunctionModifier(modifier) => write!(
-                f,
-                "{}",
-                match modifier {
-                    FunctionModifier::Vertex => "vertex",
-                    FunctionModifier::Fragment => "fragment",
-                }
-            ),
-            Token::OpenDelimiter(delimiter) => write!(
-                f,
-                "{}",
-                match delimiter {
-                    Delimiter::Parentheses => "(",
-                    Delimiter::CurlyBraces => "{",
-                }
-            ),
-            Token::CloseDelimiter(delimiter) => write!(
-                f,
-                "{}",
-                match delimiter {
-                    Delimiter::Parentheses => ")",
-                    Delimiter::CurlyBraces => "}",
-                }
-            ),
-            Token::Literal(literal) => write!(
-                f,
-                "{}",
-                match literal {
-                    Literal::Boolean(b) => b.to_string(),
-                    Literal::Float(f) => f.to_string(),
-                    Literal::Uint(u) => u.to_string(),
-                    Literal::Int(i) => i.to_string(),
-                }
-            ),
-            Token::ScalarType(ty) => write!(
-                f,
-                "{}",
-                match ty {
-                    ScalarType::Double => "Double",
-                    ScalarType::Float => "Float",
-                    ScalarType::Int => "Int",
-                    ScalarType::Uint => "Uint",
-                    ScalarType::Bool => "Bool",
-                }
-            ),
+            Token::FunctionModifier(modifier) => write!(f, "{}", match modifier {
+                FunctionModifier::Vertex => "vertex",
+                FunctionModifier::Fragment => "fragment",
+            }),
+            Token::OpenDelimiter(delimiter) => write!(f, "{}", match delimiter {
+                Delimiter::Parentheses => "(",
+                Delimiter::CurlyBraces => "{",
+            }),
+            Token::CloseDelimiter(delimiter) => write!(f, "{}", match delimiter {
+                Delimiter::Parentheses => ")",
+                Delimiter::CurlyBraces => "}",
+            }),
+            Token::Literal(literal) => write!(f, "{}", match literal {
+                Literal::Boolean(b) => b.to_string(),
+                Literal::Float(f) => f.to_string(),
+                Literal::Uint(u) => u.to_string(),
+                Literal::Int(i) => i.to_string(),
+            }),
+            Token::ScalarType(ty) => write!(f, "{}", match ty {
+                ScalarType::Double => "Double",
+                ScalarType::Float => "Float",
+                ScalarType::Int => "Int",
+                ScalarType::Uint => "Uint",
+                ScalarType::Bool => "Bool",
+            }),
             Token::Global => write!(f, "global"),
             Token::Colon => write!(f, ":"),
             Token::Const => write!(f, "const"),
@@ -153,50 +130,12 @@ impl fmt::Display for Token {
 }
 
 impl PartialEq<Token> for SrcNode<Token> {
-    fn eq(&self, other: &Token) -> bool {
-        &**self == other
-    }
+    fn eq(&self, other: &Token) -> bool { &**self == other }
 }
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
 pub enum Delimiter {
     Parentheses,
     CurlyBraces,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub enum FunctionModifier {
-    Vertex,
-    Fragment,
-}
-
-#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy)]
-pub enum Literal {
-    Int(i64),
-    Uint(u64),
-    Float(OrderedFloat<f64>),
-    Boolean(bool),
-}
-
-#[repr(u8)]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub enum ScalarType {
-    Uint = 0,
-    Int,
-    Float,
-    Double,
-    Bool = 0xFF,
-}
-
-impl fmt::Display for ScalarType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ScalarType::Uint => write!(f, "uint"),
-            ScalarType::Int => write!(f, "sint"),
-            ScalarType::Float => write!(f, "float"),
-            ScalarType::Double => write!(f, "double"),
-            ScalarType::Bool => write!(f, "bool"),
-        }
-    }
 }
 
 pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
