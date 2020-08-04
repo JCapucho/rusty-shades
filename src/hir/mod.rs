@@ -335,6 +335,12 @@ impl Module {
             globals.into_iter().map(Result::unwrap).collect()
         };
 
+        for name in partial.functions.keys() {
+            let id = functions.len() as u32;
+
+            functions_lookup.insert(name.clone(), id);
+        }
+
         for (name, func) in partial.functions.iter() {
             let mut body = vec![];
             let mut locals_lookup = FastHashMap::default();
@@ -351,6 +357,8 @@ impl Module {
                     &mut locals,
                     func.ret,
                     func.ret,
+                    &partial.functions,
+                    &functions_lookup,
                 ) {
                     Ok(s) => body.push(s),
                     Err(mut e) => errors.append(&mut e),
@@ -415,12 +423,8 @@ impl Module {
                 body.into_iter().map(Result::unwrap).collect()
             };
 
-            let id = functions.len() as u32;
-
-            functions_lookup.insert(name.clone(), id);
-
             functions.insert(
-                id,
+                *functions_lookup.get(name).unwrap(),
                 SrcNode::new(
                     Function {
                         name: name.clone(),
@@ -1048,6 +1052,8 @@ impl SrcNode<ast::Statement> {
         locals: &mut u32,
         ret: TypeId,
         out: TypeId,
+        functions: &FastHashMap<Ident, SrcNode<PartialFunction>>,
+        functions_lookup: &FastHashMap<Ident, u32>,
     ) -> Result<Statement<InferNode>, Vec<Error>> {
         Ok(match self.inner() {
             ast::Statement::Expr(expr) => {
@@ -1063,6 +1069,8 @@ impl SrcNode<ast::Statement> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 )?;
 
                 if discriminant(&TypedExpr::Return(None)) != discriminant(expr.inner()) {
@@ -1085,6 +1093,8 @@ impl SrcNode<ast::Statement> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 )?;
 
                 Statement::ExprSemi(expr)
@@ -1100,6 +1110,8 @@ impl SrcNode<ast::Statement> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 )?;
 
                 let local = *locals;
@@ -1139,6 +1151,8 @@ impl SrcNode<ast::Statement> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 )?;
 
                 match infer_ctx.unify(id, expr.type_id()) {
@@ -1164,6 +1178,8 @@ impl SrcNode<ast::Expression> {
         locals: &mut u32,
         ret: TypeId,
         out: TypeId,
+        functions: &FastHashMap<Ident, SrcNode<PartialFunction>>,
+        functions_lookup: &FastHashMap<Ident, u32>,
     ) -> Result<InferNode, Vec<Error>> {
         let empty = infer_ctx.insert(TypeInfo::Empty, self.span());
         let mut errors = vec![];
@@ -1180,6 +1196,8 @@ impl SrcNode<ast::Expression> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 ) {
                     Ok(t) => t,
                     Err(mut e) => {
@@ -1197,6 +1215,8 @@ impl SrcNode<ast::Expression> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 ) {
                     Ok(t) => t,
                     Err(mut e) => {
@@ -1233,6 +1253,8 @@ impl SrcNode<ast::Expression> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 ) {
                     Ok(t) => t,
                     Err(mut e) => {
@@ -1256,7 +1278,72 @@ impl SrcNode<ast::Expression> {
                     (out, self.span()),
                 )
             },
-            ast::Expression::Call { name, args } => unimplemented!(),
+            ast::Expression::Call {
+                name,
+                args: call_args,
+            } => {
+                if let Some(func) = functions.get(name.inner()) {
+                    if call_args.len() != func.args.len() {
+                        errors.push(
+                            Error::custom(format!(
+                                "Function takes {} arguments {} supplied",
+                                func.args.len(),
+                                args.len()
+                            ))
+                            .with_span(name.span()),
+                        );
+                    }
+
+                    let mut func_args: Vec<_> = func.args.values().collect();
+                    func_args.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+                    let mut constructed_args = Vec::with_capacity(call_args.len());
+
+                    for ((_, ty), arg) in func_args.iter().zip(call_args.iter()) {
+                        match arg.build_hir(
+                            infer_ctx,
+                            locals_lookup,
+                            args,
+                            globals_lookup,
+                            statements,
+                            structs,
+                            locals,
+                            ret,
+                            out,
+                            functions,
+                            functions_lookup,
+                        ) {
+                            Ok(arg) => {
+                                match infer_ctx.unify(arg.type_id(), *ty) {
+                                    Ok(_) => {},
+                                    Err(e) => errors.push(e),
+                                }
+
+                                constructed_args.push(arg)
+                            },
+                            Err(mut e) => errors.append(&mut e),
+                        };
+                    }
+
+                    if errors.len() != 0 {
+                        return Err(errors);
+                    }
+
+                    InferNode::new(
+                        TypedExpr::Call {
+                            name: *functions_lookup.get(name.inner()).unwrap(),
+                            args: constructed_args,
+                        },
+                        (func.ret, self.span()),
+                    )
+                } else {
+                    errors.push(
+                        Error::custom(String::from("Function doesn't exist"))
+                            .with_span(name.span()),
+                    );
+                    return Err(errors);
+                }
+            },
             ast::Expression::Literal(lit) => {
                 let base = infer_ctx.add_scalar(lit.scalar_info());
                 let out = infer_ctx.insert(TypeInfo::Scalar(base), self.span());
@@ -1274,6 +1361,8 @@ impl SrcNode<ast::Expression> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 ) {
                     Ok(t) => t,
                     Err(mut e) => {
@@ -1337,6 +1426,8 @@ impl SrcNode<ast::Expression> {
                     locals,
                     ret,
                     out,
+                    functions,
+                    functions_lookup,
                 )?;
 
                 let boolean = {
@@ -1365,6 +1456,8 @@ impl SrcNode<ast::Expression> {
                                 locals,
                                 ret,
                                 out,
+                                functions,
+                                functions_lookup,
                             )
                         })
                         .collect::<Result<_, _>>()?,
@@ -1384,6 +1477,8 @@ impl SrcNode<ast::Expression> {
                             locals,
                             ret,
                             out,
+                            functions,
+                            functions_lookup,
                         )?;
 
                         let boolean = {
@@ -1413,6 +1508,8 @@ impl SrcNode<ast::Expression> {
                                             locals,
                                             ret,
                                             out,
+                                            functions,
+                                            functions_lookup,
                                         )
                                     })
                                     .collect::<Result<_, _>>()?,
@@ -1439,6 +1536,8 @@ impl SrcNode<ast::Expression> {
                                         locals,
                                         ret,
                                         out,
+                                        functions,
+                                        functions_lookup,
                                     )
                                 })
                                 .collect::<Result<_, _>>()?,
@@ -1471,6 +1570,8 @@ impl SrcNode<ast::Expression> {
                             locals,
                             ret,
                             out,
+                            functions,
+                            functions_lookup,
                         )
                     })
                     .transpose()?;

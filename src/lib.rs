@@ -1,5 +1,5 @@
 pub mod ast;
-//pub mod backends;
+pub mod backends;
 pub mod error;
 pub mod hir;
 pub mod ir;
@@ -55,13 +55,11 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, ()> {
     let module = handle_errors!(hir::Module::build(&ast), &files, file_id);
     let module = handle_errors!(module.build_ir(), &files, file_id);
 
-    //let naga_ir = handle_errors!(backends::naga::build(&module), &files,
-    // file_id);
+    let naga_ir = handle_errors!(backends::naga::build(&module), &files, file_id);
 
-    //let spirv = spv::Writer::new(&naga_ir.header,
-    // spv::WriterFlags::DEBUG).write(&naga_ir);
+    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
-    todo!();
+    Ok(spirv)
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]

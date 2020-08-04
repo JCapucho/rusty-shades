@@ -67,7 +67,7 @@ pub enum Expr {
         op: UnaryOp,
     },
     Call {
-        name: Ident,
+        name: u32,
         args: Vec<TypedExpr>,
     },
     Literal(Literal),
@@ -82,6 +82,7 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Function {
+    pub name: Ident,
     pub modifier: Option<FunctionModifier>,
     pub args: Vec<Type>,
     pub ret: Type,
@@ -231,6 +232,7 @@ impl SrcNode<hir::Function> {
 
         if errors.len() == 0 {
             Ok(Function {
+                name: func.name,
                 modifier: func.modifier,
                 args: func.args,
                 ret: func.ret,
@@ -377,7 +379,25 @@ impl hir::TypedNode {
 
                 Expr::UnaryOp { tgt, op }
             },
-            hir::Expr::Call { name, args } => todo!(),
+            hir::Expr::Call { name, args } => {
+                let mut constructed_args = vec![];
+
+                for arg in args {
+                    constructed_args.push(fallthrough!(arg.build_ir(
+                        modifier,
+                        body,
+                        locals,
+                        globals,
+                        globals_lookup,
+                        nested
+                    ))?);
+                }
+
+                Expr::Call {
+                    name,
+                    args: constructed_args,
+                }
+            },
             hir::Expr::Literal(lit) => Expr::Literal(lit),
             hir::Expr::Access { base, fields } => Expr::Access {
                 base: fallthrough!(base.build_ir(

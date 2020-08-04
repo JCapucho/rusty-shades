@@ -1,17 +1,15 @@
-use crate::ir::{AssignTarget, Expr, Function, Module, Statement, Struct, TypedNode};
-use crate::lex::{FunctionModifier, Literal, ScalarType};
 use crate::{
-    ast::{BinaryOp, UnaryOp},
     error::Error,
+    hir::AssignTarget,
+    ir::{Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::Type,
-    Ident,
+    BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp,
 };
 use naga::{
-    Arena, BinaryOperator, Binding, BuiltIn, Constant, ConstantInner, EntryPoint, Expression,
-    FastHashMap, Function as NagaFunction, FunctionOrigin, GlobalUse, GlobalVariable, Handle,
-    Header, LocalVariable, MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage,
-    Statement as NagaStatement, StorageClass, StructMember, Type as NagaType, TypeInner,
-    UnaryOperator,
+    Arena, BinaryOperator, Constant, ConstantInner, EntryPoint, Expression, FastHashMap,
+    Function as NagaFunction, FunctionOrigin, GlobalUse, GlobalVariable, Handle, Header,
+    LocalVariable, MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage,
+    Statement as NagaStatement, StructMember, Type as NagaType, TypeInner, UnaryOperator,
 };
 
 #[derive(Debug)]
@@ -44,7 +42,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
                 Err(e) => {
                     errors.push(e);
                     continue;
-                }
+                },
             };
 
         structs_lookup.insert(*id, (types.append(ty), offset));
@@ -60,58 +58,17 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
             Err(e) => {
                 errors.push(e);
                 continue;
-            }
+            },
         };
 
-        match global.modifier {
-            crate::ast::GlobalModifier::Position => {
-                let vert = globals.append(GlobalVariable {
-                    name: Some(global.name.to_string()),
-                    class: StorageClass::Output,
-                    binding: Some(Binding::BuiltIn(BuiltIn::Position)),
-                    ty,
-                });
+        let handle = globals.append(GlobalVariable {
+            name: Some(global.name.to_string()),
+            class: global.storage,
+            binding: Some(global.binding.clone()),
+            ty,
+        });
 
-                let frag = globals.append(GlobalVariable {
-                    name: Some(global.name.to_string()),
-                    class: StorageClass::Output,
-                    binding: Some(Binding::BuiltIn(BuiltIn::Position)),
-                    ty,
-                });
-
-                globals_lookup.insert(*id, GlobalLookup::ContextFull { vert, frag });
-            }
-            crate::ast::GlobalModifier::Input(location) => {
-                let handle = globals.append(GlobalVariable {
-                    name: Some(global.name.to_string()),
-                    class: StorageClass::Input,
-                    binding: Some(Binding::Location(location)),
-                    ty,
-                });
-
-                globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
-            }
-            crate::ast::GlobalModifier::Output(location) => {
-                let handle = globals.append(GlobalVariable {
-                    name: Some(global.name.to_string()),
-                    class: StorageClass::Output,
-                    binding: Some(Binding::Location(location)),
-                    ty,
-                });
-
-                globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
-            }
-            crate::ast::GlobalModifier::Uniform { set, binding } => {
-                let handle = globals.append(GlobalVariable {
-                    name: Some(global.name.to_string()),
-                    class: StorageClass::Uniform,
-                    binding: Some(Binding::Descriptor { set, binding }),
-                    ty,
-                });
-
-                globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
-            }
-        }
+        globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
     }
 
     let mut func_builder = FunctionBuilder {
@@ -126,13 +83,13 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         structs_lookup: &structs_lookup,
     };
 
-    for (name, function) in module.functions.iter() {
-        match function.build_naga(module, name, &mut func_builder, 0) {
-            Ok(_) => {}
+    for (id, function) in module.functions.iter() {
+        match function.build_naga(module, *id, &mut func_builder, 0) {
+            Ok(_) => {},
             Err(mut e) => {
                 errors.append(&mut e);
                 continue;
-            }
+            },
         };
     }
 
@@ -160,8 +117,8 @@ struct FunctionBuilder<'a> {
     constants: &'a mut Arena<Constant>,
     functions_arena: &'a mut Arena<NagaFunction>,
     entry_points: &'a mut Vec<EntryPoint>,
-    functions_lookup: FastHashMap<Ident, Handle<NagaFunction>>,
-    functions: &'a FastHashMap<Ident, Function>,
+    functions_lookup: FastHashMap<u32, Handle<NagaFunction>>,
+    functions: &'a FastHashMap<u32, Function>,
     structs_lookup: &'a FastHashMap<u32, (Handle<NagaType>, u32)>,
 }
 
@@ -169,11 +126,11 @@ impl Function {
     fn build_naga<'a>(
         &self,
         module: &Module,
-        name: &Ident,
+        id: u32,
         builder: &mut FunctionBuilder<'a>,
         iter: usize,
     ) -> Result<Handle<NagaFunction>, Vec<Error>> {
-        if let Some(handle) = builder.functions_lookup.get(name) {
+        if let Some(handle) = builder.functions_lookup.get(&id) {
             return Ok(*handle);
         }
 
@@ -209,7 +166,7 @@ impl Function {
             Err(e) => {
                 errors.push(e);
                 return Err(errors);
-            }
+            },
         };
 
         let mut local_variables = Arena::new();
@@ -224,7 +181,7 @@ impl Function {
                 Err(e) => {
                     errors.push(e);
                     continue;
-                }
+                },
             };
 
             let handle = local_variables.append(LocalVariable {
@@ -273,7 +230,7 @@ impl Function {
         let global_usage = GlobalUse::scan(&expressions, &body, &builder.globals);
 
         let handle = builder.functions_arena.append(NagaFunction {
-            name: Some(name.to_string()),
+            name: Some(self.name.to_string()),
             parameter_types,
             return_type,
             global_usage,
@@ -286,22 +243,22 @@ impl Function {
             Some(FunctionModifier::Vertex) => {
                 builder.entry_points.push(EntryPoint {
                     stage: ShaderStage::Vertex,
-                    name: name.to_string(),
+                    name: self.name.to_string(),
                     function: handle,
                 });
-            }
+            },
             Some(FunctionModifier::Fragment) => {
                 builder.entry_points.push(EntryPoint {
                     stage: ShaderStage::Fragment,
-                    name: name.to_string(),
+                    name: self.name.to_string(),
                     function: handle,
                 });
-            }
-            None => {}
+            },
+            None => {},
         }
 
         if errors.len() == 0 {
-            builder.functions_lookup.insert(name.clone(), handle);
+            builder.functions_lookup.insert(id, handle);
             Ok(handle)
         } else {
             Err(errors)
@@ -319,14 +276,14 @@ impl Struct {
         let mut offset = 0;
         let mut members = vec![];
 
-        for (name, (_, ty)) in self.fields.iter() {
+        for (name, ty) in self.fields.iter() {
             let (ty, size) = match ty.build_naga(types, structs_lookup)? {
                 Some(t) => t,
                 None => {
                     return Err(Error::custom(String::from(
                         "Struct member cannot be of type ()",
-                    )))
-                }
+                    )));
+                },
             };
 
             members.push(StructMember {
@@ -364,11 +321,11 @@ impl Type {
                 Some((
                     types.fetch_or_append(NagaType {
                         name: None,
-                        inner: TypeInner::Scalar { kind, width: width },
+                        inner: TypeInner::Scalar { kind, width },
                     }),
                     width as u32,
                 ))
-            }
+            },
             Type::Vector(scalar, size) => {
                 let (kind, width) = scalar.build_naga();
 
@@ -383,7 +340,7 @@ impl Type {
                     }),
                     width as u32,
                 ))
-            }
+            },
             Type::Matrix {
                 columns,
                 rows,
@@ -403,7 +360,7 @@ impl Type {
                     }),
                     width as u32,
                 ))
-            }
+            },
             Type::Struct(id) => Some(structs_lookup.get(id).unwrap().clone()),
         })
     }
@@ -421,7 +378,7 @@ impl ScalarType {
     }
 }
 
-impl Statement<TypedNode> {
+impl Statement {
     fn build_naga<'a>(
         &self,
         module: &Module,
@@ -436,7 +393,7 @@ impl Statement<TypedNode> {
                 let pointer = expressions.append(match tgt {
                     AssignTarget::Local(id) => {
                         Expression::LocalVariable(*locals_lookup.get(id).unwrap())
-                    }
+                    },
                     AssignTarget::Global(id) => Expression::GlobalVariable(
                         match (builder.globals_lookup.get(id).unwrap(), modifier) {
                             (GlobalLookup::ContextLess(handle), _) => *handle,
@@ -452,7 +409,7 @@ impl Statement<TypedNode> {
                                 return Err(Error::custom(String::from(
                                     "Cannot access context full global outside of entry point",
                                 )));
-                            }
+                            },
                         },
                     ),
                 });
@@ -464,7 +421,7 @@ impl Statement<TypedNode> {
                     pointer,
                     value: expressions.append(value),
                 }
-            }
+            },
             Statement::Return(expr) => NagaStatement::Return {
                 value: expr
                     .as_ref()
@@ -495,24 +452,11 @@ impl Statement<TypedNode> {
                     })
                     .collect::<Result<_, _>>()?;
                 let mut reject_block = reject
-                    .as_ref()
-                    .map(|block| {
-                        block
-                            .iter()
-                            .map(|s| {
-                                s.build_naga(
-                                    module,
-                                    locals_lookup,
-                                    expressions,
-                                    modifier,
-                                    builder,
-                                    iter,
-                                )
-                            })
-                            .collect::<Result<_, _>>()
+                    .iter()
+                    .map(|s| {
+                        s.build_naga(module, locals_lookup, expressions, modifier, builder, iter)
                     })
-                    .transpose()?
-                    .unwrap_or(vec![]);
+                    .collect::<Result<_, _>>()?;
 
                 for (condition, body) in else_ifs.iter().rev() {
                     let condition = condition.build_naga(
@@ -559,12 +503,12 @@ impl Statement<TypedNode> {
                     accept,
                     reject: reject_block,
                 }
-            }
+            },
         })
     }
 }
 
-impl TypedNode {
+impl TypedExpr {
     fn build_naga<'a>(
         &self,
         module: &Module,
@@ -592,7 +536,7 @@ impl TypedNode {
                     left: expressions.append(left),
                     right: expressions.append(right),
                 }
-            }
+            },
             Expr::UnaryOp { tgt, op } => {
                 let tgt =
                     tgt.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
@@ -601,7 +545,7 @@ impl TypedNode {
                     op: op.build_naga(),
                     expr: expressions.append(tgt),
                 }
-            }
+            },
             Expr::Call { name, args } => {
                 let arguments = args
                     .iter()
@@ -622,7 +566,7 @@ impl TypedNode {
                 let origin = {
                     if let Some(function) = builder.functions.get(name) {
                         function
-                            .build_naga(module, name, builder, iter + 1)
+                            .build_naga(module, *name, builder, iter + 1)
                             .unwrap()
                     } else {
                         todo!()
@@ -633,10 +577,10 @@ impl TypedNode {
                     origin: FunctionOrigin::Local(origin),
                     arguments,
                 }
-            }
+            },
             Expr::Literal(literal) => {
                 let ty = self
-                    .ty()
+                    .attr()
                     .build_naga(builder.types, builder.structs_lookup)?
                     .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
                     .0;
@@ -649,7 +593,7 @@ impl TypedNode {
                 });
 
                 Expression::Constant(handle)
-            }
+            },
             Expr::Access { base, fields } => {
                 let base =
                     base.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
@@ -663,7 +607,7 @@ impl TypedNode {
                     }
                 } else {
                     let ty = self
-                        .ty()
+                        .attr()
                         .build_naga(builder.types, builder.structs_lookup)?
                         .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
                         .0;
@@ -679,7 +623,7 @@ impl TypedNode {
 
                     Expression::Compose { ty, components }
                 }
-            }
+            },
             Expr::Arg(var) => Expression::FunctionParameter(*var),
             Expr::Local(var) => Expression::LocalVariable(*locals_lookup.get(var).unwrap()),
             Expr::Global(var) => Expression::GlobalVariable(
@@ -687,15 +631,15 @@ impl TypedNode {
                     (GlobalLookup::ContextLess(handle), _) => *handle,
                     (GlobalLookup::ContextFull { vert, .. }, Some(FunctionModifier::Vertex)) => {
                         *vert
-                    }
+                    },
                     (GlobalLookup::ContextFull { frag, .. }, Some(FunctionModifier::Fragment)) => {
                         *frag
-                    }
+                    },
                     (GlobalLookup::ContextFull { .. }, None) => {
                         return Err(Error::custom(String::from(
                             "Cannot access context full global outside of entry point",
                         )));
-                    }
+                    },
                 },
             ),
         })

@@ -6,7 +6,7 @@ use codespan_reporting::{
     },
 };
 use naga::back::spv;
-use rusty_shades::{ast, error::Error, hir, ir, lex};
+use rusty_shades::{ast, backends, error::Error, hir, lex};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
@@ -29,24 +29,22 @@ fn main() -> io::Result<()> {
 
     println!("{:#?}", module);
 
-    // let naga_ir = handle_errors(backends::naga::build(&module), &files,
-    // file_id)?;
+    let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
 
-    // let spirv = spv::Writer::new(&naga_ir.header,
-    // spv::WriterFlags::DEBUG).write(&naga_ir);
+    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
-    // let output = OpenOptions::new()
-    //     .write(true)
-    //     .truncate(true)
-    //     .create(true)
-    //     .open("debug.spv")?;
+    let output = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open("debug.spv")?;
 
-    // let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
-    //     f.write(&x.to_le_bytes())?;
-    //     Ok(f)
-    // });
+    let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
+        f.write(&x.to_le_bytes())?;
+        Ok(f)
+    });
 
-    // x?;
+    x?;
 
     Ok(())
 }
