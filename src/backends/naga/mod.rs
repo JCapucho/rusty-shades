@@ -623,6 +623,38 @@ impl TypedExpr {
                     Expression::Compose { ty, components }
                 }
             },
+            Expr::Constructor { elements } => {
+                /*
+                TODO: Right now components can be of any type we may need to normalize them
+
+                For example a vector3 can be passed a vec2 and a scalar and this might need to be
+                turned into 3 scalars by performing two access to the elements of the vec2
+                */
+
+                let components = elements
+                    .iter()
+                    .map(|ele| {
+                        let handle = ele.build_naga(
+                            module,
+                            locals_lookup,
+                            expressions,
+                            modifier,
+                            builder,
+                            iter,
+                        )?;
+
+                        Ok(expressions.append(handle))
+                    })
+                    .collect::<Result<_, _>>()?;
+
+                let ty = self
+                    .attr()
+                    .build_naga(builder.types, builder.structs_lookup)?
+                    .ok_or_else(|| Error::custom(String::from("Arg cannot be of type ()")))?
+                    .0;
+
+                Expression::Compose { ty, components }
+            },
             Expr::Arg(var) => Expression::FunctionParameter(*var),
             Expr::Local(var) => Expression::LocalVariable(*locals_lookup.get(var).unwrap()),
             Expr::Global(var) => Expression::GlobalVariable(

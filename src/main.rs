@@ -25,9 +25,20 @@ fn main() -> io::Result<()> {
     let ast = handle_errors(ast::parse(&tokens), &files, file_id)?;
 
     let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
+
+    println!("=================");
+    println!("===== HIR  ======");
+    println!("{:#?}", module);
+    println!("=================");
+    println!("=================\n\n\n");
+
     let module = handle_errors(module.build_ir(), &files, file_id)?;
 
+    println!("=================");
+    println!("===== IR  =======");
     println!("{:#?}", module);
+    println!("=================");
+    println!("=================");
 
     let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
 

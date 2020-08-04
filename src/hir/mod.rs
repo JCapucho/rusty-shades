@@ -10,6 +10,7 @@ use internment::ArcIntern;
 use naga::{FastHashMap, VectorSize};
 
 const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
+const BUILTIN_FUNCTIONS: &[&str] = &["v2", "v3", "v4"];
 
 mod infer;
 
@@ -94,9 +95,9 @@ pub enum Expr {
         base: TypedNode,
         fields: Vec<u32>,
     },
-    // Constructor {
-    //     elements: Vec<Self>,
-    // },
+    Constructor {
+        elements: Vec<TypedNode>,
+    },
     Arg(u32),
     Local(u32),
     Global(u32),
@@ -129,9 +130,9 @@ enum TypedExpr {
         base: InferNode,
         field: Ident,
     },
-    // Constructor {
-    //     elements: Vec<InferNode<Self>>,
-    // },
+    Constructor {
+        elements: Vec<InferNode>,
+    },
     Arg(u32),
     Local(u32),
     Global(u32),
@@ -193,6 +194,12 @@ impl InferNode {
                     }?;
 
                     Expr::Access { base: node, fields }
+                },
+                TypedExpr::Constructor { elements } => Expr::Constructor {
+                    elements: elements
+                        .iter()
+                        .map(|a| Ok(a.to_expr(infer_ctx)?))
+                        .collect::<Result<_, _>>()?,
                 },
                 TypedExpr::Arg(id) => Expr::Arg(*id),
                 TypedExpr::Local(id) => Expr::Local(*id),
@@ -336,7 +343,7 @@ impl Module {
         };
 
         for name in partial.functions.keys() {
-            let id = functions.len() as u32;
+            let id = functions_lookup.len() as u32;
 
             functions_lookup.insert(name.clone(), id);
         }
@@ -603,6 +610,15 @@ impl Module {
                     args,
                     body,
                 } => {
+                    if BUILTIN_FUNCTIONS.contains(&ident.as_str()) {
+                        errors.push(
+                            Error::custom(String::from(
+                                "Cannot define a function with a builtin name",
+                            ))
+                            .with_span(ident.span()),
+                        );
+                    }
+
                     if let Some(span) = names.get(ident.inner()) {
                         errors.push(
                             Error::custom(String::from("Name already defined"))
@@ -1281,68 +1297,181 @@ impl SrcNode<ast::Expression> {
             ast::Expression::Call {
                 name,
                 args: call_args,
-            } => {
-                if let Some(func) = functions.get(name.inner()) {
-                    if call_args.len() != func.args.len() {
-                        errors.push(
-                            Error::custom(format!(
-                                "Function takes {} arguments {} supplied",
-                                func.args.len(),
-                                args.len()
-                            ))
-                            .with_span(name.span()),
-                        );
-                    }
+            } => match name.inner().as_str() {
+                "v2" => {
+                    let elements: Vec<_> = {
+                        let (elements, e): (Vec<_>, Vec<_>) = call_args
+                            .iter()
+                            .map(|arg| {
+                                arg.build_hir(
+                                    infer_ctx,
+                                    locals_lookup,
+                                    args,
+                                    globals_lookup,
+                                    statements,
+                                    structs,
+                                    locals,
+                                    ret,
+                                    out,
+                                    functions,
+                                    functions_lookup,
+                                )
+                            })
+                            .partition(Result::is_ok);
+                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
 
-                    let mut func_args: Vec<_> = func.args.values().collect();
-                    func_args.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        elements.into_iter().map(Result::unwrap).collect()
+                    };
 
-                    let mut constructed_args = Vec::with_capacity(call_args.len());
+                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
+                    let out = infer_ctx.insert(
+                        TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Bi)),
+                        self.span(),
+                    );
+                    infer_ctx.add_constraint(Constraint::Constructor {
+                        out,
+                        elements: elements.iter().map(|e| e.type_id()).collect(),
+                    });
 
-                    for ((_, ty), arg) in func_args.iter().zip(call_args.iter()) {
-                        match arg.build_hir(
-                            infer_ctx,
-                            locals_lookup,
-                            args,
-                            globals_lookup,
-                            statements,
-                            structs,
-                            locals,
-                            ret,
-                            out,
-                            functions,
-                            functions_lookup,
-                        ) {
-                            Ok(arg) => {
-                                match infer_ctx.unify(arg.type_id(), *ty) {
-                                    Ok(_) => {},
-                                    Err(e) => errors.push(e),
-                                }
+                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
+                },
+                "v3" => {
+                    let elements: Vec<_> = {
+                        let (elements, e): (Vec<_>, Vec<_>) = call_args
+                            .iter()
+                            .map(|arg| {
+                                arg.build_hir(
+                                    infer_ctx,
+                                    locals_lookup,
+                                    args,
+                                    globals_lookup,
+                                    statements,
+                                    structs,
+                                    locals,
+                                    ret,
+                                    out,
+                                    functions,
+                                    functions_lookup,
+                                )
+                            })
+                            .partition(Result::is_ok);
+                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
 
-                                constructed_args.push(arg)
+                        elements.into_iter().map(Result::unwrap).collect()
+                    };
+
+                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
+                    let out = infer_ctx.insert(
+                        TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Tri)),
+                        self.span(),
+                    );
+                    infer_ctx.add_constraint(Constraint::Constructor {
+                        out,
+                        elements: elements.iter().map(|e| e.type_id()).collect(),
+                    });
+
+                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
+                },
+                "v4" => {
+                    let elements: Vec<_> = {
+                        let (elements, e): (Vec<_>, Vec<_>) = call_args
+                            .iter()
+                            .map(|arg| {
+                                arg.build_hir(
+                                    infer_ctx,
+                                    locals_lookup,
+                                    args,
+                                    globals_lookup,
+                                    statements,
+                                    structs,
+                                    locals,
+                                    ret,
+                                    out,
+                                    functions,
+                                    functions_lookup,
+                                )
+                            })
+                            .partition(Result::is_ok);
+                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+
+                        elements.into_iter().map(Result::unwrap).collect()
+                    };
+
+                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
+                    let out = infer_ctx.insert(
+                        TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Quad)),
+                        self.span(),
+                    );
+                    infer_ctx.add_constraint(Constraint::Constructor {
+                        out,
+                        elements: elements.iter().map(|e| e.type_id()).collect(),
+                    });
+
+                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
+                },
+                _ => {
+                    if let Some(func) = functions.get(name.inner()) {
+                        if call_args.len() != func.args.len() {
+                            errors.push(
+                                Error::custom(format!(
+                                    "Function takes {} arguments {} supplied",
+                                    func.args.len(),
+                                    args.len()
+                                ))
+                                .with_span(name.span()),
+                            );
+                        }
+
+                        let mut func_args: Vec<_> = func.args.values().collect();
+                        func_args.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+                        let mut constructed_args = Vec::with_capacity(call_args.len());
+
+                        for ((_, ty), arg) in func_args.iter().zip(call_args.iter()) {
+                            match arg.build_hir(
+                                infer_ctx,
+                                locals_lookup,
+                                args,
+                                globals_lookup,
+                                statements,
+                                structs,
+                                locals,
+                                ret,
+                                out,
+                                functions,
+                                functions_lookup,
+                            ) {
+                                Ok(arg) => {
+                                    match infer_ctx.unify(arg.type_id(), *ty) {
+                                        Ok(_) => {},
+                                        Err(e) => errors.push(e),
+                                    }
+
+                                    constructed_args.push(arg)
+                                },
+                                Err(mut e) => errors.append(&mut e),
+                            };
+                        }
+
+                        if !errors.is_empty() {
+                            return Err(errors);
+                        }
+
+                        InferNode::new(
+                            TypedExpr::Call {
+                                name: *functions_lookup.get(name.inner()).unwrap(),
+                                args: constructed_args,
                             },
-                            Err(mut e) => errors.append(&mut e),
-                        };
-                    }
-
-                    if !errors.is_empty() {
+                            (func.ret, self.span()),
+                        )
+                    } else {
+                        errors.push(
+                            Error::custom(String::from("Function doesn't exist"))
+                                .with_span(name.span()),
+                        );
                         return Err(errors);
                     }
-
-                    InferNode::new(
-                        TypedExpr::Call {
-                            name: *functions_lookup.get(name.inner()).unwrap(),
-                            args: constructed_args,
-                        },
-                        (func.ret, self.span()),
-                    )
-                } else {
-                    errors.push(
-                        Error::custom(String::from("Function doesn't exist"))
-                            .with_span(name.span()),
-                    );
-                    return Err(errors);
-                }
+                },
             },
             ast::Expression::Literal(lit) => {
                 let base = infer_ctx.add_scalar(lit.scalar_info());

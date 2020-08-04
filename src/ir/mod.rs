@@ -75,6 +75,9 @@ pub enum Expr {
         base: TypedExpr,
         fields: Vec<u32>,
     },
+    Constructor {
+        elements: Vec<TypedExpr>,
+    },
     Arg(u32),
     Local(u32),
     Global(u32),
@@ -409,6 +412,58 @@ impl hir::TypedNode {
                     nested
                 ))?,
                 fields,
+            },
+            hir::Expr::Constructor { elements } => {
+                let mut constructed_elements = vec![];
+
+                for ele in elements {
+                    constructed_elements.push(fallthrough!(ele.build_ir(
+                        modifier,
+                        body,
+                        locals,
+                        globals,
+                        globals_lookup,
+                        nested
+                    ))?);
+                }
+
+                match ty {
+                    Type::Vector(_, size) => {
+                        if constructed_elements.len() == 1 {
+                            for _ in 0..(size as usize - 1) {
+                                constructed_elements.push(constructed_elements[0].clone())
+                            }
+                        } else {
+                            let mut tmp = vec![];
+
+                            for ele in constructed_elements.into_iter() {
+                                match ele.attr() {
+                                    Type::Scalar(_) => tmp.push(ele),
+                                    Type::Vector(scalar, size) => {
+                                        for i in 0..*size as usize {
+                                            tmp.push(TypedExpr::new(
+                                                Expr::Access {
+                                                    base: ele.clone(),
+                                                    fields: vec![i as u32],
+                                                },
+                                                Type::Scalar(*scalar),
+                                            ))
+                                        }
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            }
+
+                            constructed_elements = tmp;
+                        }
+                    },
+                    Type::Matrix { .. } => todo!(),
+                    _ => unreachable!(),
+                }
+
+                Expr::Constructor {
+                    elements: constructed_elements,
+                }
             },
             hir::Expr::Arg(pos) => Expr::Arg(pos),
             hir::Expr::Local(local) => Expr::Local(local),

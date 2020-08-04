@@ -81,6 +81,10 @@ pub enum Constraint {
         record: TypeId,
         field: SrcNode<Ident>,
     },
+    Constructor {
+        out: TypeId,
+        elements: Vec<TypeId>,
+    },
 }
 
 #[derive(Default, Debug)]
@@ -872,6 +876,156 @@ impl<'a> InferContext<'a> {
                     ))
                     .with_span(field.span())
                     .with_span(self.span(record))),
+                }
+            },
+            Constraint::Constructor { out, elements } => {
+                match self.get(self.get_base(out)) {
+                    TypeInfo::Unknown => Ok(false), // Can't infer yet
+                    TypeInfo::Vector(scalar, SizeInfo::Concrete(size)) => {
+                        let scalar_ty = self.insert(TypeInfo::Scalar(scalar), Span::None);
+
+                        match size {
+                            VectorSize::Bi => match elements.len() {
+                                1 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    self.unify(scalar_ty, elements[1])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 2d vector with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                            VectorSize::Tri => match elements.len() {
+                                1 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    let vec2 = self.insert(
+                                        TypeInfo::Vector(
+                                            scalar,
+                                            SizeInfo::Concrete(VectorSize::Bi),
+                                        ),
+                                        Span::None,
+                                    );
+
+                                    let scalar_vec = self
+                                        .unify(scalar_ty, elements[0])
+                                        .and(self.unify(vec2, elements[1]));
+                                    let vec_scalar = self
+                                        .unify(vec2, elements[0])
+                                        .and(self.unify(scalar_ty, elements[1]));
+
+                                    scalar_vec.or(vec_scalar)?;
+
+                                    Ok(true)
+                                },
+                                3 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    self.unify(scalar_ty, elements[1])?;
+                                    self.unify(scalar_ty, elements[2])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 2d vector with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                            VectorSize::Quad => match elements.len() {
+                                1 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    let vec2 = self.insert(
+                                        TypeInfo::Vector(
+                                            scalar,
+                                            SizeInfo::Concrete(VectorSize::Bi),
+                                        ),
+                                        Span::None,
+                                    );
+                                    let vec3 = self.insert(
+                                        TypeInfo::Vector(
+                                            scalar,
+                                            SizeInfo::Concrete(VectorSize::Tri),
+                                        ),
+                                        Span::None,
+                                    );
+
+                                    let scalar_vec = self
+                                        .unify(scalar_ty, elements[0])
+                                        .and(self.unify(vec3, elements[1]));
+                                    let vec_scalar = self
+                                        .unify(vec3, elements[0])
+                                        .and(self.unify(scalar_ty, elements[1]));
+                                    let vec_vec = self
+                                        .unify(vec2, elements[0])
+                                        .and(self.unify(vec2, elements[1]));
+
+                                    scalar_vec.or(vec_scalar).or(vec_vec)?;
+
+                                    Ok(true)
+                                },
+                                3 => {
+                                    let vec2 = self.insert(
+                                        TypeInfo::Vector(
+                                            scalar,
+                                            SizeInfo::Concrete(VectorSize::Bi),
+                                        ),
+                                        Span::None,
+                                    );
+
+                                    let scalar_scalar_vec = self
+                                        .unify(scalar_ty, elements[0])
+                                        .and(self.unify(scalar_ty, elements[1]))
+                                        .and(self.unify(vec2, elements[2]));
+                                    let scalar_vec_scalar = self
+                                        .unify(scalar_ty, elements[0])
+                                        .and(self.unify(vec2, elements[1]))
+                                        .and(self.unify(scalar_ty, elements[2]));
+                                    let vec_scalar_scalar = self
+                                        .unify(vec2, elements[0])
+                                        .and(self.unify(scalar_ty, elements[1]))
+                                        .and(self.unify(scalar_ty, elements[2]));
+
+                                    scalar_scalar_vec
+                                        .or(scalar_vec_scalar)
+                                        .or(vec_scalar_scalar)?;
+
+                                    Ok(true)
+                                },
+                                4 => {
+                                    self.unify(scalar_ty, elements[0])?;
+                                    self.unify(scalar_ty, elements[1])?;
+                                    self.unify(scalar_ty, elements[2])?;
+                                    self.unify(scalar_ty, elements[3])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 2d vector with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                        }
+                    },
+                    TypeInfo::Matrix {
+                        base,
+                        columns: SizeInfo::Concrete(columns),
+                        rows: SizeInfo::Concrete(rows),
+                    } => todo!(),
+                    _ => Err(Error::custom(format!(
+                        "Type '{}' does not support constructors",
+                        self.display_type_info(out),
+                    ))
+                    .with_span(self.span(out))),
                 }
             },
         }

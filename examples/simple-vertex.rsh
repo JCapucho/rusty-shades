@@ -8,9 +8,8 @@ global position gl_position;
 
 // single line comment
 fn vertex vertex_main() {
-    let a = v_position.x;
-    f_position = a * v_position * if a > 2. { 2. } else if a < 3. { 3. } else { 1. };
-    f_color = color;
+    let tmp = v_position.xy;
+    f_color = v4(tmp,tmp);
     gl_position = v_position;
 }
 
