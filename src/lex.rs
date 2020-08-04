@@ -172,7 +172,7 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
                 if let Some(fract) = fract {
                     let mut num = Vec::with_capacity(3);
 
-                    if let Some(_) = minus {
+                    if minus.is_some() {
                         num.push('-');
                     }
 
@@ -184,19 +184,17 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
                     Token::Literal(Literal::Float(
                         num.into_iter().collect::<String>().parse().unwrap(),
                     ))
+                } else if minus.is_some() {
+                    let mut num = Vec::with_capacity(2);
+                    num.push('-');
+                    num.append(&mut int);
+                    Token::Literal(Literal::Int(
+                        num.into_iter().collect::<String>().parse().unwrap(),
+                    ))
                 } else {
-                    if let Some(_) = minus {
-                        let mut num = Vec::with_capacity(2);
-                        num.push('-');
-                        num.append(&mut int);
-                        Token::Literal(Literal::Int(
-                            num.into_iter().collect::<String>().parse().unwrap(),
-                        ))
-                    } else {
-                        Token::Literal(Literal::Uint(
-                            int.into_iter().collect::<String>().parse().unwrap(),
-                        ))
-                    }
+                    Token::Literal(Literal::Uint(
+                        int.into_iter().collect::<String>().parse().unwrap(),
+                    ))
                 }
             });
 

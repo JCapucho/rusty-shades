@@ -52,8 +52,9 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         let ty = match global
             .ty
             .build_naga(&mut types, &structs_lookup)
-            .and_then(|ty| ty.ok_or(Error::custom(String::from("Global cannot be of type ()"))))
-        {
+            .and_then(|ty| {
+                ty.ok_or_else(|| Error::custom(String::from("Global cannot be of type ()")))
+            }) {
             Ok(t) => t.0,
             Err(e) => {
                 errors.push(e);
@@ -93,7 +94,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         };
     }
 
-    if errors.len() == 0 {
+    if errors.is_empty() {
         Ok(NagaModule {
             header: Header {
                 version: (1, 0, 0),
@@ -149,7 +150,7 @@ impl Function {
                 .map(|ty| {
                     let ty = ty
                         .build_naga(builder.types, builder.structs_lookup)?
-                        .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
+                        .ok_or_else(|| Error::custom(String::from("Arg cannot be of type ()")))?
                         .0;
 
                     Ok(ty)
@@ -175,8 +176,9 @@ impl Function {
         for (id, ty) in self.locals.iter() {
             let ty = match ty
                 .build_naga(builder.types, builder.structs_lookup)
-                .and_then(|ty| ty.ok_or(Error::custom(String::from("Global cannot be of type ()"))))
-            {
+                .and_then(|ty| {
+                    ty.ok_or_else(|| Error::custom(String::from("Global cannot be of type ()")))
+                }) {
                 Ok(t) => t.0,
                 Err(e) => {
                     errors.push(e);
@@ -202,7 +204,7 @@ impl Function {
                 .map(|sta| {
                     sta.build_naga(
                         module,
-                        &mut locals_lookup,
+                        &locals_lookup,
                         &mut expressions,
                         self.modifier,
                         builder,
@@ -218,10 +220,7 @@ impl Function {
 
         if body
             .last()
-            .map(|s| match s {
-                NagaStatement::Return { .. } => false,
-                _ => true,
-            })
+            .map(|s| !matches!(s, NagaStatement::Return { .. }))
             .unwrap_or(true)
         {
             body.push(NagaStatement::Return { value: None });
@@ -257,7 +256,7 @@ impl Function {
             None => {},
         }
 
-        if errors.len() == 0 {
+        if errors.is_empty() {
             builder.functions_lookup.insert(id, handle);
             Ok(handle)
         } else {
@@ -361,7 +360,7 @@ impl Type {
                     width as u32,
                 ))
             },
-            Type::Struct(id) => Some(structs_lookup.get(id).unwrap().clone()),
+            Type::Struct(id) => Some(*structs_lookup.get(id).unwrap()),
         })
     }
 }
@@ -582,7 +581,7 @@ impl TypedExpr {
                 let ty = self
                     .attr()
                     .build_naga(builder.types, builder.structs_lookup)?
-                    .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
+                    .ok_or_else(|| Error::custom(String::from("Arg cannot be of type ()")))?
                     .0;
 
                 let handle = builder.constants.fetch_or_append(Constant {
@@ -609,7 +608,7 @@ impl TypedExpr {
                     let ty = self
                         .attr()
                         .build_naga(builder.types, builder.structs_lookup)?
-                        .ok_or(Error::custom(String::from("Arg cannot be of type ()")))?
+                        .ok_or_else(|| Error::custom(String::from("Arg cannot be of type ()")))?
                         .0;
 
                     let mut components = vec![];

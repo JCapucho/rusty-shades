@@ -40,7 +40,7 @@ fn main() -> io::Result<()> {
         .open("debug.spv")?;
 
     let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
-        f.write(&x.to_le_bytes())?;
+        f.write_all(&x.to_le_bytes())?;
         Ok(f)
     });
 

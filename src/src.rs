@@ -179,7 +179,7 @@ impl<T> ParzeSpan<SrcNode<T>> for Span {
     fn group(syms: &[SrcNode<T>], _range: Range<usize>) -> Self {
         syms.first()
             .map(|s| s.span())
-            .unwrap_or(Span::none())
-            .union(syms.last().map(|s| s.span()).unwrap_or(Span::none()))
+            .unwrap_or_else(Span::none)
+            .union(syms.last().map(|s| s.span()).unwrap_or_else(Span::none))
     }
 }

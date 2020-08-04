@@ -2,10 +2,11 @@ use crate::src::Span;
 use std::{
     cmp::{Eq, PartialEq},
     fmt,
+    hash::Hash,
     ops::{Deref, DerefMut},
 };
 
-#[derive(Clone, Hash)]
+#[derive(Clone)]
 pub struct Node<T, U = Span>(Box<T>, U);
 
 impl<T, U> Node<T, U> {
@@ -59,6 +60,13 @@ impl<T: fmt::Debug, U: fmt::Debug> fmt::Debug for Node<T, U> {
 
 impl<T: PartialEq, U> PartialEq for Node<T, U> {
     fn eq(&self, other: &Self) -> bool { self.0 == other.0 }
+}
+
+impl<T: Hash, U: Hash> Hash for Node<T, U> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+        self.1.hash(state);
+    }
 }
 
 impl<T: Eq, U> Eq for Node<T, U> {}

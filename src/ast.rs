@@ -113,7 +113,7 @@ fn ident_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Sr
         Token::Identifier(ident) => Some(ident.clone()),
         _ => None,
     })
-    .map_with_span(|ident, span| SrcNode::new(ident, span))
+    .map_with_span(SrcNode::new)
 }
 
 fn uint_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = u64>, Error> {
@@ -125,7 +125,7 @@ fn uint_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = u64
 
 fn generic_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Generic>, Error> {
     uint_parser()
-        .map(|uint| Generic::UInt(uint))
+        .map(Generic::UInt)
         .or(permit_map(|token: Node<_>| match &*token {
             Token::ScalarType(ty) => Some(Generic::ScalarType(*ty)),
             _ => None,
@@ -161,7 +161,7 @@ fn global_modifier_parser()
                 binding: binding as u32,
             }),
         ))
-        .map_with_span(|modifier, span| SrcNode::new(modifier, span))
+        .map_with_span(SrcNode::new)
 }
 
 fn function_modifier_parser()
@@ -170,7 +170,7 @@ fn function_modifier_parser()
         Token::FunctionModifier(modifier) => Some(*modifier),
         _ => None,
     })
-    .map_with_span(|modif, span| SrcNode::new(modif, span))
+    .map_with_span(SrcNode::new)
 }
 
 fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Type>>, Error>
@@ -185,18 +185,18 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
                 just(Token::Less)
                     .padding_for(
                         generic_parser()
-                            .map_with_span(|generic, span| SrcNode::new(generic, span))
+                            .map_with_span(SrcNode::new)
                             .separated_by(just(Token::Comma)),
                     )
                     .padded_by(just(Token::Greater))
-                    .map_with_span(|generics, span| SrcNode::new(generics, span))
+                    .map_with_span(SrcNode::new)
                     .or_not(),
             )
             .map(|(ident, generics)| Type::CompositeType {
                 name: ident,
                 generics,
             }))
-        .map_with_span(|generic, span| SrcNode::new(generic, span))
+        .map_with_span(SrcNode::new)
 }
 
 fn declaration_parser(
@@ -244,9 +244,9 @@ fn expr_parser(
         let expr = expr.link();
 
         let block = just(Token::OpenDelimiter(Delimiter::CurlyBraces))
-            .padding_for(statement.clone())
+            .padding_for(statement)
             .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
-            .map_with_span(|block, span| SrcNode::new(block, span))
+            .map_with_span(SrcNode::new)
             .boxed();
 
         let else_if = seq(iter::once(Token::Else).chain(iter::once(Token::If)))
@@ -278,7 +278,7 @@ fn expr_parser(
             .then(
                 just(Token::OpenDelimiter(Delimiter::Parentheses))
                     .padding_for(expr.clone().separated_by(just(Token::Comma)))
-                    .map_with_span(|args, span| SrcNode::new(args, span))
+                    .map_with_span(SrcNode::new)
                     .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
             )
             .map_with_span(|(ident, args), span| {
@@ -290,7 +290,7 @@ fn expr_parser(
             Token::Literal(literal) => Some(Expression::Literal(*literal)),
             _ => None,
         })
-        .map_with_span(|literal, span| SrcNode::new(literal, span));
+        .map_with_span(SrcNode::new);
 
         let atom = literal
             .or(just(Token::OpenDelimiter(Delimiter::Parentheses))
@@ -313,7 +313,7 @@ fn expr_parser(
         let unary_op = just(Token::Bang)
             .to(UnaryOp::BitWiseNot)
             .or(just(Token::Minus).to(UnaryOp::Negation))
-            .map_with_span(|op, span| SrcNode::new(op, span));
+            .map_with_span(SrcNode::new);
 
         let unary = unary_op
             .repeated()
@@ -329,7 +329,7 @@ fn expr_parser(
             .to(BinaryOp::Division)
             .or(just(Token::Star).to(BinaryOp::Multiplication))
             .or(just(Token::Percent).to(BinaryOp::Remainder))
-            .map_with_span(|op, span| SrcNode::new(op, span));
+            .map_with_span(SrcNode::new);
 
         let multiplication = unary
             .clone()
@@ -344,7 +344,7 @@ fn expr_parser(
         let addition_op = just(Token::Plus)
             .to(BinaryOp::Addition)
             .or(just(Token::Minus).to(BinaryOp::Subtraction))
-            .map_with_span(|op, span| SrcNode::new(op, span));
+            .map_with_span(SrcNode::new);
 
         let addition = multiplication
             .clone()
@@ -406,7 +406,7 @@ fn expr_parser(
             .or(just(Token::GreaterEqual).to(BinaryOp::GreaterEqual))
             .or(just(Token::Less).to(BinaryOp::Less))
             .or(just(Token::LessEqual).to(BinaryOp::LessEqual))
-            .map_with_span(|op, span| SrcNode::new(op, span));
+            .map_with_span(SrcNode::new);
 
         let comparison = bitwise_or
             .clone()
@@ -421,7 +421,7 @@ fn expr_parser(
         let equality_op = just(Token::Equality)
             .to(BinaryOp::Equality)
             .or(just(Token::Inequality).to(BinaryOp::Inequality))
-            .map_with_span(|op, span| SrcNode::new(op, span));
+            .map_with_span(SrcNode::new);
 
         let equality = comparison
             .clone()
@@ -463,9 +463,7 @@ fn expr_parser(
             })
             .boxed();
 
-        let return_expr = return_parser(expr).or(logical_or);
-
-        return_expr
+        return_parser(expr).or(logical_or)
     })
 }
 
@@ -484,7 +482,7 @@ fn statement_parser()
             .map_with_span(|expr, span| SrcNode::new(Statement::ExprSemi(expr), span));
 
         declaration_parser(expr.clone())
-            .or(assignment_parser(expr.clone()))
+            .or(assignment_parser(expr))
             .or(expr_semi)
             .repeated()
             .then(stmt_expr.or_not())
@@ -555,7 +553,7 @@ fn function_parser()
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
                 .padding_for(statement_parser())
                 .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
-                .map_with_span(|body, span| SrcNode::new(body, span)),
+                .map_with_span(SrcNode::new),
         )
         .map_with_span(|((((modifier, ident), args), ty), body), span| {
             SrcNode::new(

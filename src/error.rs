@@ -41,7 +41,7 @@ impl parze::error::Error<char> for Error {
         Self::custom(format!("Unexpected character '{}'", c)).with_span(span)
     }
 
-    fn unexpected_end() -> Self { Self::custom(format!("Unexpected end of input")) }
+    fn unexpected_end() -> Self { Self::custom(String::from("Unexpected end of input")) }
 
     fn expected_end(c: &char, span: Span) -> Self {
         Self::custom(format!("Expected end of input, found '{}'", c)).with_span(span)
@@ -61,7 +61,7 @@ impl parze::error::Error<SrcNode<Token>> for Error {
         Self::custom(format!("Unexpected token '{}'", **sym)).with_span(span)
     }
 
-    fn unexpected_end() -> Self { Self::custom(format!("Unexpected end of input")) }
+    fn unexpected_end() -> Self { Self::custom(String::from("Unexpected end of input")) }
 
     fn expected_end(sym: &SrcNode<Token>, span: Span) -> Self {
         Self::custom(format!("Expected end of input, found '{}'", **sym)).with_span(span)
@@ -112,7 +112,7 @@ mod codespan {
                     self.spans
                         .into_iter()
                         .filter_map(|span| span.as_range())
-                        .map(|span| Label::primary(file_id.clone(), span))
+                        .map(|span| Label::primary(file_id, span))
                         .collect(),
                 )
                 .with_notes(self.hints)

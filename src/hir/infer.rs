@@ -200,6 +200,7 @@ impl<'a> InferContext<'a> {
         }
     }
 
+    #[allow(clippy::unit_arg)]
     pub fn unify_scalar(&mut self, a: ScalarId, b: ScalarId) -> Result<(), (ScalarId, ScalarId)> {
         use ScalarInfo::*;
         match (self.get_scalar(a), self.get_scalar(b)) {
@@ -299,7 +300,7 @@ impl<'a> InferContext<'a> {
                     Struct(id) => {
                         let fields = self.ctx.structs.get(&id).unwrap();
 
-                        write!(f, "{{{}", if fields.len() > 0 { " " } else { "" })?;
+                        write!(f, "{{{}", if !fields.is_empty() { " " } else { "" })?;
                         write!(
                             f,
                             "{}",
@@ -313,7 +314,7 @@ impl<'a> InferContext<'a> {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         )?;
-                        write!(f, "{}}}", if fields.len() > 0 { " " } else { "" })?;
+                        write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })?;
                         Ok(())
                     },
                 }
@@ -327,6 +328,7 @@ impl<'a> InferContext<'a> {
         }
     }
 
+    #[allow(clippy::unit_arg)]
     pub fn unify_inner(
         &mut self,
         iter: usize,
@@ -413,12 +415,12 @@ impl<'a> InferContext<'a> {
             } else {
                 err.with_span(a_span)
             };
-            let err = if y_span.intersects(b_span) {
+
+            if y_span.intersects(b_span) {
                 err
             } else {
                 err.with_span(b_span)
-            };
-            err
+            }
         })
     }
 
@@ -440,6 +442,7 @@ impl<'a> InferContext<'a> {
     fn solve_inner(&mut self, constraint: Constraint) -> Result<bool, Error> {
         match constraint {
             Constraint::Unary { out, op, a } => {
+                #[allow(clippy::type_complexity)]
                 let matchers: [fn(_, _, _, _) -> Option<fn(_, _) -> _>; 3] = [
                     // -R => R
                     |this: &Self, out, op, a| {
@@ -508,7 +511,7 @@ impl<'a> InferContext<'a> {
                     .filter_map(|matcher| matcher(self, out, *op, a))
                     .collect::<Vec<_>>();
 
-                if matches.len() == 0 {
+                if matches.is_empty() {
                     Err(Error::custom(format!(
                         "Cannot resolve {} '{}' as '{}'",
                         *op,
@@ -534,6 +537,7 @@ impl<'a> InferContext<'a> {
                 }
             },
             Constraint::Binary { out, op, a, b } => {
+                #[allow(clippy::type_complexity)]
                 let matchers: [fn(_, _, _, _, _) -> Option<fn(_, _, _) -> _>; 7] = [
                     // R op R => R
                     |this: &Self, out, op, a, b| {
@@ -762,7 +766,7 @@ impl<'a> InferContext<'a> {
                     .filter_map(|matcher| matcher(self, out, *op, a, b))
                     .collect::<Vec<_>>();
 
-                if matches.len() == 0 {
+                if matches.is_empty() {
                     Err(Error::custom(format!(
                         "Cannot resolve '{}' {} '{}' as '{}'",
                         self.display_type_info(a),
@@ -878,7 +882,7 @@ impl<'a> InferContext<'a> {
             let constraints = self.constraints.keys().copied().collect::<Vec<_>>();
 
             // All constraints have been resolved
-            if constraints.len() == 0 {
+            if constraints.is_empty() {
                 break Ok(());
             }
 
@@ -962,11 +966,11 @@ impl<'a> InferContext<'a> {
     pub fn reconstruct(&self, id: TypeId, span: Span) -> Result<SrcNode<Type>, Error> {
         self.reconstruct_inner(0, id).map_err(|err| match err {
             ReconstructError::Recursive => {
-                Error::custom(format!("Recursive type")).with_span(self.span(id))
+                Error::custom(String::from("Recursive type")).with_span(self.span(id))
             },
             ReconstructError::Unknown(a) => {
                 let msg = match self.get(self.get_base(id)) {
-                    TypeInfo::Unknown => format!("Cannot infer type"),
+                    TypeInfo::Unknown => String::from("Cannot infer type"),
                     _ => format!(
                         "Cannot infer type '{}' in '{}'",
                         self.display_type_info(a),
@@ -976,7 +980,7 @@ impl<'a> InferContext<'a> {
                 Error::custom(msg)
                     .with_span(span)
                     .with_span(self.span(id))
-                    .with_hint(format!("Specify all missing types"))
+                    .with_hint(String::from("Specify all missing types"))
             },
         })
     }

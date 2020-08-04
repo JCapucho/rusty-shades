@@ -230,7 +230,7 @@ impl SrcNode<hir::Function> {
             ));
         }
 
-        if errors.len() == 0 {
+        if errors.is_empty() {
             Ok(Function {
                 name: func.name,
                 modifier: func.modifier,
@@ -240,7 +240,7 @@ impl SrcNode<hir::Function> {
                 locals: func.locals,
             })
         } else {
-            return Err(errors);
+            Err(errors)
         }
     }
 }
@@ -343,7 +343,7 @@ impl hir::TypedNode {
         }
 
         let mut errors = vec![];
-        let ty = self.ty().clone();
+        let ty = *self.ty();
         let span = self.span();
 
         let expr = match self.into_inner() {
@@ -562,7 +562,7 @@ impl hir::TypedNode {
             },
         };
 
-        if errors.len() == 0 {
+        if errors.is_empty() {
             Ok(Some(TypedExpr::new(expr, ty)))
         } else {
             Err(errors)
@@ -603,5 +603,5 @@ fn block_returns(block: &[hir::Statement<hir::TypedNode>], ty: &Type) -> bool {
         }
     }
 
-    if *ty == Type::Empty { true } else { false }
+    *ty == Type::Empty
 }

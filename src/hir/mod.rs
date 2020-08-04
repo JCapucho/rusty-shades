@@ -65,7 +65,7 @@ pub enum Statement<M> {
 }
 
 impl Statement<InferNode> {
-    fn to_statement(self, infer_ctx: &mut InferContext) -> Result<Statement<TypedNode>, Error> {
+    fn into_statement(self, infer_ctx: &mut InferContext) -> Result<Statement<TypedNode>, Error> {
         Ok(match self {
             Statement::Expr(e) => Statement::Expr(e.to_expr(infer_ctx)?),
             Statement::ExprSemi(e) => Statement::ExprSemi(e.to_expr(infer_ctx)?),
@@ -160,9 +160,9 @@ impl InferNode {
                     op: *op,
                 },
                 TypedExpr::Call { name, args } => Expr::Call {
-                    name: name.clone(),
+                    name: *name,
                     args: args
-                        .into_iter()
+                        .iter()
                         .map(|a| Ok(a.to_expr(infer_ctx)?))
                         .collect::<Result<_, _>>()?,
                 },
@@ -210,18 +210,18 @@ impl InferNode {
                     accept: SrcNode::new(
                         accept
                             .iter()
-                            .map(|a| a.clone().to_statement(infer_ctx))
+                            .map(|a| a.clone().into_statement(infer_ctx))
                             .collect::<Result<_, _>>()?,
                         accept.span(),
                     ),
                     else_ifs: else_ifs
-                        .into_iter()
+                        .iter()
                         .map(|(expr, a)| {
                             Ok((
                                 expr.to_expr(infer_ctx)?,
                                 SrcNode::new(
                                     a.iter()
-                                        .map(|s| s.clone().to_statement(infer_ctx))
+                                        .map(|s| s.clone().into_statement(infer_ctx))
                                         .collect::<Result<_, _>>()?,
                                     a.span(),
                                 ),
@@ -233,7 +233,7 @@ impl InferNode {
                         .map(|r| {
                             Ok(SrcNode::new(
                                 r.iter()
-                                    .map(|a| a.clone().to_statement(infer_ctx))
+                                    .map(|a| a.clone().into_statement(infer_ctx))
                                     .collect::<Result<_, _>>()?,
                                 r.span(),
                             ))
@@ -297,7 +297,7 @@ pub struct Module {
 impl Module {
     pub fn build(statements: &[SrcNode<ast::Item>]) -> Result<Module, Vec<Error>> {
         let mut infer_ctx = InferContext::default();
-        let mut partial = Self::first_pass(statements, &mut infer_ctx)?;
+        let partial = Self::first_pass(statements, &mut infer_ctx)?;
 
         let mut errors = vec![];
         let mut functions = FastHashMap::default();
@@ -353,7 +353,7 @@ impl Module {
                     &func.args,
                     &globals_lookup,
                     statements,
-                    &mut partial.structs,
+                    &partial.structs,
                     &mut locals,
                     func.ret,
                     func.ret,
@@ -416,7 +416,7 @@ impl Module {
             let body = {
                 let (body, e): (Vec<_>, Vec<_>) = body
                     .into_iter()
-                    .map(|sta| sta.to_statement(&mut infer_ctx))
+                    .map(|sta| sta.into_statement(&mut infer_ctx))
                     .partition(Result::is_ok);
                 errors.extend(e.into_iter().map(Result::unwrap_err));
 
@@ -467,7 +467,7 @@ impl Module {
             structs.into_iter().map(Result::unwrap).collect()
         };
 
-        if errors.len() == 0 {
+        if errors.is_empty() {
             Ok(Module {
                 functions,
                 globals,
@@ -628,7 +628,7 @@ impl Module {
                         })
                         .transpose()
                     {
-                        Ok(t) => t.unwrap_or(infer_ctx.insert(TypeInfo::Empty, Span::None)),
+                        Ok(t) => t.unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None)),
                         Err(mut e) => {
                             errors.append(&mut e);
                             continue;
@@ -661,7 +661,7 @@ impl Module {
                         );
                     }
 
-                    if errors.len() != 0 {
+                    if !errors.is_empty() {
                         continue;
                     }
 
@@ -682,7 +682,7 @@ impl Module {
             }
         }
 
-        if errors.len() != 0 {
+        if !errors.is_empty() {
             return Err(errors);
         }
 
@@ -696,7 +696,7 @@ impl Module {
 
 fn build_struct(
     ident: &SrcNode<ArcIntern<String>>,
-    fields: &Vec<SrcNode<IdentTypePair>>,
+    fields: &[SrcNode<IdentTypePair>],
     span: Span,
     statements: &[SrcNode<ast::Item>],
     structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
@@ -725,7 +725,7 @@ fn build_struct(
 
     let mut resolved_fields = FastHashMap::default();
 
-    for (pos, field) in fields.into_iter().enumerate() {
+    for (pos, field) in fields.iter().enumerate() {
         let ty = match build_ast_ty(
             statements,
             structs,
@@ -760,7 +760,7 @@ fn build_struct(
 
     *struct_id += 1;
 
-    if errors.len() == 0 {
+    if errors.is_empty() {
         Ok(id)
     } else {
         Err(errors)
@@ -835,7 +835,7 @@ fn build_ast_ty(
         },
     };
 
-    if errors.len() == 0 {
+    if errors.is_empty() {
         Ok(ty)
     } else {
         Err(errors)
@@ -887,7 +887,7 @@ fn build_vector(
             None
         };
 
-        if errors.len() != 0 {
+        if !errors.is_empty() {
             Err(errors)
         } else {
             let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
@@ -969,7 +969,7 @@ fn build_matrix(
             None
         };
 
-        if errors.len() != 0 {
+        if !errors.is_empty() {
             Err(errors)
         } else {
             let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
@@ -1032,7 +1032,7 @@ impl SrcNode<ast::Type> {
             },
         };
 
-        if errors.len() == 0 {
+        if errors.is_empty() {
             Ok(ty)
         } else {
             Err(errors)
@@ -1325,7 +1325,7 @@ impl SrcNode<ast::Expression> {
                         };
                     }
 
-                    if errors.len() != 0 {
+                    if !errors.is_empty() {
                         return Err(errors);
                     }
 
