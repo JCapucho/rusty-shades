@@ -457,7 +457,39 @@ impl hir::TypedNode {
                             constructed_elements = tmp;
                         }
                     },
-                    Type::Matrix { .. } => todo!(),
+                    Type::Matrix { rows, .. } => {
+                        if constructed_elements.len() == 1 {
+                            for _ in 0..(rows as usize - 1) {
+                                constructed_elements.push(constructed_elements[0].clone())
+                            }
+                        } else {
+                            let mut tmp = vec![];
+
+                            for ele in constructed_elements.into_iter() {
+                                match ele.attr() {
+                                    Type::Vector(_, _) => tmp.push(ele),
+                                    Type::Matrix {
+                                        rows,
+                                        base,
+                                        columns,
+                                    } => {
+                                        for i in 0..*rows as usize {
+                                            tmp.push(TypedExpr::new(
+                                                Expr::Access {
+                                                    base: ele.clone(),
+                                                    fields: vec![i as u32],
+                                                },
+                                                Type::Vector(*base, *columns),
+                                            ))
+                                        }
+                                    },
+                                    _ => unreachable!(),
+                                }
+                            }
+
+                            constructed_elements = tmp;
+                        }
+                    },
                     _ => unreachable!(),
                 }
 

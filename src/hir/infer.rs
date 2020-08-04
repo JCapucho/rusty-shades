@@ -24,6 +24,13 @@ impl ConstraintId {
     pub fn new(id: usize) -> Self { Self(id) }
 }
 
+#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct SizeId(usize);
+
+impl SizeId {
+    pub fn new(id: usize) -> Self { Self(id) }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarInfo {
     Ref(ScalarId),
@@ -33,19 +40,11 @@ pub enum ScalarInfo {
     Concrete(ScalarType),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub enum SizeInfo {
     Unknown,
+    Ref(SizeId),
     Concrete(VectorSize),
-}
-
-impl fmt::Display for SizeInfo {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            SizeInfo::Unknown => write!(f, "?"),
-            SizeInfo::Concrete(size) => write!(f, "{}", *size as u8),
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -54,10 +53,10 @@ pub enum TypeInfo {
     Empty,
     Ref(TypeId),
     Scalar(ScalarId),
-    Vector(ScalarId, SizeInfo),
+    Vector(ScalarId, SizeId),
     Matrix {
-        columns: SizeInfo,
-        rows: SizeInfo,
+        columns: SizeId,
+        rows: SizeId,
         base: ScalarId,
     },
     Struct(u32),
@@ -98,6 +97,9 @@ pub struct InferContext<'a> {
     types: FastHashMap<TypeId, TypeInfo>,
     spans: FastHashMap<TypeId, Span>,
 
+    size_id_counter: usize,
+    sizes: FastHashMap<SizeId, SizeInfo>,
+
     constraint_id_counter: usize,
     constraints: FastHashMap<ConstraintId, Constraint>,
 
@@ -115,6 +117,9 @@ impl<'a> InferContext<'a> {
             types_id_counter: self.types_id_counter,
             types: FastHashMap::default(),
             spans: FastHashMap::default(),
+
+            size_id_counter: self.size_id_counter,
+            sizes: FastHashMap::default(),
 
             constraint_id_counter: self.constraint_id_counter,
             constraints: FastHashMap::default(),
@@ -153,6 +158,13 @@ impl<'a> InferContext<'a> {
         id
     }
 
+    pub fn add_size(&mut self, size: SizeInfo) -> SizeId {
+        self.size_id_counter += 1;
+        let id = SizeId::new(self.size_id_counter);
+        self.sizes.insert(id, size);
+        id
+    }
+
     pub fn span(&self, id: TypeId) -> Span {
         //let id = self.get_base(id);
         self.spans
@@ -170,6 +182,13 @@ impl<'a> InferContext<'a> {
             .unwrap()
     }
 
+    fn get_base(&self, id: TypeId) -> TypeId {
+        match self.get(id) {
+            TypeInfo::Ref(id) => self.get_base(id),
+            _ => id,
+        }
+    }
+
     pub fn get_scalar(&self, id: ScalarId) -> ScalarInfo {
         self.scalars
             .get(&id)
@@ -185,9 +204,17 @@ impl<'a> InferContext<'a> {
         }
     }
 
-    fn get_base(&self, id: TypeId) -> TypeId {
-        match self.get(id) {
-            TypeInfo::Ref(id) => self.get_base(id),
+    pub fn get_size(&self, id: SizeId) -> SizeInfo {
+        self.sizes
+            .get(&id)
+            .cloned()
+            .or_else(|| self.parent.map(|p| p.get_size(id)))
+            .unwrap()
+    }
+
+    fn get_size_base(&self, id: SizeId) -> SizeId {
+        match self.get_size(id) {
+            SizeInfo::Ref(id) => self.get_size_base(id),
             _ => id,
         }
     }
@@ -201,6 +228,12 @@ impl<'a> InferContext<'a> {
     fn link_scalar(&mut self, a: ScalarId, b: ScalarId) {
         if self.get_scalar_base(a) != self.get_scalar_base(b) {
             self.scalars.insert(a, ScalarInfo::Ref(b));
+        }
+    }
+
+    fn link_size(&mut self, a: SizeId, b: SizeId) {
+        if self.get_size_base(a) != self.get_size_base(b) {
+            self.sizes.insert(a, SizeInfo::Ref(b));
         }
     }
 
@@ -237,6 +270,22 @@ impl<'a> InferContext<'a> {
         }
     }
 
+    #[allow(clippy::unit_arg)]
+    pub fn unify_size(&mut self, a: SizeId, b: SizeId) -> Result<(), (SizeId, SizeId)> {
+        use SizeInfo::*;
+        match (self.get_size(a), self.get_size(b)) {
+            (Unknown, _) => Ok(self.link_size(a, b)),
+            (_, Unknown) => Ok(self.link_size(b, a)),
+
+            (Ref(a), _) => self.unify_size(a, b),
+            (_, Ref(b)) => self.unify_size(a, b),
+
+            (a, b) if a == b => Ok(()),
+
+            (_, _) => Err((a, b)),
+        }
+    }
+
     pub fn display_type_info(&self, id: TypeId) -> impl fmt::Display + '_ {
         #[derive(Copy, Clone)]
         struct TypeInfoDisplay<'a> {
@@ -251,23 +300,10 @@ impl<'a> InferContext<'a> {
             id: ScalarId,
         }
 
-        impl<'a> ScalarInfoDisplay<'a> {
-            fn with_id(mut self, id: ScalarId) -> Self {
-                self.id = id;
-                self
-            }
-        }
-
-        impl<'a> fmt::Display for ScalarInfoDisplay<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                match self.ctx.get_scalar(self.id) {
-                    ScalarInfo::Ref(id) => self.with_id(id).fmt(f),
-                    ScalarInfo::Int => write!(f, "{{int}}"),
-                    ScalarInfo::Float => write!(f, "{{float}}"),
-                    ScalarInfo::Real => write!(f, "{{?}}"),
-                    ScalarInfo::Concrete(scalar) => write!(f, "{}", scalar),
-                }
-            }
+        #[derive(Copy, Clone)]
+        struct SizeInfoDisplay<'a> {
+            ctx: &'a InferContext<'a>,
+            id: SizeId,
         }
 
         impl<'a> TypeInfoDisplay<'a> {
@@ -289,18 +325,38 @@ impl<'a> InferContext<'a> {
                         ctx: self.ctx,
                         id: scalar
                     }),
-                    Vector(scalar, size) => write!(f, "Vector<{},{}>", size, ScalarInfoDisplay {
-                        ctx: self.ctx,
-                        id: scalar
-                    }),
+                    Vector(scalar, size) => write!(
+                        f,
+                        "Vector<{},{}>",
+                        SizeInfoDisplay {
+                            ctx: self.ctx,
+                            id: size
+                        },
+                        ScalarInfoDisplay {
+                            ctx: self.ctx,
+                            id: scalar
+                        }
+                    ),
                     Matrix {
                         columns,
                         rows,
                         base,
-                    } => write!(f, "Matrix<{},{},{}>", columns, rows, ScalarInfoDisplay {
-                        ctx: self.ctx,
-                        id: base
-                    }),
+                    } => write!(
+                        f,
+                        "Matrix<{},{},{}>",
+                        SizeInfoDisplay {
+                            ctx: self.ctx,
+                            id: rows
+                        },
+                        SizeInfoDisplay {
+                            ctx: self.ctx,
+                            id: columns
+                        },
+                        ScalarInfoDisplay {
+                            ctx: self.ctx,
+                            id: base
+                        }
+                    ),
                     Struct(id) => {
                         let fields = self.ctx.structs.get(&id).unwrap();
 
@@ -321,6 +377,42 @@ impl<'a> InferContext<'a> {
                         write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })?;
                         Ok(())
                     },
+                }
+            }
+        }
+
+        impl<'a> ScalarInfoDisplay<'a> {
+            fn with_id(mut self, id: ScalarId) -> Self {
+                self.id = id;
+                self
+            }
+        }
+
+        impl<'a> fmt::Display for ScalarInfoDisplay<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                match self.ctx.get_scalar(self.id) {
+                    ScalarInfo::Ref(id) => self.with_id(id).fmt(f),
+                    ScalarInfo::Int => write!(f, "{{int}}"),
+                    ScalarInfo::Float => write!(f, "{{float}}"),
+                    ScalarInfo::Real => write!(f, "{{?}}"),
+                    ScalarInfo::Concrete(scalar) => write!(f, "{}", scalar),
+                }
+            }
+        }
+
+        impl<'a> SizeInfoDisplay<'a> {
+            fn with_id(mut self, id: SizeId) -> Self {
+                self.id = id;
+                self
+            }
+        }
+
+        impl<'a> fmt::Display for SizeInfoDisplay<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                match self.ctx.get_size(self.id) {
+                    SizeInfo::Unknown => write!(f, "?"),
+                    SizeInfo::Ref(id) => self.with_id(id).fmt(f),
+                    SizeInfo::Concrete(size) => write!(f, "{}", size as u8),
                 }
             }
         }
@@ -360,23 +452,9 @@ impl<'a> InferContext<'a> {
                 self.unify_scalar(a_info, b_info).map_err(|_| (a, b))
             },
 
-            (Vector(a_base, SizeInfo::Unknown), Vector(b_base, SizeInfo::Concrete(_))) => {
+            (Vector(a_base, a_size), Vector(b_base, b_size)) => {
                 self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
-                Ok(self.link(a, b))
-            },
-            (Vector(a_base, SizeInfo::Concrete(_)), Vector(b_base, SizeInfo::Unknown)) => {
-                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
-                Ok(self.link(b, a))
-            },
-            (Vector(a_base, SizeInfo::Unknown), Vector(b_base, SizeInfo::Unknown)) => {
-                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
-                Ok(self.link(a, b))
-            },
-            (
-                Vector(a_base, SizeInfo::Concrete(a_size)),
-                Vector(b_base, SizeInfo::Concrete(b_size)),
-            ) if a_size == b_size => {
-                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
+                self.unify_size(a_size, b_size).map_err(|_| (a, b))?;
                 Ok(())
             },
 
@@ -391,8 +469,11 @@ impl<'a> InferContext<'a> {
                     rows: b_rows,
                     base: b_base,
                 },
-            ) if a_cols == b_cols && a_rows == b_rows => {
-                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))
+            ) => {
+                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
+                self.unify_size(a_cols, b_cols).map_err(|_| (a, b))?;
+                self.unify_size(a_rows, b_rows).map_err(|_| (a, b))?;
+                Ok(())
             },
 
             (Struct(a_id), Struct(b_id)) if a_id == b_id => Ok(()),
@@ -681,8 +762,8 @@ impl<'a> InferContext<'a> {
 
                         let real = this.add_scalar(ScalarInfo::Real);
                         let num = this.insert(TypeInfo::Scalar(real), Span::none());
-                        let vec =
-                            this.insert(TypeInfo::Vector(real, SizeInfo::Unknown), Span::none());
+                        let size_unknown = this.add_size(SizeInfo::Unknown);
+                        let vec = this.insert(TypeInfo::Vector(real, size_unknown), Span::none());
 
                         if this.unify(vec, out).is_ok()
                             && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
@@ -693,10 +774,9 @@ impl<'a> InferContext<'a> {
                             Some(|this: &mut Self, a, b| {
                                 let real = this.add_scalar(ScalarInfo::Real);
                                 let num = this.insert(TypeInfo::Scalar(real), Span::none());
-                                let vec = this.insert(
-                                    TypeInfo::Vector(real, SizeInfo::Unknown),
-                                    Span::none(),
-                                );
+                                let size_unknown = this.add_size(SizeInfo::Unknown);
+                                let vec =
+                                    this.insert(TypeInfo::Vector(real, size_unknown), Span::none());
 
                                 let _ = this.unify(num, a);
                                 let _ = this.unify(vec, b);
@@ -714,8 +794,8 @@ impl<'a> InferContext<'a> {
 
                         let real = this.add_scalar(ScalarInfo::Real);
                         let num = this.insert(TypeInfo::Scalar(real), Span::none());
-                        let vec =
-                            this.insert(TypeInfo::Vector(real, SizeInfo::Unknown), Span::none());
+                        let size_unknown = this.add_size(SizeInfo::Unknown);
+                        let vec = this.insert(TypeInfo::Vector(real, size_unknown), Span::none());
 
                         if this.unify(vec, out).is_ok()
                             && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
@@ -726,10 +806,9 @@ impl<'a> InferContext<'a> {
                             Some(|this: &mut Self, a, b| {
                                 let real = this.add_scalar(ScalarInfo::Real);
                                 let num = this.insert(TypeInfo::Scalar(real), Span::none());
-                                let vec = this.insert(
-                                    TypeInfo::Vector(real, SizeInfo::Unknown),
-                                    Span::none(),
-                                );
+                                let size_unknown = this.add_size(SizeInfo::Unknown);
+                                let vec =
+                                    this.insert(TypeInfo::Vector(real, size_unknown), Span::none());
 
                                 let _ = this.unify(num, b);
                                 let _ = this.unify(vec, a);
@@ -746,8 +825,8 @@ impl<'a> InferContext<'a> {
                         let mut this = this.scoped();
 
                         let real = this.add_scalar(ScalarInfo::Real);
-                        let vec =
-                            this.insert(TypeInfo::Vector(real, SizeInfo::Unknown), Span::none());
+                        let size_unknown = this.add_size(SizeInfo::Unknown);
+                        let vec = this.insert(TypeInfo::Vector(real, size_unknown), Span::none());
 
                         if this.unify(vec, out).is_ok()
                             && [BinaryOp::Addition, BinaryOp::Subtraction].contains(&op)
@@ -819,8 +898,10 @@ impl<'a> InferContext<'a> {
                             .with_span(self.span(record)))
                         }
                     },
-                    TypeInfo::Vector(scalar, size) => match size {
+                    TypeInfo::Vector(scalar, size) => match self.get_size(self.get_size_base(size))
+                    {
                         SizeInfo::Unknown => Ok(false),
+                        SizeInfo::Ref(_) => unreachable!(),
                         SizeInfo::Concrete(size) => {
                             if field.len() > 4 {
                                 return Err(Error::custom(format!(
@@ -850,18 +931,21 @@ impl<'a> InferContext<'a> {
 
                             let ty = match field.len() {
                                 1 => self.insert(TypeInfo::Scalar(scalar), Span::None),
-                                2 => self.insert(
-                                    TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Bi)),
-                                    Span::None,
-                                ),
-                                3 => self.insert(
-                                    TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Tri)),
-                                    Span::None,
-                                ),
-                                4 => self.insert(
-                                    TypeInfo::Vector(scalar, SizeInfo::Concrete(VectorSize::Quad)),
-                                    Span::None,
-                                ),
+                                2 => {
+                                    let size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+
+                                    self.insert(TypeInfo::Vector(scalar, size), Span::None)
+                                },
+                                3 => {
+                                    let size = self.add_size(SizeInfo::Concrete(VectorSize::Tri));
+
+                                    self.insert(TypeInfo::Vector(scalar, size), Span::None)
+                                },
+                                4 => {
+                                    let size = self.add_size(SizeInfo::Concrete(VectorSize::Quad));
+
+                                    self.insert(TypeInfo::Vector(scalar, size), Span::None)
+                                },
                                 _ => unreachable!(),
                             };
 
@@ -881,8 +965,16 @@ impl<'a> InferContext<'a> {
             Constraint::Constructor { out, elements } => {
                 match self.get(self.get_base(out)) {
                     TypeInfo::Unknown => Ok(false), // Can't infer yet
-                    TypeInfo::Vector(scalar, SizeInfo::Concrete(size)) => {
+                    TypeInfo::Vector(scalar, size) => {
                         let scalar_ty = self.insert(TypeInfo::Scalar(scalar), Span::None);
+
+                        let size = if let SizeInfo::Concrete(size) =
+                            self.get_size(self.get_size_base(size))
+                        {
+                            size
+                        } else {
+                            return Ok(false);
+                        };
 
                         match size {
                             VectorSize::Bi => match elements.len() {
@@ -907,13 +999,10 @@ impl<'a> InferContext<'a> {
                                     Ok(true)
                                 },
                                 2 => {
-                                    let vec2 = self.insert(
-                                        TypeInfo::Vector(
-                                            scalar,
-                                            SizeInfo::Concrete(VectorSize::Bi),
-                                        ),
-                                        Span::None,
-                                    );
+                                    let size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+
+                                    let vec2 =
+                                        self.insert(TypeInfo::Vector(scalar, size), Span::None);
 
                                     let scalar_vec = self
                                         .unify(scalar_ty, elements[0])
@@ -933,7 +1022,7 @@ impl<'a> InferContext<'a> {
                                     Ok(true)
                                 },
                                 len => Err(Error::custom(format!(
-                                    "Cannot build 2d vector with {} components",
+                                    "Cannot build 3d vector with {} components",
                                     len,
                                 ))
                                 .with_span(self.span(out))),
@@ -944,20 +1033,14 @@ impl<'a> InferContext<'a> {
                                     Ok(true)
                                 },
                                 2 => {
-                                    let vec2 = self.insert(
-                                        TypeInfo::Vector(
-                                            scalar,
-                                            SizeInfo::Concrete(VectorSize::Bi),
-                                        ),
-                                        Span::None,
-                                    );
-                                    let vec3 = self.insert(
-                                        TypeInfo::Vector(
-                                            scalar,
-                                            SizeInfo::Concrete(VectorSize::Tri),
-                                        ),
-                                        Span::None,
-                                    );
+                                    let bi_size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+                                    let tri_size =
+                                        self.add_size(SizeInfo::Concrete(VectorSize::Tri));
+
+                                    let vec2 =
+                                        self.insert(TypeInfo::Vector(scalar, bi_size), Span::None);
+                                    let vec3 =
+                                        self.insert(TypeInfo::Vector(scalar, tri_size), Span::None);
 
                                     let scalar_vec = self
                                         .unify(scalar_ty, elements[0])
@@ -974,13 +1057,10 @@ impl<'a> InferContext<'a> {
                                     Ok(true)
                                 },
                                 3 => {
-                                    let vec2 = self.insert(
-                                        TypeInfo::Vector(
-                                            scalar,
-                                            SizeInfo::Concrete(VectorSize::Bi),
-                                        ),
-                                        Span::None,
-                                    );
+                                    let bi_size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+
+                                    let vec2 =
+                                        self.insert(TypeInfo::Vector(scalar, bi_size), Span::None);
 
                                     let scalar_scalar_vec = self
                                         .unify(scalar_ty, elements[0])
@@ -1009,7 +1089,7 @@ impl<'a> InferContext<'a> {
                                     Ok(true)
                                 },
                                 len => Err(Error::custom(format!(
-                                    "Cannot build 2d vector with {} components",
+                                    "Cannot build 4d vector with {} components",
                                     len,
                                 ))
                                 .with_span(self.span(out))),
@@ -1018,9 +1098,161 @@ impl<'a> InferContext<'a> {
                     },
                     TypeInfo::Matrix {
                         base,
-                        columns: SizeInfo::Concrete(columns),
-                        rows: SizeInfo::Concrete(rows),
-                    } => todo!(),
+                        columns,
+                        rows,
+                    } => {
+                        let vec_ty = self.insert(TypeInfo::Vector(base, columns), Span::None);
+
+                        let rows = if let SizeInfo::Concrete(rows) =
+                            self.get_size(self.get_size_base(rows))
+                        {
+                            rows
+                        } else {
+                            return Ok(false);
+                        };
+
+                        match rows {
+                            VectorSize::Bi => match elements.len() {
+                                1 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    self.unify(vec_ty, elements[1])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 2 row matrix with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                            VectorSize::Tri => match elements.len() {
+                                1 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    let bi_size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+
+                                    let mat2 = self.insert(
+                                        TypeInfo::Matrix {
+                                            base,
+                                            columns,
+                                            rows: bi_size,
+                                        },
+                                        Span::None,
+                                    );
+
+                                    let vec_mat = self
+                                        .unify(vec_ty, elements[0])
+                                        .and(self.unify(mat2, elements[1]));
+                                    let mat_vec = self
+                                        .unify(mat2, elements[0])
+                                        .and(self.unify(vec_ty, elements[1]));
+
+                                    vec_mat.or(mat_vec)?;
+
+                                    Ok(true)
+                                },
+                                3 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    self.unify(vec_ty, elements[1])?;
+                                    self.unify(vec_ty, elements[2])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 3 row matrix with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                            VectorSize::Quad => match elements.len() {
+                                1 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    Ok(true)
+                                },
+                                2 => {
+                                    let bi_size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+                                    let tri_size =
+                                        self.add_size(SizeInfo::Concrete(VectorSize::Tri));
+
+                                    let mat2 = self.insert(
+                                        TypeInfo::Matrix {
+                                            base,
+                                            columns,
+                                            rows: bi_size,
+                                        },
+                                        Span::None,
+                                    );
+                                    let mat3 = self.insert(
+                                        TypeInfo::Matrix {
+                                            base,
+                                            columns,
+                                            rows: tri_size,
+                                        },
+                                        Span::None,
+                                    );
+
+                                    let vec_mat = self
+                                        .unify(vec_ty, elements[0])
+                                        .and(self.unify(mat3, elements[1]));
+                                    let mat_vec = self
+                                        .unify(mat3, elements[0])
+                                        .and(self.unify(vec_ty, elements[1]));
+                                    let mat_mat = self
+                                        .unify(mat2, elements[0])
+                                        .and(self.unify(mat2, elements[1]));
+
+                                    vec_mat.or(mat_vec).or(mat_mat)?;
+
+                                    Ok(true)
+                                },
+                                3 => {
+                                    let rows = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+
+                                    let mat2 = self.insert(
+                                        TypeInfo::Matrix {
+                                            base,
+                                            columns,
+                                            rows,
+                                        },
+                                        Span::None,
+                                    );
+
+                                    let vec_vec_mat = self
+                                        .unify(vec_ty, elements[0])
+                                        .and(self.unify(vec_ty, elements[1]))
+                                        .and(self.unify(mat2, elements[2]));
+                                    let vec_mat_vec = self
+                                        .unify(vec_ty, elements[0])
+                                        .and(self.unify(mat2, elements[1]))
+                                        .and(self.unify(vec_ty, elements[2]));
+                                    let mat_vec_vec = self
+                                        .unify(mat2, elements[0])
+                                        .and(self.unify(vec_ty, elements[1]))
+                                        .and(self.unify(vec_ty, elements[2]));
+
+                                    vec_vec_mat.or(vec_mat_vec).or(mat_vec_vec)?;
+
+                                    Ok(true)
+                                },
+                                4 => {
+                                    self.unify(vec_ty, elements[0])?;
+                                    self.unify(vec_ty, elements[1])?;
+                                    self.unify(vec_ty, elements[2])?;
+                                    self.unify(vec_ty, elements[3])?;
+                                    Ok(true)
+                                },
+                                len => Err(Error::custom(format!(
+                                    "Cannot build 4 row matrix with {} components",
+                                    len,
+                                ))
+                                .with_span(self.span(out))),
+                            },
+                        }
+                    },
                     _ => Err(Error::custom(format!(
                         "Type '{}' does not support constructors",
                         self.display_type_info(out),
@@ -1083,7 +1315,9 @@ impl<'a> InferContext<'a> {
             ),
             Struct(id) => Type::Struct(id),
             TypeInfo::Vector(scalar, size) => {
-                if let (base, SizeInfo::Concrete(size)) = (scalar, size) {
+                if let (base, SizeInfo::Concrete(size)) =
+                    (scalar, self.get_size(self.get_size_base(size)))
+                {
                     Type::Vector(
                         self.reconstruct_scalar(base)
                             .map_err(|_| ReconstructError::Unknown(id))?,
@@ -1098,9 +1332,11 @@ impl<'a> InferContext<'a> {
                 rows,
                 base,
             } => {
-                if let (SizeInfo::Concrete(columns), SizeInfo::Concrete(rows), base) =
-                    (columns, rows, base)
-                {
+                if let (SizeInfo::Concrete(columns), SizeInfo::Concrete(rows), base) = (
+                    self.get_size(self.get_size_base(columns)),
+                    self.get_size(self.get_size_base(rows)),
+                    base,
+                ) {
                     Type::Matrix {
                         columns,
                         rows,
@@ -1143,192 +1379,4 @@ impl<'a> InferContext<'a> {
 enum ReconstructError {
     Unknown(TypeId),
     Recursive,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{node::SrcNode, src::Span, BinaryOp, ScalarType, UnaryOp};
-    use naga::VectorSize;
-
-    #[test]
-    fn basic_1() {
-        let mut ctx = InferContext::default();
-
-        let int = ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Int));
-
-        let a = ctx.insert(TypeInfo::Unknown, Span::none());
-        let b = ctx.insert(TypeInfo::Scalar(int), Span::none());
-        let out = ctx.insert(TypeInfo::Unknown, Span::none());
-        ctx.add_constraint(Constraint::Unary {
-            a,
-            op: SrcNode::new(UnaryOp::Negation, Span::none()),
-            out,
-        });
-        ctx.add_constraint(Constraint::Binary {
-            a,
-            b,
-            op: SrcNode::new(BinaryOp::Addition, Span::none()),
-            out,
-        });
-
-        ctx.solve_all().unwrap();
-
-        assert_eq!(
-            ctx.reconstruct(a, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-        assert_eq!(
-            ctx.reconstruct(b, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-        assert_eq!(
-            ctx.reconstruct(out, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-    }
-
-    #[test]
-    fn vec_1() {
-        let mut ctx = InferContext::default();
-
-        let int = ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Int));
-        let unknown_scalar = ctx.add_scalar(ScalarInfo::Real);
-
-        let a = ctx.insert(TypeInfo::Scalar(unknown_scalar), Span::none());
-        let b = ctx.insert(
-            TypeInfo::Vector(int, SizeInfo::Concrete(VectorSize::Tri)),
-            Span::none(),
-        );
-        let out = ctx.insert(TypeInfo::Unknown, Span::none());
-        ctx.add_constraint(Constraint::Binary {
-            a,
-            b,
-            op: SrcNode::new(BinaryOp::Multiplication, Span::none()),
-            out,
-        });
-
-        ctx.solve_all().unwrap();
-
-        assert_eq!(
-            ctx.reconstruct(a, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-        assert_eq!(
-            ctx.reconstruct(b, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-        assert_eq!(
-            ctx.reconstruct(out, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-    }
-
-    #[test]
-    fn vec_1_swap() {
-        let mut ctx = InferContext::default();
-
-        let int = ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Int));
-        let unknown_scalar = ctx.add_scalar(ScalarInfo::Real);
-
-        let b = ctx.insert(TypeInfo::Scalar(unknown_scalar), Span::none());
-        let a = ctx.insert(
-            TypeInfo::Vector(int, SizeInfo::Concrete(VectorSize::Tri)),
-            Span::none(),
-        );
-        let out = ctx.insert(TypeInfo::Unknown, Span::none());
-        ctx.add_constraint(Constraint::Binary {
-            a,
-            b,
-            op: SrcNode::new(BinaryOp::Multiplication, Span::none()),
-            out,
-        });
-
-        ctx.solve_all().unwrap();
-
-        assert_eq!(
-            ctx.reconstruct(b, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-        assert_eq!(
-            ctx.reconstruct(a, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-        assert_eq!(
-            ctx.reconstruct(out, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-    }
-
-    #[test]
-    fn vec_2() {
-        let mut ctx = InferContext::default();
-
-        let int = ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Int));
-        let unknown_scalar = ctx.add_scalar(ScalarInfo::Real);
-
-        let a = ctx.insert(TypeInfo::Scalar(int), Span::none());
-        let b = ctx.insert(
-            TypeInfo::Vector(unknown_scalar, SizeInfo::Concrete(VectorSize::Tri)),
-            Span::none(),
-        );
-        let out = ctx.insert(TypeInfo::Unknown, Span::none());
-        ctx.add_constraint(Constraint::Binary {
-            a,
-            b,
-            op: SrcNode::new(BinaryOp::Multiplication, Span::none()),
-            out,
-        });
-
-        ctx.solve_all().unwrap();
-
-        assert_eq!(
-            ctx.reconstruct(a, Span::none()).unwrap().into_inner(),
-            Type::Scalar(ScalarType::Int),
-        );
-        assert_eq!(
-            ctx.reconstruct(b, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-        assert_eq!(
-            ctx.reconstruct(out, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-    }
-
-    #[test]
-    fn vec_3() {
-        let mut ctx = InferContext::default();
-
-        let int = ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Int));
-        let unknown_scalar = ctx.add_scalar(ScalarInfo::Real);
-
-        let a = ctx.insert(TypeInfo::Vector(int, SizeInfo::Unknown), Span::none());
-        let b = ctx.insert(
-            TypeInfo::Vector(unknown_scalar, SizeInfo::Concrete(VectorSize::Tri)),
-            Span::none(),
-        );
-        let out = ctx.insert(TypeInfo::Unknown, Span::none());
-        ctx.add_constraint(Constraint::Binary {
-            a,
-            b,
-            op: SrcNode::new(BinaryOp::Addition, Span::none()),
-            out,
-        });
-
-        ctx.solve_all().unwrap();
-
-        assert_eq!(
-            ctx.reconstruct(a, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-        assert_eq!(
-            ctx.reconstruct(b, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-        assert_eq!(
-            ctx.reconstruct(out, Span::none()).unwrap().into_inner(),
-            Type::Vector(ScalarType::Int, VectorSize::Tri),
-        );
-    }
 }
