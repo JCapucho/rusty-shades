@@ -138,7 +138,9 @@ impl Function {
         const MAX_ITER: usize = 32;
 
         if MAX_ITER <= iter {
-            todo!()
+            return Err(vec![Error::custom(String::from(
+                "Recursive functions are prohibited",
+            ))]);
         }
 
         let mut errors = vec![];
@@ -568,7 +570,7 @@ impl TypedExpr {
                             .build_naga(module, *name, builder, iter + 1)
                             .unwrap()
                     } else {
-                        todo!()
+                        unreachable!()
                     }
                 };
 
@@ -624,13 +626,6 @@ impl TypedExpr {
                 }
             },
             Expr::Constructor { elements } => {
-                /*
-                TODO: Right now components can be of any type we may need to normalize them
-
-                For example a vector3 can be passed a vec2 and a scalar and this might need to be
-                turned into 3 scalars by performing two access to the elements of the vec2
-                */
-
                 let components = elements
                     .iter()
                     .map(|ele| {

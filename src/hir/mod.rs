@@ -692,7 +692,7 @@ impl Module {
                         ),
                     );
                 },
-                Item::Const { .. } => unimplemented!(),
+                Item::Const { .. } => todo!(),
             }
         }
 

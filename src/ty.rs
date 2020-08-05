@@ -15,10 +15,5 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn is_primitive(&self) -> bool {
-        match self {
-            Type::Scalar(_) | Type::Vector(_, _) => true,
-            _ => false,
-        }
-    }
+    pub fn is_primitive(&self) -> bool { matches!(self,Type::Scalar(_) | Type::Vector(_, _)) }
 }
