@@ -1296,7 +1296,7 @@ impl SrcNode<ast::Expression> {
                 name,
                 args: call_args,
             } => match name.inner().as_str() {
-                "v2" => {
+                "v2" | "v3" | "v4" | "m2" | "m3" | "m4" => {
                     let elements: Vec<_> = {
                         let (elements, e): (Vec<_>, Vec<_>) = call_args
                             .iter()
@@ -1321,214 +1321,33 @@ impl SrcNode<ast::Expression> {
                         elements.into_iter().map(Result::unwrap).collect()
                     };
 
-                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Bi));
-
-                    let out = infer_ctx.insert(TypeInfo::Vector(scalar, size), self.span());
-                    infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
-
-                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
-                },
-                "v3" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| {
-                                arg.build_hir(
-                                    infer_ctx,
-                                    locals_lookup,
-                                    args,
-                                    globals_lookup,
-                                    statements,
-                                    structs,
-                                    locals,
-                                    ret,
-                                    out,
-                                    functions,
-                                    functions_lookup,
-                                )
-                            })
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                        elements.into_iter().map(Result::unwrap).collect()
-                    };
-
-                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Tri));
-
-                    let out = infer_ctx.insert(TypeInfo::Vector(scalar, size), self.span());
-                    infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
-
-                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
-                },
-                "v4" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| {
-                                arg.build_hir(
-                                    infer_ctx,
-                                    locals_lookup,
-                                    args,
-                                    globals_lookup,
-                                    statements,
-                                    structs,
-                                    locals,
-                                    ret,
-                                    out,
-                                    functions,
-                                    functions_lookup,
-                                )
-                            })
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                        elements.into_iter().map(Result::unwrap).collect()
-                    };
-
-                    let scalar = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Quad));
-
-                    let out = infer_ctx.insert(TypeInfo::Vector(scalar, size), self.span());
-                    infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
-
-                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
-                },
-                "m2" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| {
-                                arg.build_hir(
-                                    infer_ctx,
-                                    locals_lookup,
-                                    args,
-                                    globals_lookup,
-                                    statements,
-                                    structs,
-                                    locals,
-                                    ret,
-                                    out,
-                                    functions,
-                                    functions_lookup,
-                                )
-                            })
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                        elements.into_iter().map(Result::unwrap).collect()
+                    let size = match name.chars().last().unwrap() {
+                        '2' => VectorSize::Bi,
+                        '3' => VectorSize::Tri,
+                        '4' => VectorSize::Quad,
+                        _ => unreachable!(),
                     };
 
                     let base = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let rows = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Bi));
-                    let columns = infer_ctx.add_size(SizeInfo::Unknown);
 
-                    let out = infer_ctx.insert(
-                        TypeInfo::Matrix {
-                            base,
-                            rows,
-                            columns,
-                        },
-                        self.span(),
-                    );
-                    infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
+                    let out = if name.starts_with('m') {
+                        let rows = infer_ctx.add_size(SizeInfo::Concrete(size));
+                        let columns = infer_ctx.add_size(SizeInfo::Unknown);
 
-                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
-                },
-                "m3" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| {
-                                arg.build_hir(
-                                    infer_ctx,
-                                    locals_lookup,
-                                    args,
-                                    globals_lookup,
-                                    statements,
-                                    structs,
-                                    locals,
-                                    ret,
-                                    out,
-                                    functions,
-                                    functions_lookup,
-                                )
-                            })
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+                        infer_ctx.insert(
+                            TypeInfo::Matrix {
+                                base,
+                                rows,
+                                columns,
+                            },
+                            self.span(),
+                        )
+                    } else {
+                        let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Quad));
 
-                        elements.into_iter().map(Result::unwrap).collect()
+                        infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
                     };
 
-                    let base = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let rows = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Tri));
-                    let columns = infer_ctx.add_size(SizeInfo::Unknown);
-
-                    let out = infer_ctx.insert(
-                        TypeInfo::Matrix {
-                            base,
-                            rows,
-                            columns,
-                        },
-                        self.span(),
-                    );
-                    infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
-
-                    InferNode::new(TypedExpr::Constructor { elements }, (out, self.span()))
-                },
-                "m4" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| {
-                                arg.build_hir(
-                                    infer_ctx,
-                                    locals_lookup,
-                                    args,
-                                    globals_lookup,
-                                    statements,
-                                    structs,
-                                    locals,
-                                    ret,
-                                    out,
-                                    functions,
-                                    functions_lookup,
-                                )
-                            })
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                        elements.into_iter().map(Result::unwrap).collect()
-                    };
-
-                    let base = infer_ctx.add_scalar(ScalarInfo::Real);
-                    let rows = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Quad));
-                    let columns = infer_ctx.add_size(SizeInfo::Unknown);
-
-                    let out = infer_ctx.insert(
-                        TypeInfo::Matrix {
-                            base,
-                            rows,
-                            columns,
-                        },
-                        self.span(),
-                    );
                     infer_ctx.add_constraint(Constraint::Constructor {
                         out,
                         elements: elements.iter().map(|e| e.type_id()).collect(),
