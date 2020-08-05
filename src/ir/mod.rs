@@ -136,6 +136,15 @@ impl hir::Module {
                     });
                 },
                 crate::ast::GlobalModifier::Input(location) => {
+                    if global.ty.is_primitive() {
+                        return Err(vec![
+                            Error::custom(String::from(
+                                "Input globals can only be of primitive types",
+                            ))
+                            .with_span(global.span()),
+                        ]);
+                    }
+
                     globals.insert(pos, Global {
                         name: global.name.clone(),
                         ty: global.ty,
@@ -146,6 +155,15 @@ impl hir::Module {
                     global_lookups.insert(*id, GlobalLookup::ContextLess(pos));
                 },
                 crate::ast::GlobalModifier::Output(location) => {
+                    if global.ty.is_primitive() {
+                        return Err(vec![
+                            Error::custom(String::from(
+                                "Output globals can only be of primitive types",
+                            ))
+                            .with_span(global.span()),
+                        ]);
+                    }
+
                     globals.insert(pos, Global {
                         name: global.name.clone(),
                         ty: global.ty,

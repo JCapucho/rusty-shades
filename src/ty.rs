@@ -13,3 +13,12 @@ pub enum Type {
     },
     Struct(u32),
 }
+
+impl Type {
+    pub fn is_primitive(&self) -> bool {
+        match self {
+            Type::Scalar(_) | Type::Vector(_, _) => true,
+            _ => false,
+        }
+    }
+}
