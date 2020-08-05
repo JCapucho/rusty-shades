@@ -1448,6 +1448,14 @@ impl<'a> InferContext<'a> {
         })
     }
 
+    fn reconstruct_size(&self, id: SizeId) -> Result<VectorSize, ()> {
+        Ok(match self.get_size(id) {
+            SizeInfo::Ref(a) => self.reconstruct_size(a)?,
+            SizeInfo::Concrete(a) => a,
+            _ => return Err(()),
+        })
+    }
+
     fn reconstruct_inner(
         &self,
         iter: usize,
@@ -1468,39 +1476,26 @@ impl<'a> InferContext<'a> {
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
             Struct(id) => Type::Struct(id),
-            TypeInfo::Vector(scalar, size) => {
-                if let (base, SizeInfo::Concrete(size)) =
-                    (scalar, self.get_size(self.get_size_base(size)))
-                {
-                    Type::Vector(
-                        self.reconstruct_scalar(base)
-                            .map_err(|_| ReconstructError::Unknown(id))?,
-                        size,
-                    )
-                } else {
-                    return Err(ReconstructError::Unknown(id));
-                }
-            },
+            TypeInfo::Vector(scalar, size) => Type::Vector(
+                self.reconstruct_scalar(scalar)
+                    .map_err(|_| ReconstructError::Unknown(id))?,
+                self.reconstruct_size(size)
+                    .map_err(|_| ReconstructError::Unknown(id))?,
+            ),
             TypeInfo::Matrix {
                 columns,
                 rows,
                 base,
-            } => {
-                if let (SizeInfo::Concrete(columns), SizeInfo::Concrete(rows), base) = (
-                    self.get_size(self.get_size_base(columns)),
-                    self.get_size(self.get_size_base(rows)),
-                    base,
-                ) {
-                    Type::Matrix {
-                        columns,
-                        rows,
-                        base: self
-                            .reconstruct_scalar(base)
-                            .map_err(|_| ReconstructError::Unknown(id))?,
-                    }
-                } else {
-                    return Err(ReconstructError::Unknown(id));
-                }
+            } => Type::Matrix {
+                columns: self
+                    .reconstruct_size(columns)
+                    .map_err(|_| ReconstructError::Unknown(id))?,
+                rows: self
+                    .reconstruct_size(rows)
+                    .map_err(|_| ReconstructError::Unknown(id))?,
+                base: self
+                    .reconstruct_scalar(base)
+                    .map_err(|_| ReconstructError::Unknown(id))?,
             },
         };
 

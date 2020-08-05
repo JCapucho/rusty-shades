@@ -376,7 +376,7 @@ impl Module {
                 Ok(_) => {},
                 Err(e) => {
                     errors.push(e);
-                    continue;
+                    return Err(errors);
                 },
             };
 
@@ -1135,7 +1135,7 @@ impl SrcNode<ast::Statement> {
                     let id = ty.build_hir_ty(structs, infer_ctx)?;
 
                     match infer_ctx.unify(expr.type_id(), id) {
-                        Ok(_) => infer_ctx.link(expr.type_id(), out),
+                        Ok(_) => {},
                         Err(e) => return Err(vec![e]),
                     }
                 }

@@ -430,23 +430,52 @@ impl hir::TypedNode {
                 match ty {
                     Type::Vector(_, size) => {
                         if constructed_elements.len() == 1 {
+                            // # Small optimization
+                            // previously a single value constructor would get the expression
+                            // multiplied for the number of elements so for example v2(1. * 2.) is
+                            // equal to v2(1. * 2.,1. * 2.) so we store
+                            // the expression in a local and assign the local
+                            // instead so we have
+                            // ```
+                            // let local = 1. * 2.;
+                            // v2(local, local)
+                            // ```
+                            let local = locals.len() as u32;
+                            let ty = *constructed_elements[0].attr();
+                            locals.insert(local, ty);
+
+                            body.push(Statement::Assign(
+                                AssignTarget::Local(local),
+                                constructed_elements.remove(0),
+                            ));
+
                             for _ in 0..(size as usize - 1) {
-                                constructed_elements.push(constructed_elements[0].clone())
+                                constructed_elements.push(TypedExpr::new(Expr::Local(local), ty))
                             }
                         } else {
                             let mut tmp = vec![];
 
                             for ele in constructed_elements.into_iter() {
-                                match ele.attr() {
+                                match *ele.attr() {
                                     Type::Scalar(_) => tmp.push(ele),
                                     Type::Vector(scalar, size) => {
-                                        for i in 0..*size as usize {
+                                        // see Small optimization
+                                        let local = locals.len() as u32;
+                                        let ty = *ele.attr();
+                                        locals.insert(local, ty);
+
+                                        body.push(Statement::Assign(
+                                            AssignTarget::Local(local),
+                                            ele,
+                                        ));
+
+                                        for i in 0..size as usize {
                                             tmp.push(TypedExpr::new(
                                                 Expr::Access {
-                                                    base: ele.clone(),
+                                                    base: TypedExpr::new(Expr::Local(local), ty),
                                                     fields: vec![i as u32],
                                                 },
-                                                Type::Scalar(*scalar),
+                                                Type::Scalar(scalar),
                                             ))
                                         }
                                     },
@@ -459,27 +488,48 @@ impl hir::TypedNode {
                     },
                     Type::Matrix { rows, .. } => {
                         if constructed_elements.len() == 1 {
+                            // Small optimization
+                            // see the comment on the vector
+                            let local = locals.len() as u32;
+                            let ty = *constructed_elements[0].attr();
+                            locals.insert(local, ty);
+
+                            body.push(Statement::Assign(
+                                AssignTarget::Local(local),
+                                constructed_elements.remove(0),
+                            ));
+
                             for _ in 0..(rows as usize - 1) {
-                                constructed_elements.push(constructed_elements[0].clone())
+                                constructed_elements.push(TypedExpr::new(Expr::Local(local), ty))
                             }
                         } else {
                             let mut tmp = vec![];
 
                             for ele in constructed_elements.into_iter() {
-                                match ele.attr() {
+                                match *ele.attr() {
                                     Type::Vector(_, _) => tmp.push(ele),
                                     Type::Matrix {
                                         rows,
                                         base,
                                         columns,
                                     } => {
-                                        for i in 0..*rows as usize {
+                                        // see the small optimization on vec
+                                        let local = locals.len() as u32;
+                                        let ty = *ele.attr();
+                                        locals.insert(local, ty);
+
+                                        body.push(Statement::Assign(
+                                            AssignTarget::Local(local),
+                                            ele,
+                                        ));
+
+                                        for i in 0..rows as usize {
                                             tmp.push(TypedExpr::new(
                                                 Expr::Access {
-                                                    base: ele.clone(),
+                                                    base: TypedExpr::new(Expr::Local(local), ty),
                                                     fields: vec![i as u32],
                                                 },
-                                                Type::Vector(*base, *columns),
+                                                Type::Vector(base, columns),
                                             ))
                                         }
                                     },
