@@ -80,6 +80,11 @@ pub enum Constraint {
         record: TypeId,
         field: SrcNode<Ident>,
     },
+    Index {
+        out: TypeId,
+        base: TypeId,
+        index: TypeId,
+    },
     Constructor {
         out: TypeId,
         elements: Vec<TypeId>,
@@ -1412,6 +1417,35 @@ impl<'a> InferContext<'a> {
 
                     // Constraint is solved
                     Ok(true)
+                }
+            },
+            Constraint::Index { out, base, index } => {
+                let index_base = self.add_scalar(ScalarInfo::Concrete(ScalarType::Uint));
+                let index_id = self.insert(TypeInfo::Scalar(index_base), self.span(index));
+
+                self.unify(index, index_id)?;
+
+                match self.get(self.get_base(base)) {
+                    TypeInfo::Unknown => Ok(false), // Can't infer yet
+                    TypeInfo::Vector(scalar, _) => {
+                        let out_id = self.insert(TypeInfo::Scalar(scalar), self.span(out));
+
+                        self.unify(out, out_id)?;
+
+                        Ok(true)
+                    },
+                    TypeInfo::Matrix { columns, base, .. } => {
+                        let out_id = self.insert(TypeInfo::Vector(base, columns), self.span(out));
+
+                        self.unify(out, out_id)?;
+
+                        Ok(true)
+                    },
+                    _ => Err(Error::custom(format!(
+                        "Type '{}' does not support indexing",
+                        self.display_type_info(out),
+                    ))
+                    .with_span(self.span(out))),
                 }
             },
         }

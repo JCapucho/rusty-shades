@@ -78,6 +78,10 @@ pub enum Expr {
     Constructor {
         elements: Vec<TypedExpr>,
     },
+    Index {
+        base: TypedExpr,
+        index: TypedExpr,
+    },
     Arg(u32),
     Local(u32),
     Global(u32),
@@ -136,7 +140,7 @@ impl hir::Module {
                     });
                 },
                 crate::ast::GlobalModifier::Input(location) => {
-                    if global.ty.is_primitive() {
+                    if !global.ty.is_primitive() {
                         return Err(vec![
                             Error::custom(String::from(
                                 "Input globals can only be of primitive types",
@@ -155,7 +159,7 @@ impl hir::Module {
                     global_lookups.insert(*id, GlobalLookup::ContextLess(pos));
                 },
                 crate::ast::GlobalModifier::Output(location) => {
-                    if global.ty.is_primitive() {
+                    if !global.ty.is_primitive() {
                         return Err(vec![
                             Error::custom(String::from(
                                 "Output globals can only be of primitive types",
@@ -714,6 +718,27 @@ impl hir::TypedNode {
                 body.push(sta);
 
                 Expr::Local(local)
+            },
+            hir::Expr::Index { base, index } => {
+                let base = fallthrough!(base.build_ir(
+                    modifier,
+                    body,
+                    locals,
+                    globals,
+                    globals_lookup,
+                    nested
+                ))?;
+
+                let index = fallthrough!(index.build_ir(
+                    modifier,
+                    body,
+                    locals,
+                    globals,
+                    globals_lookup,
+                    nested
+                ))?;
+
+                Expr::Index { base, index }
             },
         };
 

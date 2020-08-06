@@ -650,6 +650,25 @@ impl TypedExpr {
 
                 Expression::Compose { ty, components }
             },
+            Expr::Index { base, index } => {
+                let base =
+                    base.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
+
+                let base = expressions.append(base);
+
+                let index = index.build_naga(
+                    module,
+                    locals_lookup,
+                    expressions,
+                    modifier,
+                    builder,
+                    iter,
+                )?;
+
+                let index = expressions.append(index);
+
+                Expression::Access { base, index }
+            },
             Expr::Arg(var) => Expression::FunctionParameter(*var),
             Expr::Local(var) => Expression::LocalVariable(*locals_lookup.get(var).unwrap()),
             Expr::Global(var) => Expression::GlobalVariable(

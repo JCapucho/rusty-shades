@@ -108,6 +108,10 @@ pub enum Expr {
         else_ifs: Vec<(TypedNode, SrcNode<Vec<Statement<TypedNode>>>)>,
         reject: Option<SrcNode<Vec<Statement<TypedNode>>>>,
     },
+    Index {
+        base: TypedNode,
+        index: TypedNode,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +146,10 @@ enum TypedExpr {
         accept: SrcNode<Vec<Statement<InferNode>>>,
         else_ifs: Vec<(InferNode, SrcNode<Vec<Statement<InferNode>>>)>,
         reject: Option<SrcNode<Vec<Statement<InferNode>>>>,
+    },
+    Index {
+        base: InferNode,
+        index: InferNode,
     },
 }
 
@@ -246,6 +254,10 @@ impl InferNode {
                             ))
                         })
                         .transpose()?,
+                },
+                TypedExpr::Index { base, index } => Expr::Index {
+                    base: base.to_expr(infer_ctx)?,
+                    index: index.to_expr(infer_ctx)?,
                 },
             },
             (infer_ctx.reconstruct(*ty, *span)?.into_inner(), *span),
@@ -1657,6 +1669,45 @@ impl SrcNode<ast::Expression> {
                 };
 
                 InferNode::new(TypedExpr::Return(expr), (empty, self.span()))
+            },
+            ast::Expression::Index { base, index } => {
+                let base = base.build_hir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    locals,
+                    ret,
+                    out,
+                    functions,
+                    functions_lookup,
+                )?;
+
+                let index = index.build_hir(
+                    infer_ctx,
+                    locals_lookup,
+                    args,
+                    globals_lookup,
+                    statements,
+                    structs,
+                    locals,
+                    ret,
+                    out,
+                    functions,
+                    functions_lookup,
+                )?;
+
+                let out = infer_ctx.insert(TypeInfo::Unknown, self.span());
+
+                infer_ctx.add_constraint(Constraint::Index {
+                    out,
+                    base: base.type_id(),
+                    index: index.type_id(),
+                });
+
+                InferNode::new(TypedExpr::Index { base, index }, (out, self.span()))
             },
         })
     }

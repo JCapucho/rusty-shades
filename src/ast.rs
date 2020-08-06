@@ -76,6 +76,10 @@ pub enum Expression {
         reject: Option<SrcNode<Block>>,
     },
     Return(Option<SrcNode<Expression>>),
+    Index {
+        base: SrcNode<Expression>,
+        index: SrcNode<Expression>,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -292,6 +296,11 @@ fn expr_parser(
         })
         .map_with_span(SrcNode::new);
 
+        let range = just(Token::OpenDelimiter(Delimiter::SquareBrackets))
+            .padding_for(expr.clone())
+            .padded_by(just(Token::CloseDelimiter(Delimiter::SquareBrackets)))
+            .boxed();
+
         let atom = literal
             .or(just(Token::OpenDelimiter(Delimiter::Parentheses))
                 .padding_for(expr.clone())
@@ -310,6 +319,16 @@ fn expr_parser(
             })
             .boxed();
 
+        let index = struct_access
+            .clone()
+            .then(range.repeated())
+            .reduce_left(|base, index| {
+                let span = base.span().union(index.span());
+
+                SrcNode::new(Expression::Index { base, index }, span)
+            })
+            .boxed();
+
         let unary_op = just(Token::Bang)
             .to(UnaryOp::BitWiseNot)
             .or(just(Token::Minus).to(UnaryOp::Negation))
@@ -317,7 +336,7 @@ fn expr_parser(
 
         let unary = unary_op
             .repeated()
-            .then(struct_access)
+            .then(index)
             .reduce_right(|op, expr| {
                 let span = op.span().union(expr.span());
 

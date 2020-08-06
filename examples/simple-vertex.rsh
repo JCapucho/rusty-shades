@@ -8,8 +8,8 @@ global position gl_position;
 
 // single line comment
 fn vertex vertex_main() {
-    let tmp = m4(2. * v_position);
-    f_color = color;
+    let tmp = m4(2. * v_position)[0];
+    f_color = tmp;
     gl_position = v_position;
 }
 
