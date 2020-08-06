@@ -594,6 +594,7 @@ fn const_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Sr
         .padding_for(ident_parser())
         .then(just(Token::Colon).padding_for(type_parser()))
         .then(just(Token::Equal).padding_for(expr_parser(statement_parser())))
+        .padded_by(just(Token::SemiColon))
         .map_with_span(|((ident, ty), init), span| {
             SrcNode::new(Item::Const { ident, ty, init }, span)
         })
