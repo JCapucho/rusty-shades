@@ -13,6 +13,7 @@ impl InferNode {
     ) -> Result<ConstantInner, Error> {
         let span = self.span();
 
+        // TODO: Allow constants to be included
         Ok(match self.inner() {
             Expr::BinaryOp { left, op, right } => {
                 let left = left.solve(infer_ctx, locals)?;

@@ -38,9 +38,15 @@ fn main() -> io::Result<()> {
     println!("===== IR  =======");
     println!("{:#?}", module);
     println!("=================");
-    println!("=================");
+    println!("=================\n\n\n");
 
     let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
+
+    println!("=================");
+    println!("==== Naga IR ====");
+    println!("{:#?}", naga_ir);
+    println!("=================");
+    println!("=================");
 
     let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 

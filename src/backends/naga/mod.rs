@@ -1,7 +1,6 @@
 use crate::{
     error::Error,
-    hir::AssignTarget,
-    ir::{Expr, Function, Module, Statement, Struct, TypedExpr},
+    ir::{self, AssignTarget, Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::Type,
     BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp,
 };
@@ -32,6 +31,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
     let mut functions = Arena::new();
 
     let mut globals_lookup = FastHashMap::default();
+    let mut constants_lookup = FastHashMap::default();
 
     let mut entry_points = vec![];
 
@@ -72,6 +72,74 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
     }
 
+    for (id, constant) in module.constants.iter() {
+        let ty = match constant
+            .ty
+            .build_naga(&mut types, &structs_lookup)
+            .and_then(|ty| {
+                ty.ok_or_else(|| Error::custom(String::from("Constant cannot be of type ()")))
+            }) {
+            Ok(t) => t.0,
+            Err(e) => {
+                errors.push(e);
+                continue;
+            },
+        };
+
+        let inner = match constant.inner {
+            ir::ConstantInner::Scalar(scalar) => scalar.build_naga(),
+            ir::ConstantInner::Vector(vec) => match constant.ty {
+                Type::Vector(base, size) => {
+                    let mut elements = Vec::with_capacity(size as usize);
+
+                    for i in 0..size as usize {
+                        elements.push(constants.fetch_or_append(Constant {
+                            name: None,
+                            specialization: None,
+                            ty: base.build_and_add(&mut types),
+                            inner: vec[i].build_naga(),
+                        }))
+                    }
+
+                    ConstantInner::Composite(elements)
+                },
+                _ => unreachable!(),
+            },
+            ir::ConstantInner::Matrix(mat) => match constant.ty {
+                Type::Matrix {
+                    rows,
+                    columns,
+                    base,
+                } => {
+                    let mut elements = Vec::with_capacity(rows as usize * columns as usize);
+
+                    for x in 0..rows as usize {
+                        for y in 0..columns as usize {
+                            elements.push(constants.fetch_or_append(Constant {
+                                name: None,
+                                specialization: None,
+                                ty: base.build_and_add(&mut types),
+                                inner: mat[x * 4 + y].build_naga(),
+                            }))
+                        }
+                    }
+
+                    ConstantInner::Composite(elements)
+                },
+                _ => unreachable!(),
+            },
+        };
+
+        let handle = constants.append(Constant {
+            name: Some(constant.name.to_string()),
+            specialization: None,
+            ty,
+            inner,
+        });
+
+        constants_lookup.insert(*id, handle);
+    }
+
     let mut func_builder = FunctionBuilder {
         constants: &mut constants,
         entry_points: &mut entry_points,
@@ -82,6 +150,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         globals_lookup: &globals_lookup,
         types: &mut types,
         structs_lookup: &structs_lookup,
+        constants_lookup: &constants_lookup,
     };
 
     for (id, function) in module.functions.iter() {
@@ -98,7 +167,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         Ok(NagaModule {
             header: Header {
                 version: (1, 0, 0),
-                generator: 0xF00D,
+                generator: 0x72757374,
             },
             types,
             constants,
@@ -121,6 +190,7 @@ struct FunctionBuilder<'a> {
     functions_lookup: FastHashMap<u32, Handle<NagaFunction>>,
     functions: &'a FastHashMap<u32, Function>,
     structs_lookup: &'a FastHashMap<u32, (Handle<NagaType>, u32)>,
+    constants_lookup: &'a FastHashMap<u32, Handle<Constant>>,
 }
 
 impl Function {
@@ -376,6 +446,15 @@ impl ScalarType {
             ScalarType::Double => (ScalarKind::Float, 8),
             ScalarType::Bool => (ScalarKind::Bool, 1),
         }
+    }
+
+    fn build_and_add(&self, types: &mut Arena<NagaType>) -> Handle<NagaType> {
+        let (kind, width) = self.build_naga();
+
+        types.fetch_or_append(NagaType {
+            name: None,
+            inner: TypeInner::Scalar { kind, width },
+        })
     }
 }
 
@@ -687,6 +766,7 @@ impl TypedExpr {
                     },
                 },
             ),
+            Expr::Constant(id) => Expression::Constant(*builder.constants_lookup.get(id).unwrap()),
         })
     }
 }

@@ -105,6 +105,7 @@ pub enum Expr<M> {
     Arg(u32),
     Local(u32),
     Global(u32),
+    Constant(u32),
     Return(Option<Node<Self, M>>),
     If {
         condition: Node<Self, M>,
@@ -155,6 +156,7 @@ impl InferNode {
                 Expr::Arg(id) => Expr::Arg(id),
                 Expr::Local(id) => Expr::Local(id),
                 Expr::Global(id) => Expr::Global(id),
+                Expr::Constant(id) => Expr::Constant(id),
                 Expr::Return(expr) => Expr::Return(expr.map(|e| e.to_expr(infer_ctx)).transpose()?),
                 Expr::If {
                     condition,
@@ -296,32 +298,6 @@ impl Module {
             },
         };
 
-        let constants = {
-            let (constants, e): (Vec<_>, Vec<_>) = partial
-                .constants
-                .into_iter()
-                .map(|(key, partial_const)| {
-                    let constant = Constant {
-                        name: key.clone(),
-                        ty: infer_ctx
-                            .reconstruct(partial_const.ty, partial_const.span())?
-                            .into_inner(),
-                        inner: partial_const
-                            .init
-                            .solve(&mut infer_ctx, &mut FastHashMap::default())?,
-                    };
-
-                    Ok((
-                        partial_const.id,
-                        SrcNode::new(constant, partial_const.span()),
-                    ))
-                })
-                .partition(Result::is_ok);
-            errors.extend(e.into_iter().map(Result::unwrap_err));
-
-            constants.into_iter().map(Result::unwrap).collect()
-        };
-
         let globals = {
             let (globals, e): (Vec<_>, Vec<_>) = partial
                 .globals
@@ -370,6 +346,7 @@ impl Module {
                 ret: func.ret,
                 functions: &partial.functions,
                 functions_lookup: &functions_lookup,
+                constants: &partial.constants,
             };
 
             for sta in func.body.inner() {
@@ -479,6 +456,32 @@ impl Module {
             errors.extend(e.into_iter().map(Result::unwrap_err));
 
             structs.into_iter().map(Result::unwrap).collect()
+        };
+
+        let constants = {
+            let (constants, e): (Vec<_>, Vec<_>) = partial
+                .constants
+                .into_iter()
+                .map(|(key, partial_const)| {
+                    let constant = Constant {
+                        name: key.clone(),
+                        ty: infer_ctx
+                            .reconstruct(partial_const.ty, partial_const.span())?
+                            .into_inner(),
+                        inner: partial_const
+                            .init
+                            .solve(&mut infer_ctx, &mut FastHashMap::default())?,
+                    };
+
+                    Ok((
+                        partial_const.id,
+                        SrcNode::new(constant, partial_const.span()),
+                    ))
+                })
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err));
+
+            constants.into_iter().map(Result::unwrap).collect()
         };
 
         if errors.is_empty() {
@@ -716,6 +719,7 @@ impl Module {
                         ret: ty,
                         functions: &FastHashMap::default(),
                         functions_lookup: &FastHashMap::default(),
+                        constants: &FastHashMap::default(), /* TODO: Fill this with constants */
                     };
 
                     let init =
@@ -1100,6 +1104,7 @@ struct StatementBuilder<'a, 'b> {
     ret: TypeId,
     functions: &'a FastHashMap<Ident, SrcNode<PartialFunction>>,
     functions_lookup: &'a FastHashMap<Ident, u32>,
+    constants: &'a FastHashMap<Ident, SrcNode<PartialConstant>>,
 }
 
 impl SrcNode<ast::Statement> {
@@ -1382,6 +1387,8 @@ impl SrcNode<ast::Expression> {
                     InferNode::new(Expr::Arg(*id), (*ty, self.span()))
                 } else if let Some((var, ty)) = builder.globals_lookup.get(var.inner()) {
                     InferNode::new(Expr::Global(*var), (*ty, self.span()))
+                } else if let Some(constant) = builder.constants.get(var.inner()) {
+                    InferNode::new(Expr::Constant(constant.id), (constant.ty, self.span()))
                 } else {
                     errors.push(
                         Error::custom(String::from("Variable not found")).with_span(var.span()),

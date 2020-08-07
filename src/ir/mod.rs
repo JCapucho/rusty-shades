@@ -1,6 +1,7 @@
+pub use crate::hir::{AssignTarget, Constant, ConstantInner};
 use crate::{
     error::Error,
-    hir::{self, AssignTarget},
+    hir::{self},
     node::{Node, SrcNode},
     src::Span,
     ty::Type,
@@ -86,6 +87,7 @@ pub enum Expr {
     Arg(u32),
     Local(u32),
     Global(u32),
+    Constant(u32),
 }
 
 #[derive(Debug)]
@@ -103,6 +105,7 @@ pub struct Module {
     pub globals: FastHashMap<u32, Global>,
     pub structs: FastHashMap<u32, Struct>,
     pub functions: FastHashMap<u32, Function>,
+    pub constants: FastHashMap<u32, Constant>,
 }
 
 #[derive(Debug)]
@@ -210,6 +213,11 @@ impl hir::Module {
                 .map(|(id, s)| (id, s.into_inner().build_ir()))
                 .collect(),
             globals,
+            constants: self
+                .constants
+                .into_iter()
+                .map(|(id, s)| (id, s.into_inner()))
+                .collect(),
         })
     }
 }
@@ -677,6 +685,7 @@ impl hir::TypedNode {
 
                 Expr::Index { base, index }
             },
+            hir::Expr::Constant(id) => Expr::Constant(id),
         };
 
         if errors.is_empty() {
