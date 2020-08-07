@@ -138,10 +138,6 @@ impl<'a> InferContext<'a> {
         TypeId::new(self.types_id_counter)
     }
 
-    pub fn get_fields(&self, strct: u32) -> &Vec<(Ident, TypeId)> {
-        self.structs.get(&strct).unwrap()
-    }
-
     pub fn insert(&mut self, ty: impl Into<TypeInfo>, span: Span) -> TypeId {
         let id = self.new_id();
         self.types.insert(id, ty.into());
@@ -1478,7 +1474,9 @@ impl<'a> InferContext<'a> {
         Ok(match self.get_scalar(id) {
             ScalarInfo::Ref(a) => self.reconstruct_scalar(a)?,
             ScalarInfo::Concrete(a) => a,
-            _ => return Err(()),
+            ScalarInfo::Real => ScalarType::Uint,
+            ScalarInfo::Int => ScalarType::Uint,
+            ScalarInfo::Float => ScalarType::Float,
         })
     }
 

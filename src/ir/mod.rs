@@ -2,6 +2,7 @@ use crate::{
     error::Error,
     hir::{self, AssignTarget},
     node::{Node, SrcNode},
+    src::Span,
     ty::Type,
     BinaryOp, FunctionModifier, Ident, Literal, UnaryOp,
 };
@@ -190,19 +191,24 @@ impl hir::Module {
             };
         }
 
+        let structs = &self.structs;
+
         Ok(Module {
+            functions: self
+                .functions
+                .into_iter()
+                .map::<Result<_, Vec<Error>>, _>(|(id, func)| {
+                    Ok((
+                        id,
+                        func.build_ir(&mut globals, &mut global_lookups, structs)?,
+                    ))
+                })
+                .collect::<Result<_, _>>()?,
             structs: self
                 .structs
                 .into_iter()
                 .map(|(id, s)| (id, s.into_inner().build_ir()))
                 .collect(),
-            functions: self
-                .functions
-                .into_iter()
-                .map::<Result<_, Vec<Error>>, _>(|(id, func)| {
-                    Ok((id, func.build_ir(&mut globals, &mut global_lookups)?))
-                })
-                .collect::<Result<_, _>>()?,
             globals,
         })
     }
@@ -233,6 +239,7 @@ impl SrcNode<hir::Function> {
         self,
         globals: &mut FastHashMap<u32, Global>,
         globals_lookup: &mut FastHashMap<u32, GlobalLookup>,
+        structs: &FastHashMap<u32, SrcNode<hir::Struct>>,
     ) -> Result<Function, Vec<Error>> {
         let span = self.span();
         let mut func = self.into_inner();
@@ -244,15 +251,16 @@ impl SrcNode<hir::Function> {
             errors.push(Error::custom(String::from("Body doesn't return")).with_span(span))
         }
 
+        let mut builder = StatementBuilder {
+            modifier: func.modifier,
+            locals: &mut func.locals,
+            globals,
+            globals_lookup,
+            structs,
+        };
+
         for sta in func.body.into_iter() {
-            errors.append(&mut sta.build_ir(
-                func.modifier,
-                &mut body,
-                &mut func.locals,
-                globals,
-                globals_lookup,
-                None,
-            ));
+            errors.append(&mut sta.build_ir(&mut builder, &mut body, None));
         }
 
         if errors.is_empty() {
@@ -270,44 +278,42 @@ impl SrcNode<hir::Function> {
     }
 }
 
-impl hir::Statement<hir::TypedNode> {
-    fn build_ir(
+struct StatementBuilder<'a> {
+    modifier: Option<FunctionModifier>,
+    locals: &'a mut FastHashMap<u32, Type>,
+    globals: &'a mut FastHashMap<u32, Global>,
+    globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
+    structs: &'a FastHashMap<u32, SrcNode<hir::Struct>>,
+}
+
+impl hir::Statement<(Type, Span)> {
+    fn build_ir<'a>(
         self,
-        modifier: Option<FunctionModifier>,
+        builder: &mut StatementBuilder<'a>,
         body: &mut Vec<Statement>,
-        locals: &mut FastHashMap<u32, Type>,
-        globals: &mut FastHashMap<u32, Global>,
-        globals_lookup: &mut FastHashMap<u32, GlobalLookup>,
         nested: Option<u32>,
     ) -> Vec<Error> {
         let mut errors = vec![];
 
         match self {
-            hir::Statement::Expr(e) => {
-                match (
-                    e.build_ir(modifier, body, locals, globals, globals_lookup, nested),
-                    nested,
-                ) {
-                    (Ok(Some(expr)), Some(local)) => {
-                        body.push(Statement::Assign(AssignTarget::Local(local), expr))
-                    },
-                    (Ok(Some(expr)), None) => body.push(Statement::Return(Some(expr))),
-                    (Err(mut e), _) => errors.append(&mut e),
-                    _ => {},
-                }
+            hir::Statement::Expr(e) => match (e.build_ir(builder, body, nested), nested) {
+                (Ok(Some(expr)), Some(local)) => {
+                    body.push(Statement::Assign(AssignTarget::Local(local), expr))
+                },
+                (Ok(Some(expr)), None) => body.push(Statement::Return(Some(expr))),
+                (Err(mut e), _) => errors.append(&mut e),
+                _ => {},
             },
-            hir::Statement::ExprSemi(e) => {
-                match e.build_ir(modifier, body, locals, globals, globals_lookup, nested) {
-                    Ok(_) => {},
-                    Err(mut e) => errors.append(&mut e),
-                }
+            hir::Statement::ExprSemi(e) => match e.build_ir(builder, body, nested) {
+                Ok(_) => {},
+                Err(mut e) => errors.append(&mut e),
             },
             hir::Statement::Assign(tgt, e) => {
                 let tgt = match tgt.inner() {
                     AssignTarget::Global(global) => {
-                        let id = match globals_lookup.get(&global).unwrap() {
+                        let id = match builder.globals_lookup.get(&global).unwrap() {
                             GlobalLookup::ContextLess(id) => *id,
-                            GlobalLookup::ContextFull { vert, frag } => match modifier {
+                            GlobalLookup::ContextFull { vert, frag } => match builder.modifier {
                                 Some(FunctionModifier::Vertex) => *vert,
                                 Some(FunctionModifier::Fragment) => *frag,
                                 None => {
@@ -323,7 +329,7 @@ impl hir::Statement<hir::TypedNode> {
                             },
                         };
 
-                        if !globals.get(&id).unwrap().is_writeable() {
+                        if !builder.globals.get(&id).unwrap().is_writeable() {
                             errors.push(
                                 Error::custom(String::from("Global cannot be wrote to"))
                                     .with_span(tgt.span()),
@@ -335,7 +341,7 @@ impl hir::Statement<hir::TypedNode> {
                     id => *id,
                 };
 
-                match e.build_ir(modifier, body, locals, globals, globals_lookup, nested) {
+                match e.build_ir(builder, body, nested) {
                     Ok(Some(expr)) => body.push(Statement::Assign(tgt, expr)),
                     Err(mut e) => errors.append(&mut e),
                     _ => {},
@@ -348,13 +354,10 @@ impl hir::Statement<hir::TypedNode> {
 }
 
 impl hir::TypedNode {
-    fn build_ir(
+    fn build_ir<'a>(
         self,
-        modifier: Option<FunctionModifier>,
+        builder: &mut StatementBuilder<'a>,
         body: &mut Vec<Statement>,
-        locals: &mut FastHashMap<u32, Type>,
-        globals: &mut FastHashMap<u32, Global>,
-        globals_lookup: &mut FastHashMap<u32, GlobalLookup>,
         nested: Option<u32>,
     ) -> Result<Option<TypedExpr>, Vec<Error>> {
         macro_rules! fallthrough {
@@ -373,34 +376,13 @@ impl hir::TypedNode {
 
         let expr = match self.into_inner() {
             hir::Expr::BinaryOp { left, op, right } => {
-                let left = fallthrough!(left.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?;
-                let right = fallthrough!(right.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?;
+                let left = fallthrough!(left.build_ir(builder, body, nested))?;
+                let right = fallthrough!(right.build_ir(builder, body, nested))?;
 
                 Expr::BinaryOp { left, right, op }
             },
             hir::Expr::UnaryOp { tgt, op } => {
-                let tgt = fallthrough!(tgt.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?;
+                let tgt = fallthrough!(tgt.build_ir(builder, body, nested))?;
 
                 Expr::UnaryOp { tgt, op }
             },
@@ -408,14 +390,7 @@ impl hir::TypedNode {
                 let mut constructed_args = vec![];
 
                 for arg in args {
-                    constructed_args.push(fallthrough!(arg.build_ir(
-                        modifier,
-                        body,
-                        locals,
-                        globals,
-                        globals_lookup,
-                        nested
-                    ))?);
+                    constructed_args.push(fallthrough!(arg.build_ir(builder, body, nested))?);
                 }
 
                 Expr::Call {
@@ -424,29 +399,39 @@ impl hir::TypedNode {
                 }
             },
             hir::Expr::Literal(lit) => Expr::Literal(lit),
-            hir::Expr::Access { base, fields } => Expr::Access {
-                base: fallthrough!(base.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?,
-                fields,
+            hir::Expr::Access { base, field } => {
+                let fields = match base.ty() {
+                    Type::Struct(id) => vec![
+                        builder
+                            .structs
+                            .get(id)
+                            .unwrap()
+                            .fields
+                            .get(&field)
+                            .unwrap()
+                            .0,
+                    ],
+                    Type::Vector(_, _) => {
+                        const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
+
+                        field
+                            .chars()
+                            .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
+                            .collect()
+                    },
+                    _ => panic!(),
+                };
+
+                Expr::Access {
+                    base: fallthrough!(base.build_ir(builder, body, nested))?,
+                    fields,
+                }
             },
             hir::Expr::Constructor { elements } => {
                 let mut constructed_elements = vec![];
 
                 for ele in elements {
-                    constructed_elements.push(fallthrough!(ele.build_ir(
-                        modifier,
-                        body,
-                        locals,
-                        globals,
-                        globals_lookup,
-                        nested
-                    ))?);
+                    constructed_elements.push(fallthrough!(ele.build_ir(builder, body, nested))?);
                 }
 
                 match ty {
@@ -462,9 +447,9 @@ impl hir::TypedNode {
                             // let local = 1. * 2.;
                             // v2(local, local)
                             // ```
-                            let local = locals.len() as u32;
+                            let local = builder.locals.len() as u32;
                             let ty = *constructed_elements[0].attr();
-                            locals.insert(local, ty);
+                            builder.locals.insert(local, ty);
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -482,9 +467,9 @@ impl hir::TypedNode {
                                     Type::Scalar(_) => tmp.push(ele),
                                     Type::Vector(scalar, size) => {
                                         // see Small optimization
-                                        let local = locals.len() as u32;
+                                        let local = builder.locals.len() as u32;
                                         let ty = *ele.attr();
-                                        locals.insert(local, ty);
+                                        builder.locals.insert(local, ty);
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -512,9 +497,9 @@ impl hir::TypedNode {
                         if constructed_elements.len() == 1 {
                             // Small optimization
                             // see the comment on the vector
-                            let local = locals.len() as u32;
+                            let local = builder.locals.len() as u32;
                             let ty = *constructed_elements[0].attr();
-                            locals.insert(local, ty);
+                            builder.locals.insert(local, ty);
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -536,9 +521,9 @@ impl hir::TypedNode {
                                         columns,
                                     } => {
                                         // see the small optimization on vec
-                                        let local = locals.len() as u32;
+                                        let local = builder.locals.len() as u32;
                                         let ty = *ele.attr();
-                                        locals.insert(local, ty);
+                                        builder.locals.insert(local, ty);
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -572,9 +557,9 @@ impl hir::TypedNode {
             hir::Expr::Arg(pos) => Expr::Arg(pos),
             hir::Expr::Local(local) => Expr::Local(local),
             hir::Expr::Global(global) => {
-                let id = match globals_lookup.get(&global).unwrap() {
+                let id = match builder.globals_lookup.get(&global).unwrap() {
                     GlobalLookup::ContextLess(id) => *id,
-                    GlobalLookup::ContextFull { vert, frag } => match modifier {
+                    GlobalLookup::ContextFull { vert, frag } => match builder.modifier {
                         Some(FunctionModifier::Vertex) => *vert,
                         Some(FunctionModifier::Fragment) => *frag,
                         None => {
@@ -590,7 +575,7 @@ impl hir::TypedNode {
                     },
                 };
 
-                if !globals.get(&id).unwrap().is_readable() {
+                if !builder.globals.get(&id).unwrap().is_readable() {
                     errors
                         .push(Error::custom(String::from("Global cannot be read")).with_span(span));
                 }
@@ -599,11 +584,8 @@ impl hir::TypedNode {
             },
             hir::Expr::Return(e) => {
                 let sta = Statement::Return(
-                    e.and_then(|e| {
-                        e.build_ir(modifier, body, locals, globals, globals_lookup, nested)
-                            .transpose()
-                    })
-                    .transpose()?,
+                    e.and_then(|e| e.build_ir(builder, body, nested).transpose())
+                        .transpose()?,
                 );
 
                 body.push(sta);
@@ -615,18 +597,11 @@ impl hir::TypedNode {
                 else_ifs,
                 reject,
             } => {
-                let local = locals.len() as u32;
-                locals.insert(local, ty);
+                let local = builder.locals.len() as u32;
+                builder.locals.insert(local, ty);
 
                 let sta = Statement::If {
-                    condition: fallthrough!(condition.build_ir(
-                        modifier,
-                        body,
-                        locals,
-                        globals,
-                        globals_lookup,
-                        None
-                    ))?,
+                    condition: fallthrough!(condition.build_ir(builder, body, None))?,
                     accept: {
                         let mut body = vec![];
 
@@ -638,14 +613,7 @@ impl hir::TypedNode {
                         }
 
                         for sta in accept.into_inner() {
-                            errors.append(&mut sta.build_ir(
-                                modifier,
-                                &mut body,
-                                locals,
-                                globals,
-                                globals_lookup,
-                                Some(local),
-                            ));
+                            errors.append(&mut sta.build_ir(builder, &mut body, Some(local)));
                         }
 
                         body
@@ -654,14 +622,7 @@ impl hir::TypedNode {
                         let mut blocks = Vec::with_capacity(else_ifs.len());
 
                         for (condition, block) in else_ifs {
-                            let condition = fallthrough!(condition.build_ir(
-                                modifier,
-                                body,
-                                locals,
-                                globals,
-                                globals_lookup,
-                                None
-                            ))?;
+                            let condition = fallthrough!(condition.build_ir(builder, body, None))?;
 
                             let mut nested_body = vec![];
 
@@ -674,11 +635,8 @@ impl hir::TypedNode {
 
                             for sta in block.into_inner() {
                                 errors.append(&mut sta.build_ir(
-                                    modifier,
+                                    builder,
                                     &mut nested_body,
-                                    locals,
-                                    globals,
-                                    globals_lookup,
                                     Some(local),
                                 ));
                             }
@@ -700,14 +658,7 @@ impl hir::TypedNode {
                             }
 
                             for sta in reject.into_inner() {
-                                errors.append(&mut sta.build_ir(
-                                    modifier,
-                                    &mut body,
-                                    locals,
-                                    globals,
-                                    globals_lookup,
-                                    Some(local),
-                                ));
+                                errors.append(&mut sta.build_ir(builder, &mut body, Some(local)));
                             }
                         }
 
@@ -720,23 +671,9 @@ impl hir::TypedNode {
                 Expr::Local(local)
             },
             hir::Expr::Index { base, index } => {
-                let base = fallthrough!(base.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?;
+                let base = fallthrough!(base.build_ir(builder, body, nested))?;
 
-                let index = fallthrough!(index.build_ir(
-                    modifier,
-                    body,
-                    locals,
-                    globals,
-                    globals_lookup,
-                    nested
-                ))?;
+                let index = fallthrough!(index.build_ir(builder, body, nested))?;
 
                 Expr::Index { base, index }
             },
@@ -766,7 +703,7 @@ impl hir::TypedNode {
     }
 }
 
-fn block_returns(block: &[hir::Statement<hir::TypedNode>], ty: &Type) -> bool {
+fn block_returns(block: &[hir::Statement<(Type, Span)>], ty: &Type) -> bool {
     for sta in block {
         match sta {
             hir::Statement::Expr(_) => return true,
