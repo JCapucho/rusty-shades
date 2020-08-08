@@ -1298,6 +1298,14 @@ impl SrcNode<ast::Expression> {
                 },
                 _ => {
                     if let Some(func) = builder.functions.get(name.inner()) {
+                        if func.modifier.is_some() {
+                            errors.push(
+                                Error::custom(format!("Cannot call entry point function",))
+                                    .with_span(name.span())
+                                    .with_span(func.span()),
+                            );
+                        }
+
                         if call_args.len() != func.args.len() {
                             errors.push(
                                 Error::custom(format!(
