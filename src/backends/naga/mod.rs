@@ -67,6 +67,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
             class: global.storage,
             binding: Some(global.binding.clone()),
             ty,
+            interpolation: None,
         });
 
         globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
@@ -92,12 +93,12 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
                 Type::Vector(base, size) => {
                     let mut elements = Vec::with_capacity(size as usize);
 
-                    for i in 0..size as usize {
+                    for item in vec.iter().take(size as usize) {
                         elements.push(constants.fetch_or_append(Constant {
                             name: None,
                             specialization: None,
                             ty: base.build_and_add(&mut types),
-                            inner: vec[i].build_naga(),
+                            inner: item.build_naga(),
                         }))
                     }
 
@@ -433,6 +434,33 @@ impl Type {
                 ))
             },
             Type::Struct(id) => Some(*structs_lookup.get(id).unwrap()),
+            Type::Tuple(ids) => {
+                let mut offset = 0;
+                let mut members = Vec::with_capacity(ids.len());
+
+                for ty in ids {
+                    let (ty, off) = match ty.build_naga(types, structs_lookup)? {
+                        Some(t) => t,
+                        None => unreachable!(),
+                    };
+
+                    members.push(StructMember {
+                        name: None,
+                        origin: MemberOrigin::Offset(offset),
+                        ty,
+                    });
+
+                    offset += off;
+                }
+
+                Some((
+                    types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: TypeInner::Struct { members },
+                    }),
+                    offset,
+                ))
+            },
         })
     }
 }

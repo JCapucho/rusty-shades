@@ -2,6 +2,7 @@ use crate::{
     error::Error,
     lex::{Delimiter, Token},
     node::{Node, SrcNode},
+    src::Span,
     BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
 };
 use parze::prelude::*;
@@ -80,6 +81,7 @@ pub enum Expression {
         base: SrcNode<Expression>,
         index: SrcNode<Expression>,
     },
+    TupleConstructor(Vec<SrcNode<Self>>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -91,6 +93,7 @@ pub struct IdentTypePair {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Type {
     ScalarType(ScalarType),
+    Tuple(Vec<SrcNode<Self>>),
     CompositeType {
         name: SrcNode<Ident>,
         generics: Option<SrcNode<Vec<SrcNode<Generic>>>>,
@@ -179,12 +182,10 @@ fn function_modifier_parser()
 
 fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Type>>, Error>
 {
-    just(Token::ScalarType(ScalarType::Int))
-        .to(Type::ScalarType(ScalarType::Int))
-        .or(just(Token::ScalarType(ScalarType::Uint)).to(Type::ScalarType(ScalarType::Uint)))
-        .or(just(Token::ScalarType(ScalarType::Float)).to(Type::ScalarType(ScalarType::Float)))
-        .or(just(Token::ScalarType(ScalarType::Double)).to(Type::ScalarType(ScalarType::Double)))
-        .or(ident_parser()
+    recursive(|ty| {
+        let ty = ty.link();
+
+        let struct_parser = ident_parser()
             .then(
                 just(Token::Less)
                     .padding_for(
@@ -199,8 +200,28 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             .map(|(ident, generics)| Type::CompositeType {
                 name: ident,
                 generics,
-            }))
-        .map_with_span(SrcNode::new)
+            });
+
+        let tuple_parser = just(Token::OpenDelimiter(Delimiter::Parentheses))
+            .padding_for(ty.clone().separated_by(just(Token::Comma)).map(Type::Tuple))
+            .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
+            .map_with_span(SrcNode::new);
+
+        let atom_parser = just(Token::ScalarType(ScalarType::Int))
+            .to(Type::ScalarType(ScalarType::Int))
+            .or(just(Token::ScalarType(ScalarType::Uint)).to(Type::ScalarType(ScalarType::Uint)))
+            .or(just(Token::ScalarType(ScalarType::Float)).to(Type::ScalarType(ScalarType::Float)))
+            .or(just(Token::ScalarType(ScalarType::Double))
+                .to(Type::ScalarType(ScalarType::Double)))
+            .or(struct_parser)
+            .map_with_span(SrcNode::new);
+
+        let parentheses_parser = atom_parser.or(just(Token::OpenDelimiter(Delimiter::Parentheses))
+            .padding_for(ty)
+            .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))));
+
+        parentheses_parser.or(tuple_parser)
+    })
 }
 
 fn declaration_parser(
@@ -305,6 +326,14 @@ fn expr_parser(
             .or(just(Token::OpenDelimiter(Delimiter::Parentheses))
                 .padding_for(expr.clone())
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))))
+            .or(just(Token::OpenDelimiter(Delimiter::Parentheses))
+                .padding_for(
+                    expr.clone()
+                        .separated_by(just(Token::Comma))
+                        .map(Expression::TupleConstructor),
+                )
+                .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
+                .map_with_span(SrcNode::new))
             .or(call)
             .or(ident_parser()
                 .map_with_span(|name, span| SrcNode::new(Expression::Variable(name), span)))
@@ -312,7 +341,13 @@ fn expr_parser(
             .boxed();
 
         let struct_access = atom
-            .then(just(Token::Dot).padding_for(ident_parser()).repeated())
+            .then(
+                just(Token::Dot)
+                    .padding_for(ident_parser().or(uint_parser().map_with_span(|num, span| {
+                        SrcNode::new(Ident::new(num.to_string()), span)
+                    })))
+                    .repeated(),
+            )
             .reduce_left(|base, field| {
                 let span = base.span().union(field.span());
                 SrcNode::new(Expression::Access { base, field }, span)
@@ -320,7 +355,6 @@ fn expr_parser(
             .boxed();
 
         let index = struct_access
-            .clone()
             .then(range.repeated())
             .reduce_left(|base, index| {
                 let span = base.span().union(index.span());
@@ -545,12 +579,39 @@ fn ident_type_pair_parser()
 
 fn struct_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error>
 {
+    use std::iter;
+
     just(Token::Struct)
         .padding_for(ident_parser())
         .then(
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
                 .padding_for(ident_type_pair_parser().separated_by(just(Token::Comma)))
-                .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces))),
+                .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
+                .or(just(Token::OpenDelimiter(Delimiter::Parentheses))
+                    .padding_for(type_parser().separated_by(just(Token::Comma)).map(|types| {
+                        types
+                            .into_iter()
+                            .enumerate()
+                            .map(|(pos, ty)| {
+                                let span = ty.span();
+
+                                SrcNode::new(
+                                    IdentTypePair {
+                                        ident: SrcNode::new(
+                                            Ident::new(pos.to_string()),
+                                            Span::None,
+                                        ),
+                                        ty,
+                                    },
+                                    span,
+                                )
+                            })
+                            .collect()
+                    }))
+                    .padded_by(seq(iter::once(Token::CloseDelimiter(
+                        Delimiter::Parentheses,
+                    ))
+                    .chain(iter::once(Token::SemiColon))))),
         )
         .map_with_span(|(ident, fields), span| {
             SrcNode::new(Item::StructDef { ident, fields }, span)

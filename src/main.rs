@@ -48,20 +48,33 @@ fn main() -> io::Result<()> {
     println!("=================");
     println!("=================");
 
-    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
+    // let spirv = spv::Writer::new(&naga_ir.header,
+    // spv::WriterFlags::DEBUG).write(&naga_ir);
 
-    let output = OpenOptions::new()
+    // let output = OpenOptions::new()
+    //     .write(true)
+    //     .truncate(true)
+    //     .create(true)
+    //     .open("debug.spv")?;
+
+    // let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
+    //     f.write_all(&x.to_le_bytes())?;
+    //     Ok(f)
+    // });
+
+    // x?;
+
+    let mut output = OpenOptions::new()
         .write(true)
         .truncate(true)
         .create(true)
-        .open("debug.spv")?;
+        .open("debug.vert")?;
 
-    let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
-        f.write_all(&x.to_le_bytes())?;
-        Ok(f)
-    });
-
-    x?;
+    naga::back::glsl::write(&naga_ir, &mut output, naga::back::glsl::Options {
+        entry_point: (String::from("vertex_main"), naga::ShaderStage::Vertex),
+        version: naga::back::glsl::Version::Embedded(310),
+    })
+    .unwrap();
 
     Ok(())
 }

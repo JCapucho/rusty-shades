@@ -119,26 +119,28 @@ impl hir::Module {
         let mut global_lookups = FastHashMap::default();
         let mut globals = FastHashMap::default();
 
-        for (id, global) in self.globals.iter() {
+        for (id, global) in self.globals.into_iter() {
             let pos = (globals.len()) as u32;
+            let span = global.span();
+            let global = global.into_inner();
 
             match global.modifier {
                 crate::ast::GlobalModifier::Position => {
                     globals.insert(pos, Global {
                         name: global.name.clone(),
-                        ty: global.ty,
+                        ty: global.ty.clone(),
                         binding: Binding::BuiltIn(BuiltIn::Position),
                         storage: StorageClass::Output,
                     });
 
                     globals.insert(pos + 1, Global {
-                        name: global.name.clone(),
+                        name: global.name,
                         ty: global.ty,
                         binding: Binding::BuiltIn(BuiltIn::Position),
                         storage: StorageClass::Input,
                     });
 
-                    global_lookups.insert(*id, GlobalLookup::ContextFull {
+                    global_lookups.insert(id, GlobalLookup::ContextFull {
                         vert: pos,
                         frag: pos + 1,
                     });
@@ -149,18 +151,18 @@ impl hir::Module {
                             Error::custom(String::from(
                                 "Input globals can only be of primitive types",
                             ))
-                            .with_span(global.span()),
+                            .with_span(span),
                         ]);
                     }
 
                     globals.insert(pos, Global {
-                        name: global.name.clone(),
+                        name: global.name,
                         ty: global.ty,
                         binding: Binding::Location(location),
                         storage: StorageClass::Input,
                     });
 
-                    global_lookups.insert(*id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
                 crate::ast::GlobalModifier::Output(location) => {
                     if !global.ty.is_primitive() {
@@ -168,28 +170,28 @@ impl hir::Module {
                             Error::custom(String::from(
                                 "Output globals can only be of primitive types",
                             ))
-                            .with_span(global.span()),
+                            .with_span(span),
                         ]);
                     }
 
                     globals.insert(pos, Global {
-                        name: global.name.clone(),
+                        name: global.name,
                         ty: global.ty,
                         binding: Binding::Location(location),
                         storage: StorageClass::Output,
                     });
 
-                    global_lookups.insert(*id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
                 crate::ast::GlobalModifier::Uniform { set, binding } => {
                     globals.insert(pos, Global {
-                        name: global.name.clone(),
+                        name: global.name,
                         ty: global.ty,
                         binding: Binding::Descriptor { set, binding },
                         storage: StorageClass::Uniform,
                     });
 
-                    global_lookups.insert(*id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
             };
         }
@@ -379,7 +381,7 @@ impl hir::TypedNode {
         }
 
         let mut errors = vec![];
-        let ty = *self.ty();
+        let ty = self.ty().clone();
         let span = self.span();
 
         let expr = match self.into_inner() {
@@ -419,6 +421,7 @@ impl hir::TypedNode {
                             .unwrap()
                             .0,
                     ],
+                    Type::Tuple(_) => vec![field.parse().unwrap()],
                     Type::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
@@ -456,8 +459,8 @@ impl hir::TypedNode {
                             // v2(local, local)
                             // ```
                             let local = builder.locals.len() as u32;
-                            let ty = *constructed_elements[0].attr();
-                            builder.locals.insert(local, ty);
+                            let ty = constructed_elements[0].attr().clone();
+                            builder.locals.insert(local, ty.clone());
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -465,7 +468,8 @@ impl hir::TypedNode {
                             ));
 
                             for _ in 0..(size as usize - 1) {
-                                constructed_elements.push(TypedExpr::new(Expr::Local(local), ty))
+                                constructed_elements
+                                    .push(TypedExpr::new(Expr::Local(local), ty.clone()))
                             }
                         } else {
                             let mut tmp = vec![];
@@ -476,8 +480,8 @@ impl hir::TypedNode {
                                     Type::Vector(scalar, size) => {
                                         // see Small optimization
                                         let local = builder.locals.len() as u32;
-                                        let ty = *ele.attr();
-                                        builder.locals.insert(local, ty);
+                                        let ty = ele.attr().clone();
+                                        builder.locals.insert(local, ty.clone());
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -487,7 +491,10 @@ impl hir::TypedNode {
                                         for i in 0..size as usize {
                                             tmp.push(TypedExpr::new(
                                                 Expr::Access {
-                                                    base: TypedExpr::new(Expr::Local(local), ty),
+                                                    base: TypedExpr::new(
+                                                        Expr::Local(local),
+                                                        ty.clone(),
+                                                    ),
                                                     fields: vec![i as u32],
                                                 },
                                                 Type::Scalar(scalar),
@@ -506,8 +513,8 @@ impl hir::TypedNode {
                             // Small optimization
                             // see the comment on the vector
                             let local = builder.locals.len() as u32;
-                            let ty = *constructed_elements[0].attr();
-                            builder.locals.insert(local, ty);
+                            let ty = constructed_elements[0].attr().clone();
+                            builder.locals.insert(local, ty.clone());
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -515,7 +522,8 @@ impl hir::TypedNode {
                             ));
 
                             for _ in 0..(rows as usize - 1) {
-                                constructed_elements.push(TypedExpr::new(Expr::Local(local), ty))
+                                constructed_elements
+                                    .push(TypedExpr::new(Expr::Local(local), ty.clone()))
                             }
                         } else {
                             let mut tmp = vec![];
@@ -530,8 +538,8 @@ impl hir::TypedNode {
                                     } => {
                                         // see the small optimization on vec
                                         let local = builder.locals.len() as u32;
-                                        let ty = *ele.attr();
-                                        builder.locals.insert(local, ty);
+                                        let ty = ele.attr().clone();
+                                        builder.locals.insert(local, ty.clone());
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -541,7 +549,10 @@ impl hir::TypedNode {
                                         for i in 0..rows as usize {
                                             tmp.push(TypedExpr::new(
                                                 Expr::Access {
-                                                    base: TypedExpr::new(Expr::Local(local), ty),
+                                                    base: TypedExpr::new(
+                                                        Expr::Local(local),
+                                                        ty.clone(),
+                                                    ),
                                                     fields: vec![i as u32],
                                                 },
                                                 Type::Vector(base, columns),
@@ -555,6 +566,7 @@ impl hir::TypedNode {
                             constructed_elements = tmp;
                         }
                     },
+                    Type::Tuple(_) => {},
                     _ => unreachable!(),
                 }
 
@@ -606,7 +618,7 @@ impl hir::TypedNode {
                 reject,
             } => {
                 let local = builder.locals.len() as u32;
-                builder.locals.insert(local, ty);
+                builder.locals.insert(local, ty.clone());
 
                 let sta = Statement::If {
                     condition: fallthrough!(condition.build_ir(builder, body, None))?,

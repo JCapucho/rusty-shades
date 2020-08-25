@@ -1,7 +1,7 @@
-use crate::ScalarType;
+use crate::{node::SrcNode, ScalarType};
 use naga::VectorSize;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Empty,
     Scalar(ScalarType),
@@ -12,6 +12,7 @@ pub enum Type {
         base: ScalarType,
     },
     Struct(u32),
+    Tuple(Vec<SrcNode<Self>>),
 }
 
 impl Type {

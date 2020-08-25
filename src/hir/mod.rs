@@ -72,12 +72,14 @@ impl Statement<(TypeId, Span)> {
         infer_ctx: &mut InferContext,
     ) -> Result<Statement<(Type, Span)>, Error> {
         Ok(match self {
-            Statement::Expr(e) => Statement::Expr(e.to_expr(infer_ctx)?),
-            Statement::ExprSemi(e) => Statement::ExprSemi(e.to_expr(infer_ctx)?),
-            Statement::Assign(tgt, e) => Statement::Assign(tgt, e.to_expr(infer_ctx)?),
+            Statement::Expr(e) => Statement::Expr(e.into_expr(infer_ctx)?),
+            Statement::ExprSemi(e) => Statement::ExprSemi(e.into_expr(infer_ctx)?),
+            Statement::Assign(tgt, e) => Statement::Assign(tgt, e.into_expr(infer_ctx)?),
         })
     }
 }
+
+type ElseIf<M> = (Node<Expr<M>, M>, SrcNode<Vec<Statement<M>>>);
 
 #[derive(Debug, Clone)]
 pub enum Expr<M> {
@@ -110,7 +112,7 @@ pub enum Expr<M> {
     If {
         condition: Node<Self, M>,
         accept: SrcNode<Vec<Statement<M>>>,
-        else_ifs: Vec<(Node<Self, M>, SrcNode<Vec<Statement<M>>>)>,
+        else_ifs: Vec<ElseIf<M>>,
         reject: Option<SrcNode<Vec<Statement<M>>>>,
     },
     Index {
@@ -120,51 +122,53 @@ pub enum Expr<M> {
 }
 
 impl InferNode {
-    fn to_expr(self, infer_ctx: &mut InferContext) -> Result<TypedNode, Error> {
+    fn into_expr(self, infer_ctx: &mut InferContext) -> Result<TypedNode, Error> {
         let (ty, span) = *self.attr();
 
         Ok(TypedNode::new(
             match self.into_inner() {
                 Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-                    left: left.to_expr(infer_ctx)?,
+                    left: left.into_expr(infer_ctx)?,
                     op,
-                    right: right.to_expr(infer_ctx)?,
+                    right: right.into_expr(infer_ctx)?,
                 },
                 Expr::UnaryOp { tgt, op } => Expr::UnaryOp {
-                    tgt: tgt.to_expr(infer_ctx)?,
+                    tgt: tgt.into_expr(infer_ctx)?,
                     op,
                 },
                 Expr::Call { name, args } => Expr::Call {
                     name,
                     args: args
                         .into_iter()
-                        .map(|a| Ok(a.to_expr(infer_ctx)?))
+                        .map(|a| Ok(a.into_expr(infer_ctx)?))
                         .collect::<Result<_, _>>()?,
                 },
                 Expr::Literal(lit) => Expr::Literal(lit),
                 Expr::Access { base, field } => {
-                    let base = base.to_expr(infer_ctx)?;
+                    let base = base.into_expr(infer_ctx)?;
 
                     Expr::Access { base, field }
                 },
                 Expr::Constructor { elements } => Expr::Constructor {
                     elements: elements
                         .into_iter()
-                        .map(|a| Ok(a.to_expr(infer_ctx)?))
+                        .map(|a| Ok(a.into_expr(infer_ctx)?))
                         .collect::<Result<_, _>>()?,
                 },
                 Expr::Arg(id) => Expr::Arg(id),
                 Expr::Local(id) => Expr::Local(id),
                 Expr::Global(id) => Expr::Global(id),
                 Expr::Constant(id) => Expr::Constant(id),
-                Expr::Return(expr) => Expr::Return(expr.map(|e| e.to_expr(infer_ctx)).transpose()?),
+                Expr::Return(expr) => {
+                    Expr::Return(expr.map(|e| e.into_expr(infer_ctx)).transpose()?)
+                },
                 Expr::If {
                     condition,
                     accept,
                     else_ifs,
                     reject,
                 } => Expr::If {
-                    condition: condition.to_expr(infer_ctx)?,
+                    condition: condition.into_expr(infer_ctx)?,
                     accept: SrcNode::new(
                         accept
                             .iter()
@@ -176,7 +180,7 @@ impl InferNode {
                         .into_iter()
                         .map(|(expr, a)| {
                             Ok((
-                                expr.to_expr(infer_ctx)?,
+                                expr.into_expr(infer_ctx)?,
                                 SrcNode::new(
                                     a.iter()
                                         .map(|s| s.clone().into_statement(infer_ctx))
@@ -199,8 +203,8 @@ impl InferNode {
                         .transpose()?,
                 },
                 Expr::Index { base, index } => Expr::Index {
-                    base: base.to_expr(infer_ctx)?,
-                    index: index.to_expr(infer_ctx)?,
+                    base: base.into_expr(infer_ctx)?,
+                    index: index.into_expr(infer_ctx)?,
                 },
             },
             (infer_ctx.reconstruct(ty, span)?.into_inner(), span),
@@ -464,7 +468,7 @@ impl Module {
                 .into_iter()
                 .map(|(key, partial_const)| {
                     let constant = Constant {
-                        name: key.clone(),
+                        name: key,
                         ty: infer_ctx
                             .reconstruct(partial_const.ty, partial_const.span())?
                             .into_inner(),
@@ -798,6 +802,14 @@ fn build_struct(
     }
 
     let id = infer_ctx.insert(TypeInfo::Struct(*struct_id), span);
+    infer_ctx.add_struct(
+        *struct_id,
+        resolved_fields
+            .clone()
+            .into_iter()
+            .map(|(name, (_, ty))| (name, ty))
+            .collect(),
+    );
 
     structs.insert(
         ident.inner().clone(),
@@ -1037,6 +1049,14 @@ impl SrcNode<ast::Type> {
                     }
                 },
             },
+            ast::Type::Tuple(types) => {
+                let types = types
+                    .iter()
+                    .map(|ty| ty.build_ast_ty(statements, structs, infer_ctx, iter + 1, struct_id))
+                    .collect::<Result<_, _>>()?;
+
+                infer_ctx.insert(TypeInfo::Tuple(types), self.span())
+            },
         };
 
         if errors.is_empty() {
@@ -1084,6 +1104,14 @@ impl SrcNode<ast::Type> {
                         return Err(errors);
                     }
                 },
+            },
+            ast::Type::Tuple(types) => {
+                let types = types
+                    .iter()
+                    .map(|ty| ty.build_hir_ty(structs, infer_ctx))
+                    .collect::<Result<_, _>>()?;
+
+                infer_ctx.insert(TypeInfo::Tuple(types), self.span())
             },
         };
 
@@ -1300,7 +1328,7 @@ impl SrcNode<ast::Expression> {
                     if let Some(func) = builder.functions.get(name.inner()) {
                         if func.modifier.is_some() {
                             errors.push(
-                                Error::custom(format!("Cannot call entry point function",))
+                                Error::custom(String::from("Cannot call entry point function"))
                                     .with_span(name.span())
                                     .with_span(func.span()),
                             );
@@ -1538,6 +1566,23 @@ impl SrcNode<ast::Expression> {
                 });
 
                 InferNode::new(Expr::Index { base, index }, (out, self.span()))
+            },
+            ast::Expression::TupleConstructor(elements) => {
+                let elements: Vec<_> = {
+                    let (elements, e): (Vec<_>, Vec<_>) = elements
+                        .iter()
+                        .map(|arg| arg.build_hir(builder, locals_lookup, out))
+                        .partition(Result::is_ok);
+                    errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+
+                    elements.into_iter().map(Result::unwrap).collect()
+                };
+
+                let ids = elements.iter().map(|ele| ele.type_id()).collect();
+
+                let out = builder.infer_ctx.insert(TypeInfo::Tuple(ids), self.span());
+
+                InferNode::new(Expr::Constructor { elements }, (out, self.span()))
             },
         })
     }

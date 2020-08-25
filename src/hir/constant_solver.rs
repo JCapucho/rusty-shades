@@ -29,7 +29,7 @@ impl InferNode {
             Expr::Literal(lit) => ConstantInner::Scalar(*lit),
             Expr::Constructor { elements } => {
                 let elements: Vec<_> = elements
-                    .into_iter()
+                    .iter()
                     .map(|ele| {
                         Ok((
                             ele.solve(infer_ctx, locals)?,
@@ -62,9 +62,8 @@ impl InferNode {
                                         index += 1;
                                     },
                                     (ConstantInner::Vector(vector), Type::Vector(_, size)) => {
-                                        for i in 0..size as usize {
-                                            data[index + i] = vector[i];
-                                        }
+                                        data[index..(size as usize + index)]
+                                            .clone_from_slice(&vector[..size as usize]);
                                         index += size as usize;
                                     },
                                     _ => panic!(),
@@ -91,9 +90,8 @@ impl InferNode {
                             for ele in elements.into_iter() {
                                 match ele {
                                     (ConstantInner::Vector(vector), Type::Vector(_, size)) => {
-                                        for i in 0..size as usize {
-                                            data[index + i] = vector[i];
-                                        }
+                                        data[index..(size as usize + index)]
+                                            .clone_from_slice(&vector[..size as usize]);
                                         index += size as usize;
                                     },
                                     (ConstantInner::Matrix(matrix), Type::Matrix { rows, .. }) => {

@@ -60,6 +60,7 @@ pub enum TypeInfo {
         base: ScalarId,
     },
     Struct(u32),
+    Tuple(Vec<TypeId>),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -164,6 +165,10 @@ impl<'a> InferContext<'a> {
         let id = SizeId::new(self.size_id_counter);
         self.sizes.insert(id, size);
         id
+    }
+
+    pub fn add_struct(&mut self, id: u32, fields: Vec<(Ident, TypeId)>) {
+        self.structs.insert(id, fields);
     }
 
     pub fn span(&self, id: TypeId) -> Span {
@@ -378,6 +383,22 @@ impl<'a> InferContext<'a> {
                         write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })?;
                         Ok(())
                     },
+                    Tuple(ids) => {
+                        write!(f, "(")?;
+
+                        write!(
+                            f,
+                            "{}",
+                            ids.iter()
+                                .map(|id| format!("{}", self.with_id(*id, true)))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )?;
+
+                        write!(f, ")")?;
+
+                        Ok(())
+                    },
                 }
             }
         }
@@ -478,6 +499,13 @@ impl<'a> InferContext<'a> {
             },
 
             (Struct(a_id), Struct(b_id)) if a_id == b_id => Ok(()),
+            (Tuple(a_types), Tuple(b_types)) if a_types.len() == b_types.len() => {
+                for (a, b) in a_types.into_iter().zip(b_types.into_iter()) {
+                    self.unify_inner(iter + 1, a, b)?;
+                }
+
+                Ok(())
+            },
             (_, _) => Err((a, b)),
         }
     }
@@ -898,6 +926,30 @@ impl<'a> InferContext<'a> {
                             .with_span(field.span())
                             .with_span(self.span(record)))
                         }
+                    },
+                    TypeInfo::Tuple(ids) => {
+                        let idx: usize = field.parse().map_err(|_| {
+                            Error::custom(format!(
+                                "No such field '{}' in '{}'",
+                                **field,
+                                self.display_type_info(record),
+                            ))
+                            .with_span(field.span())
+                            .with_span(self.span(record))
+                        })?;
+
+                        let ty = ids.get(idx).ok_or_else(|| {
+                            Error::custom(format!(
+                                "No such field '{}' in '{}'",
+                                idx,
+                                self.display_type_info(record),
+                            ))
+                            .with_span(field.span())
+                            .with_span(self.span(record))
+                        })?;
+
+                        self.unify(out, *ty)?;
+                        Ok(true)
                     },
                     TypeInfo::Vector(scalar, size) => match self.get_size(self.get_size_base(size))
                     {
@@ -1514,7 +1566,7 @@ impl<'a> InferContext<'a> {
                 self.reconstruct_size(size)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
-            TypeInfo::Matrix {
+            Matrix {
                 columns,
                 rows,
                 base,
@@ -1529,6 +1581,11 @@ impl<'a> InferContext<'a> {
                     .reconstruct_scalar(base)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             },
+            Tuple(ids) => Type::Tuple(
+                ids.into_iter()
+                    .map(|id| self.reconstruct_inner(iter + 1, id))
+                    .collect::<Result<_, _>>()?,
+            ),
         };
 
         Ok(SrcNode::new(ty, self.span(id)))

@@ -1,3 +1,8 @@
 /target
 *.rsh.debug
+
+# Backend outputs
 *.spv
+*.vert
+*.frag
+*.comp

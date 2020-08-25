@@ -23,4 +23,22 @@ fn fragment frag_main() {
 fn unsound() -> Vector<4,Float> {
     return v_position
 }
+
+fn not_tuple() -> (Int) {
+    0
+}
+
+fn tuple() -> (Int,Float) {
+    (0,3.0)
+}
+
+fn tuple_access() -> Int {
+    tuple().0
+}
+
+struct Test(Int,Float);
+
+fn tuple_struct(strct: Test) -> Int {
+    strct.0
+}
  
