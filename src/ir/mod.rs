@@ -1,4 +1,4 @@
-pub use crate::hir::{AssignTarget, Constant, ConstantInner};
+pub use crate::hir::AssignTarget;
 use crate::{
     error::Error,
     hir::{self},
@@ -10,6 +10,8 @@ use crate::{
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 
 pub type TypedExpr = Node<Expr, Type>;
+
+mod const_solver;
 
 #[derive(Debug)]
 pub struct Global {
@@ -101,6 +103,20 @@ pub struct Function {
 }
 
 #[derive(Debug)]
+pub struct Constant {
+    pub name: Ident,
+    pub inner: ConstantInner,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConstantInner {
+    Scalar(Literal),
+    Vector([Literal; 4]),
+    Matrix([Literal; 16]),
+}
+
+#[derive(Debug)]
 pub struct Module {
     pub globals: FastHashMap<u32, Global>,
     pub structs: FastHashMap<u32, Struct>,
@@ -116,6 +132,8 @@ enum GlobalLookup {
 
 impl hir::Module {
     pub fn build_ir(self) -> Result<Module, Vec<Error>> {
+        let mut errors = vec![];
+
         let mut global_lookups = FastHashMap::default();
         let mut globals = FastHashMap::default();
 
@@ -147,12 +165,12 @@ impl hir::Module {
                 },
                 crate::ast::GlobalModifier::Input(location) => {
                     if !global.ty.is_primitive() {
-                        return Err(vec![
+                        errors.push(
                             Error::custom(String::from(
                                 "Input globals can only be of primitive types",
                             ))
                             .with_span(span),
-                        ]);
+                        );
                     }
 
                     globals.insert(pos, Global {
@@ -166,12 +184,12 @@ impl hir::Module {
                 },
                 crate::ast::GlobalModifier::Output(location) => {
                     if !global.ty.is_primitive() {
-                        return Err(vec![
+                        errors.push(
                             Error::custom(String::from(
                                 "Output globals can only be of primitive types",
                             ))
                             .with_span(span),
-                        ]);
+                        );
                     }
 
                     globals.insert(pos, Global {
@@ -197,9 +215,43 @@ impl hir::Module {
         }
 
         let structs = &self.structs;
+        let constants = &self.constants;
 
-        Ok(Module {
-            functions: self
+        fn get_constant_inner(
+            id: u32,
+            constants: &FastHashMap<u32, SrcNode<hir::Constant>>,
+        ) -> Result<ConstantInner, Error> {
+            constants.get(&id).unwrap().expr.solve(
+                &|id| get_constant_inner(id, constants),
+                &mut FastHashMap::default(),
+            )
+        }
+
+        let get_constant = |id| get_constant_inner(id, constants);
+
+        let constants = {
+            let (constants, e): (Vec<_>, Vec<_>) = self
+                .constants
+                .iter()
+                .map(|(id, s)| {
+                    let c = s.inner();
+
+                    let inner = get_constant(*id)?;
+
+                    Ok((*id, Constant {
+                        name: c.name.clone(),
+                        ty: c.ty.clone(),
+                        inner,
+                    }))
+                })
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err));
+
+            constants.into_iter().map(Result::unwrap).collect()
+        };
+
+        let functions = {
+            let (functions, e): (Vec<_>, Vec<_>) = self
                 .functions
                 .into_iter()
                 .map::<Result<_, Vec<Error>>, _>(|(id, func)| {
@@ -208,19 +260,26 @@ impl hir::Module {
                         func.build_ir(&mut globals, &mut global_lookups, structs)?,
                     ))
                 })
-                .collect::<Result<_, _>>()?,
-            structs: self
-                .structs
-                .into_iter()
-                .map(|(id, s)| (id, s.into_inner().build_ir()))
-                .collect(),
-            globals,
-            constants: self
-                .constants
-                .into_iter()
-                .map(|(id, s)| (id, s.into_inner()))
-                .collect(),
-        })
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+
+            functions.into_iter().map(Result::unwrap).collect()
+        };
+
+        if errors.is_empty() {
+            Ok(Module {
+                functions,
+                structs: self
+                    .structs
+                    .into_iter()
+                    .map(|(id, s)| (id, s.into_inner().build_ir()))
+                    .collect(),
+                globals,
+                constants,
+            })
+        } else {
+            Err(errors)
+        }
     }
 }
 

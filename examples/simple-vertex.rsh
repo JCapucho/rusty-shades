@@ -6,7 +6,9 @@ global out=1 f_color: Vector<4, Float>;
 
 global position gl_position;
 
-const HELP: Vector<3,Uint> = if false {v3(1)} else {v3(2)};
+const TRUE_HELP: Vector<3,Uint> = v3(1);
+const FALSE_HELP: Vector<3,Uint> = v3(2);
+const HELP: Vector<3,Uint> = if false {TRUE_HELP} else {FALSE_HELP};
 
 // single line comment
 fn vertex vertex_main() {

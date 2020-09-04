@@ -12,7 +12,6 @@ use naga::{FastHashMap, VectorSize};
 const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
 const BUILTIN_FUNCTIONS: &[&str] = &["v2", "v3", "v4", "m2", "m3", "m4"];
 
-mod constant_solver;
 mod infer;
 
 use infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
@@ -225,17 +224,10 @@ pub struct Struct {
     pub fields: FastHashMap<Ident, (u32, SrcNode<Type>)>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum ConstantInner {
-    Scalar(Literal),
-    Vector([Literal; 4]),
-    Matrix([Literal; 16]),
-}
-
 #[derive(Debug)]
 pub struct Constant {
     pub name: Ident,
-    pub inner: ConstantInner,
+    pub expr: TypedNode,
     pub ty: Type,
 }
 
@@ -248,7 +240,7 @@ struct PartialGlobal {
 #[derive(Debug)]
 struct PartialConstant {
     pub id: u32,
-    pub init: InferNode,
+    pub init: SrcNode<ast::Expression>,
     pub ty: TypeId,
 }
 
@@ -465,25 +457,64 @@ impl Module {
         let constants = {
             let (constants, e): (Vec<_>, Vec<_>) = partial
                 .constants
-                .into_iter()
+                .iter()
                 .map(|(key, partial_const)| {
-                    let constant = Constant {
-                        name: key,
-                        ty: infer_ctx
-                            .reconstruct(partial_const.ty, partial_const.span())?
-                            .into_inner(),
-                        inner: partial_const
-                            .init
-                            .solve(&mut infer_ctx, &mut FastHashMap::default())?,
+                    let mut errors = vec![];
+                    let mut locals = vec![];
+
+                    let mut const_builder = StatementBuilder {
+                        infer_ctx: &mut infer_ctx,
+                        locals: &mut locals,
+                        args: &FastHashMap::default(),
+                        globals_lookup: &FastHashMap::default(),
+                        structs: &FastHashMap::default(),
+                        ret: partial_const.ty,
+                        functions: &FastHashMap::default(),
+                        functions_lookup: &FastHashMap::default(),
+                        constants: &partial.constants,
                     };
 
-                    Ok((
-                        partial_const.id,
-                        SrcNode::new(constant, partial_const.span()),
-                    ))
+                    let expr = partial_const.init.build_hir(
+                        &mut const_builder,
+                        &mut FastHashMap::default(),
+                        partial_const.ty,
+                    )?;
+
+                    match infer_ctx.unify(expr.type_id(), partial_const.ty) {
+                        Ok(_) => {},
+                        Err(e) => errors.push(e),
+                    }
+
+                    let constant = Constant {
+                        name: key.clone(),
+                        ty: match infer_ctx.reconstruct(partial_const.ty, partial_const.span()) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                errors.push(e);
+                                return Err(errors);
+                            },
+                        }
+                        .into_inner(),
+                        expr: match expr.into_expr(&mut infer_ctx) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                errors.push(e);
+                                return Err(errors);
+                            },
+                        },
+                    };
+
+                    if errors.is_empty() {
+                        Ok((
+                            partial_const.id,
+                            SrcNode::new(constant, partial_const.span()),
+                        ))
+                    } else {
+                        Err(errors)
+                    }
                 })
                 .partition(Result::is_ok);
-            errors.extend(e.into_iter().map(Result::unwrap_err));
+            errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
 
             constants.into_iter().map(Result::unwrap).collect()
         };
@@ -708,35 +739,30 @@ impl Module {
                     );
                 },
                 Item::Const { ident, ty, init } => {
+                    if let Some(span) = names.get(ident.inner()) {
+                        errors.push(
+                            Error::custom(String::from("Name already defined"))
+                                .with_span(ident.span())
+                                .with_span(*span),
+                        );
+                    }
+
+                    names.insert(ident.inner().clone(), ident.span());
+
                     let id = constants.len() as u32;
                     let ty =
                         ty.build_ast_ty(statements, &mut structs, infer_ctx, 0, &mut struct_id)?;
 
-                    let mut locals = vec![];
-
-                    let mut const_builder = StatementBuilder {
-                        infer_ctx,
-                        locals: &mut locals,
-                        args: &FastHashMap::default(),
-                        globals_lookup: &FastHashMap::default(),
-                        structs: &FastHashMap::default(),
-                        ret: ty,
-                        functions: &FastHashMap::default(),
-                        functions_lookup: &FastHashMap::default(),
-                        constants: &FastHashMap::default(), /* TODO: Fill this with constants */
-                    };
-
-                    let init =
-                        init.build_hir(&mut const_builder, &mut FastHashMap::default(), ty)?;
-
-                    match infer_ctx.unify(init.type_id(), ty) {
-                        Ok(_) => {},
-                        Err(e) => return Err(vec![e]),
-                    }
-
                     constants.insert(
                         ident.inner().clone(),
-                        SrcNode::new(PartialConstant { id, ty, init }, statement.span()),
+                        SrcNode::new(
+                            PartialConstant {
+                                id,
+                                ty,
+                                init: init.clone(),
+                            },
+                            statement.span(),
+                        ),
                     );
                 },
             }
