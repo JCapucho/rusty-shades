@@ -155,6 +155,12 @@ version = "0.1.0"
 source = "git+https://github.com/zesterer/parze-new.git?rev=d42e00dbd0d6efe083a266d7d456a822440c54e3#d42e00dbd0d6efe083a266d7d456a822440c54e3"
 
 [[package]]
+name = "paste"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6ddc8e145de01d9180ac7b78b9676f95a9c2447f6a88b2c2a04702211bc5d71"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -234,6 +240,7 @@ dependencies = [
  "naga",
  "ordered-float",
  "parze",
+ "paste",
 ]
 
 [[package]]

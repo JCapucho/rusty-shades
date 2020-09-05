@@ -54,6 +54,9 @@ pub enum Token {
     Uniform,
     Set,
     Binding,
+
+    // For error purposes
+    EOF,
 }
 
 impl Token {
@@ -135,6 +138,8 @@ impl fmt::Display for Token {
             Token::Uniform => write!(f, "uniform"),
             Token::Set => write!(f, "set"),
             Token::Binding => write!(f, "binding"),
+
+            Token::EOF => write!(f, "EOF"),
         }
     }
 }

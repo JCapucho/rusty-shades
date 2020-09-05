@@ -14,6 +14,10 @@ naga = { git = "https://github.com/gfx-rs/naga.git", features = [
     "spirv",
     "glsl-out"
 ], rev = "92c1ffb588fea859305b59b790dd08b3c943593d" }
+paste = "1.0"
 
 [features]
 default = ["codespan-reporting"]
+
+[profile.dev]
+debug = false

@@ -3,33 +3,30 @@ use crate::{error::Error, node::SrcNode, src::Span, ty::Type, BinaryOp, ScalarTy
 use naga::{FastHashMap, VectorSize};
 use std::fmt;
 
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct ScalarId(usize);
+macro_rules! new_type_id {
+    ($name:ident) => {
+        #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+        pub struct $name(usize);
 
-impl ScalarId {
-    pub fn new(id: usize) -> Self { Self(id) }
+        paste::paste! {
+            #[derive(Debug, Copy, Clone, Default)]
+            pub struct [<$name Counter>](usize);
+
+            impl [<$name Counter>] {
+                pub fn new_id(&mut self) -> $name {
+                    let id = self.0;
+                    self.0 += 1;
+                    $name(id)
+                }
+            }
+        }
+    };
 }
 
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct TypeId(usize);
-
-impl TypeId {
-    pub fn new(id: usize) -> Self { Self(id) }
-}
-
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct ConstraintId(usize);
-
-impl ConstraintId {
-    pub fn new(id: usize) -> Self { Self(id) }
-}
-
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct SizeId(usize);
-
-impl SizeId {
-    pub fn new(id: usize) -> Self { Self(id) }
-}
+new_type_id!(ScalarId);
+new_type_id!(TypeId);
+new_type_id!(ConstraintId);
+new_type_id!(SizeId);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarInfo {
@@ -96,17 +93,17 @@ pub enum Constraint {
 pub struct InferContext<'a> {
     parent: Option<&'a Self>,
 
-    scalars_id_counter: usize,
+    scalars_id_counter: ScalarIdCounter,
     scalars: FastHashMap<ScalarId, ScalarInfo>,
 
-    types_id_counter: usize,
+    types_id_counter: TypeIdCounter,
     types: FastHashMap<TypeId, TypeInfo>,
     spans: FastHashMap<TypeId, Span>,
 
-    size_id_counter: usize,
+    size_id_counter: SizeIdCounter,
     sizes: FastHashMap<SizeId, SizeInfo>,
 
-    constraint_id_counter: usize,
+    constraint_id_counter: ConstraintIdCounter,
     constraints: FastHashMap<ConstraintId, Constraint>,
 
     structs: FastHashMap<u32, Vec<(Ident, TypeId)>>,
@@ -134,35 +131,27 @@ impl<'a> InferContext<'a> {
         }
     }
 
-    fn new_id(&mut self) -> TypeId {
-        self.types_id_counter += 1;
-        TypeId::new(self.types_id_counter)
-    }
-
     pub fn insert(&mut self, ty: impl Into<TypeInfo>, span: Span) -> TypeId {
-        let id = self.new_id();
+        let id = self.types_id_counter.new_id();
         self.types.insert(id, ty.into());
         self.spans.insert(id, span);
         id
     }
 
     pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintId {
-        self.constraint_id_counter += 1;
-        let id = ConstraintId::new(self.constraint_id_counter);
+        let id = self.constraint_id_counter.new_id();
         self.constraints.insert(id, constraint);
         id
     }
 
     pub fn add_scalar(&mut self, scalar: ScalarInfo) -> ScalarId {
-        self.scalars_id_counter += 1;
-        let id = ScalarId::new(self.scalars_id_counter);
+        let id = self.scalars_id_counter.new_id();
         self.scalars.insert(id, scalar);
         id
     }
 
     pub fn add_size(&mut self, size: SizeInfo) -> SizeId {
-        self.size_id_counter += 1;
-        let id = SizeId::new(self.size_id_counter);
+        let id = self.size_id_counter.new_id();
         self.sizes.insert(id, size);
         id
     }
