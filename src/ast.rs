@@ -5,6 +5,7 @@ use crate::{
     src::Span,
     BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
 };
+use naga::VectorSize;
 use parze::prelude::*;
 
 pub type Block = Vec<SrcNode<Statement>>;
@@ -24,13 +25,13 @@ pub enum Item {
     Function {
         modifier: Option<SrcNode<FunctionModifier>>,
         ident: SrcNode<Ident>,
-        ty: Option<SrcNode<Type>>,
-        args: Vec<SrcNode<IdentTypePair>>,
+        ty: Option<SrcNode<TypeWithFunction>>,
+        args: Vec<SrcNode<IdentTypePair<TypeWithFunction>>>,
         body: SrcNode<Block>,
     },
     StructDef {
         ident: SrcNode<Ident>,
-        fields: Vec<SrcNode<IdentTypePair>>,
+        fields: Vec<SrcNode<IdentTypePair<Type>>>,
     },
 }
 
@@ -85,19 +86,31 @@ pub enum Expression {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct IdentTypePair {
+pub struct IdentTypePair<T> {
     pub ident: SrcNode<Ident>,
-    pub ty: SrcNode<Type>,
+    pub ty: SrcNode<T>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Type {
     ScalarType(ScalarType),
     Tuple(Vec<SrcNode<Self>>),
-    CompositeType {
-        name: SrcNode<Ident>,
-        generics: Option<SrcNode<Vec<SrcNode<Generic>>>>,
+    Struct(SrcNode<Ident>),
+    Vector(VectorSize, ScalarType),
+    Matrix {
+        columns: VectorSize,
+        rows: VectorSize,
+        ty: ScalarType,
     },
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum TypeWithFunction {
+    Type(SrcNode<Type>),
+    Function(
+        Vec<SrcNode<TypeWithFunction>>,
+        Option<SrcNode<TypeWithFunction>>,
+    ),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -130,13 +143,22 @@ fn uint_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = u64
     })
 }
 
-fn generic_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Generic>, Error> {
-    uint_parser()
-        .map(Generic::UInt)
-        .or(permit_map(|token: Node<_>| match &*token {
-            Token::ScalarType(ty) => Some(Generic::ScalarType(*ty)),
-            _ => None,
-        }))
+fn vector_size_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = VectorSize>, Error> {
+    permit_map(|token: Node<_>| match &*token {
+        Token::Literal(Literal::Uint(2)) => Some(VectorSize::Bi),
+        Token::Literal(Literal::Uint(3)) => Some(VectorSize::Tri),
+        Token::Literal(Literal::Uint(4)) => Some(VectorSize::Quad),
+        _ => None,
+    })
+}
+
+fn scalar_ty_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = ScalarType>, Error>
+{
+    permit_map(|token: Node<_>| match &*token {
+        Token::ScalarType(ty) => Some(*ty),
+        _ => None,
+    })
 }
 
 fn global_modifier_parser()
@@ -185,22 +207,30 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
     recursive(|ty| {
         let ty = ty.link();
 
-        let struct_parser = ident_parser()
-            .then(
+        let struct_parser = ident_parser().map(Type::Struct);
+
+        let vector_parser = just(Token::Vector)
+            .padding_for(
                 just(Token::Less)
                     .padding_for(
-                        generic_parser()
-                            .map_with_span(SrcNode::new)
-                            .separated_by(just(Token::Comma)),
+                        vector_size_parser()
+                            .then(just(Token::Comma).padding_for(scalar_ty_parser())),
                     )
-                    .padded_by(just(Token::Greater))
-                    .map_with_span(SrcNode::new)
-                    .or_not(),
+                    .padded_by(just(Token::Greater)),
             )
-            .map(|(ident, generics)| Type::CompositeType {
-                name: ident,
-                generics,
-            });
+            .map(|(size, ty)| Type::Vector(size, ty));
+
+        let matrix_parser = just(Token::Vector)
+            .padding_for(
+                just(Token::Less)
+                    .padding_for(
+                        vector_size_parser()
+                            .then(just(Token::Comma).padding_for(vector_size_parser()))
+                            .then(just(Token::Comma).padding_for(scalar_ty_parser())),
+                    )
+                    .padded_by(just(Token::Greater)),
+            )
+            .map(|((columns, rows), ty)| Type::Matrix { columns, rows, ty });
 
         let tuple_parser = just(Token::OpenDelimiter(Delimiter::Parentheses))
             .padding_for(ty.clone().separated_by(just(Token::Comma)).map(Type::Tuple))
@@ -214,6 +244,8 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             .or(just(Token::ScalarType(ScalarType::Double))
                 .to(Type::ScalarType(ScalarType::Double)))
             .or(struct_parser)
+            .or(vector_parser)
+            .or(matrix_parser)
             .map_with_span(SrcNode::new);
 
         let parentheses_parser = atom_parser.or(just(Token::OpenDelimiter(Delimiter::Parentheses))
@@ -221,6 +253,22 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))));
 
         parentheses_parser.or(tuple_parser)
+    })
+}
+fn type_with_function_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TypeWithFunction>>, Error> {
+    use std::iter;
+
+    recursive(|ty| {
+        let ty = ty.link();
+
+        seq(iter::once(Token::Fn).chain(iter::once(Token::OpenDelimiter(Delimiter::Parentheses))))
+            .padding_for(ty.clone().separated_by(just(Token::Comma)))
+            .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
+            .then(just(Token::Arrow).padding_for(ty).or_not())
+            .map(|(args, ret)| TypeWithFunction::Function(args, ret))
+            .or(type_parser().map(TypeWithFunction::Type))
+            .map_with_span(SrcNode::new)
     })
 }
 
@@ -571,9 +619,18 @@ fn global_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = S
 }
 
 fn ident_type_pair_parser()
--> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair>>, Error> {
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair<Type>>>, Error> {
     ident_parser()
         .then(just(Token::Colon).padding_for(type_parser()))
+        .map_with_span(|(ident, ty), span| SrcNode::new(IdentTypePair { ident, ty }, span))
+}
+
+fn ident_type_with_function_pair_parser() -> Parser<
+    impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair<TypeWithFunction>>>,
+    Error,
+> {
+    ident_parser()
+        .then(just(Token::Colon).padding_for(type_with_function_parser()))
         .map_with_span(|(ident, ty), span| SrcNode::new(IdentTypePair { ident, ty }, span))
 }
 
@@ -625,10 +682,16 @@ fn function_parser()
         .then(ident_parser())
         .then(
             just(Token::OpenDelimiter(Delimiter::Parentheses))
-                .padding_for(ident_type_pair_parser().separated_by(just(Token::Comma)))
+                .padding_for(
+                    ident_type_with_function_pair_parser().separated_by(just(Token::Comma)),
+                )
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
         )
-        .then(just(Token::Arrow).padding_for(type_parser()).or_not())
+        .then(
+            just(Token::Arrow)
+                .padding_for(type_with_function_parser())
+                .or_not(),
+        )
         .then(
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
                 .padding_for(statement_parser())

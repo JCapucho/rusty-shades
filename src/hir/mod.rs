@@ -783,7 +783,7 @@ impl Module {
 
 fn build_struct(
     ident: &SrcNode<ArcIntern<String>>,
-    fields: &[SrcNode<IdentTypePair>],
+    fields: &[SrcNode<IdentTypePair<ast::Type>>],
     span: Span,
     statements: &[SrcNode<ast::Item>],
     structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
@@ -858,154 +858,6 @@ fn build_struct(
     }
 }
 
-fn build_vector(
-    generics: &Option<SrcNode<Vec<SrcNode<ast::Generic>>>>,
-    infer_ctx: &mut InferContext,
-    span: Span,
-) -> Result<TypeId, Vec<Error>> {
-    let mut errors = vec![];
-
-    if let Some(generics) = generics {
-        if generics.len() != 2 {
-            errors.push(
-                Error::custom(format!("Expected {} generics found {}", 2, generics.len()))
-                    .with_span(generics.span()),
-            );
-        }
-
-        let size = if let ast::Generic::UInt(val) = generics[0].inner() {
-            Some(match val {
-                2 => VectorSize::Bi,
-                3 => VectorSize::Tri,
-                4 => VectorSize::Quad,
-                _ => {
-                    errors.push(
-                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                            .with_span(generics[0].span()),
-                    );
-                    VectorSize::Bi
-                },
-            })
-        } else {
-            errors.push(
-                Error::custom(String::from("Size must be a Uint")).with_span(generics[0].span()),
-            );
-            None
-        };
-
-        let kind = if let ast::Generic::ScalarType(scalar) = generics[1].inner() {
-            Some(scalar)
-        } else {
-            errors.push(
-                Error::custom(String::from("Expecting a scalar type"))
-                    .with_span(generics[1].span()),
-            );
-            None
-        };
-
-        if !errors.is_empty() {
-            Err(errors)
-        } else {
-            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
-            let size = infer_ctx.add_size(SizeInfo::Concrete(size.unwrap()));
-
-            Ok(infer_ctx.insert(TypeInfo::Vector(base, size), span))
-        }
-    } else {
-        errors.push(Error::custom(format!("Expected {} generics found {}", 2, 0)).with_span(span));
-
-        Err(errors)
-    }
-}
-
-fn build_matrix(
-    generics: &Option<SrcNode<Vec<SrcNode<ast::Generic>>>>,
-    infer_ctx: &mut InferContext,
-    span: Span,
-) -> Result<TypeId, Vec<Error>> {
-    let mut errors = vec![];
-
-    if let Some(generics) = generics {
-        if generics.len() != 3 {
-            errors.push(
-                Error::custom(format!("Expected {} generics found {}", 3, generics.len()))
-                    .with_span(generics.span()),
-            );
-        }
-
-        let columns = if let ast::Generic::UInt(val) = generics[0].inner() {
-            Some(match val {
-                2 => VectorSize::Bi,
-                3 => VectorSize::Tri,
-                4 => VectorSize::Quad,
-                _ => {
-                    errors.push(
-                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                            .with_span(generics[0].span()),
-                    );
-                    VectorSize::Bi
-                },
-            })
-        } else {
-            errors.push(
-                Error::custom(String::from("Size must be a Uint")).with_span(generics[0].span()),
-            );
-            None
-        };
-
-        let rows = if let ast::Generic::UInt(val) = generics[1].inner() {
-            Some(match val {
-                2 => VectorSize::Bi,
-                3 => VectorSize::Tri,
-                4 => VectorSize::Quad,
-                _ => {
-                    errors.push(
-                        Error::custom(format!("Size must be between 2 and 4 got {}", val))
-                            .with_span(generics[1].span()),
-                    );
-                    VectorSize::Bi
-                },
-            })
-        } else {
-            errors.push(
-                Error::custom(String::from("Size must be a Uint")).with_span(generics[1].span()),
-            );
-            None
-        };
-
-        let kind = if let ast::Generic::ScalarType(scalar) = generics[2].inner() {
-            Some(scalar)
-        } else {
-            errors.push(
-                Error::custom(String::from("Expecting a scalar type"))
-                    .with_span(generics[1].span()),
-            );
-            None
-        };
-
-        if !errors.is_empty() {
-            Err(errors)
-        } else {
-            let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*kind.unwrap()));
-            let columns = infer_ctx.add_size(SizeInfo::Concrete(columns.unwrap()));
-            let rows = infer_ctx.add_size(SizeInfo::Concrete(rows.unwrap()));
-
-            Ok(infer_ctx.insert(
-                TypeInfo::Matrix {
-                    columns,
-                    rows,
-                    base,
-                },
-                span,
-            ))
-        }
-    } else {
-        errors.push(Error::custom(format!("Expected {} generics found {}", 3, 0)).with_span(span));
-
-        Err(errors)
-    }
-}
-
 impl SrcNode<ast::Type> {
     fn build_ast_ty(
         &self,
@@ -1022,58 +874,40 @@ impl SrcNode<ast::Type> {
                 let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
                 infer_ctx.insert(TypeInfo::Scalar(base), self.span())
             },
-            ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
-                "Vector" => match build_vector(generics, infer_ctx, self.span()) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                },
-                "Matrix" => match build_matrix(generics, infer_ctx, self.span()) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                },
-                _ => {
-                    if let Some(ty) = structs.get(name.inner()) {
-                        ty.ty
-                    } else if let Some((ident, fields, span)) =
-                        statements
-                            .iter()
-                            .find_map(|statement| match statement.inner() {
-                                Item::StructDef { ident, fields } if ident == name => {
-                                    Some((ident, fields, statement.span()))
-                                },
-                                _ => None,
-                            })
-                    {
-                        match build_struct(
-                            ident,
-                            fields,
-                            span,
-                            statements,
-                            structs,
-                            infer_ctx,
-                            struct_id,
-                            iter + 1,
-                        ) {
-                            Ok(t) => t,
-                            Err(mut e) => {
-                                errors.append(&mut e);
-                                return Err(errors);
+            ast::Type::Struct(name) => {
+                if let Some(ty) = structs.get(name.inner()) {
+                    ty.ty
+                } else if let Some((ident, fields, span)) =
+                    statements
+                        .iter()
+                        .find_map(|statement| match statement.inner() {
+                            Item::StructDef { ident, fields } if ident == name => {
+                                Some((ident, fields, statement.span()))
                             },
-                        }
-                    } else {
-                        errors.push(
-                            Error::custom(String::from("Not defined")).with_span(self.span()),
-                        );
-
-                        return Err(errors);
+                            _ => None,
+                        })
+                {
+                    match build_struct(
+                        ident,
+                        fields,
+                        span,
+                        statements,
+                        structs,
+                        infer_ctx,
+                        struct_id,
+                        iter + 1,
+                    ) {
+                        Ok(t) => t,
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            return Err(errors);
+                        },
                     }
-                },
+                } else {
+                    errors.push(Error::custom(String::from("Not defined")).with_span(self.span()));
+
+                    return Err(errors);
+                }
             },
             ast::Type::Tuple(types) => {
                 let types = types
@@ -1082,6 +916,26 @@ impl SrcNode<ast::Type> {
                     .collect::<Result<_, _>>()?;
 
                 infer_ctx.insert(TypeInfo::Tuple(types), self.span())
+            },
+            ast::Type::Vector(size, ty) => {
+                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let size = infer_ctx.add_size(SizeInfo::Concrete(*size));
+
+                infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
+            },
+            ast::Type::Matrix { columns, rows, ty } => {
+                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let columns = infer_ctx.add_size(SizeInfo::Concrete(*columns));
+                let rows = infer_ctx.add_size(SizeInfo::Concrete(*rows));
+
+                infer_ctx.insert(
+                    TypeInfo::Matrix {
+                        columns,
+                        rows,
+                        base,
+                    },
+                    self.span(),
+                )
             },
         };
 
@@ -1104,32 +958,14 @@ impl SrcNode<ast::Type> {
                 let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
                 infer_ctx.insert(TypeInfo::Scalar(base), self.span())
             },
-            ast::Type::CompositeType { name, generics } => match name.inner().as_str() {
-                "Vector" => match build_vector(generics, infer_ctx, self.span()) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                },
-                "Matrix" => match build_matrix(generics, infer_ctx, self.span()) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                },
-                _ => {
-                    if let Some(ty) = structs.get(name.inner()) {
-                        ty.ty
-                    } else {
-                        errors.push(
-                            Error::custom(String::from("Not defined")).with_span(self.span()),
-                        );
+            ast::Type::Struct(name) => {
+                if let Some(ty) = structs.get(name.inner()) {
+                    ty.ty
+                } else {
+                    errors.push(Error::custom(String::from("Not defined")).with_span(self.span()));
 
-                        return Err(errors);
-                    }
-                },
+                    return Err(errors);
+                }
             },
             ast::Type::Tuple(types) => {
                 let types = types
@@ -1138,6 +974,26 @@ impl SrcNode<ast::Type> {
                     .collect::<Result<_, _>>()?;
 
                 infer_ctx.insert(TypeInfo::Tuple(types), self.span())
+            },
+            ast::Type::Vector(size, ty) => {
+                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let size = infer_ctx.add_size(SizeInfo::Concrete(*size));
+
+                infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
+            },
+            ast::Type::Matrix { columns, rows, ty } => {
+                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let columns = infer_ctx.add_size(SizeInfo::Concrete(*columns));
+                let rows = infer_ctx.add_size(SizeInfo::Concrete(*rows));
+
+                infer_ctx.insert(
+                    TypeInfo::Matrix {
+                        columns,
+                        rows,
+                        base,
+                    },
+                    self.span(),
+                )
             },
         };
 
@@ -1149,6 +1005,23 @@ impl SrcNode<ast::Type> {
     }
 }
 
+impl SrcNode<ast::TypeWithFunction> {
+    fn build_ast_ty(
+        &self,
+        statements: &[SrcNode<ast::Item>],
+        structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
+        infer_ctx: &mut InferContext,
+        iter: usize,
+        struct_id: &mut u32,
+    ) -> Result<TypeId, Vec<Error>> {
+        match self.inner() {
+            ast::TypeWithFunction::Type(ty) => {
+                ty.build_ast_ty(statements, structs, infer_ctx, iter, struct_id)
+            },
+            ast::TypeWithFunction::Function(_, _) => todo!(),
+        }
+    }
+}
 struct StatementBuilder<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     locals: &'a mut Vec<(u32, TypeId)>,

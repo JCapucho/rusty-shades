@@ -62,13 +62,13 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, ()> {
     Ok(spirv)
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum FunctionModifier {
     Vertex,
     Fragment,
 }
 
-#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy)]
+#[derive(Clone, Hash, Debug, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum Literal {
     Int(i64),
     Uint(u64),
@@ -77,7 +77,7 @@ pub enum Literal {
 }
 
 #[repr(u8)]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum ScalarType {
     Uint = 0,
     Int,

@@ -2,7 +2,7 @@ use crate::{error::Error, node::SrcNode, src::Span, FunctionModifier, Ident, Lit
 use parze::prelude::*;
 use std::fmt;
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Token {
     Identifier(Ident),
     FunctionModifier(FunctionModifier),
@@ -12,20 +12,24 @@ pub enum Token {
     ScalarType(ScalarType),
 
     Global,
-    Colon,
     Const,
-    Equal,
     Fn,
-    Arrow,
-    Comma,
     Return,
-    SemiColon,
     If,
     Else,
     Let,
+    Struct,
+
+    Vector,
+    Matrix,
+
+    Colon,
+    Equal,
+    Arrow,
+    Comma,
+    SemiColon,
     Dot,
     Dot2,
-    Struct,
 
     LogicalOr,
     LogicalAnd,
@@ -96,20 +100,24 @@ impl fmt::Display for Token {
             }),
 
             Token::Global => write!(f, "global"),
-            Token::Colon => write!(f, ":"),
             Token::Const => write!(f, "const"),
-            Token::Equal => write!(f, "="),
             Token::Fn => write!(f, "fn"),
-            Token::Arrow => write!(f, "->"),
-            Token::Comma => write!(f, ","),
             Token::Return => write!(f, "return"),
-            Token::SemiColon => write!(f, ";"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),
             Token::Let => write!(f, "let"),
+            Token::Struct => write!(f, "struct"),
+
+            Token::Vector => write!(f, "Vector"),
+            Token::Matrix => write!(f, "Matrix"),
+
+            Token::Colon => write!(f, ":"),
+            Token::Equal => write!(f, "="),
+            Token::Arrow => write!(f, "->"),
+            Token::Comma => write!(f, ","),
+            Token::SemiColon => write!(f, ";"),
             Token::Dot => write!(f, "."),
             Token::Dot2 => write!(f, ".."),
-            Token::Struct => write!(f, "struct"),
 
             Token::LogicalOr => write!(f, "||"),
             Token::LogicalAnd => write!(f, "&&"),
@@ -147,7 +155,7 @@ impl fmt::Display for Token {
 impl PartialEq<Token> for SrcNode<Token> {
     fn eq(&self, other: &Token) -> bool { &**self == other }
 }
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum Delimiter {
     Parentheses,
     CurlyBraces,
@@ -282,6 +290,8 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
                 "fragment" => Token::FunctionModifier(FunctionModifier::Fragment),
                 "set" => Token::Set,
                 "binding" => Token::Binding,
+                "Vector" => Token::Vector,
+                "Matrix" => Token::Matrix,
                 _ => Token::Identifier(Ident::new(s)),
             }))
             .or(op)

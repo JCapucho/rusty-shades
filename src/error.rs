@@ -68,6 +68,8 @@ impl Error {
                 debug_assert_eq!(found_a, found_b);
 
                 expected.append(b);
+                expected.sort_unstable();
+                expected.dedup();
             },
             (
                 ErrorKind::UnexpectedEof { ref mut expected },
@@ -76,6 +78,8 @@ impl Error {
                 },
             ) => {
                 expected.append(b);
+                expected.sort_unstable();
+                expected.dedup();
             },
             _ => {},
         }
@@ -140,7 +144,11 @@ impl parze::error::Error<char> for Error {
             ErrorKind::UnexpectedSym {
                 ref mut expected, ..
             }
-            | ErrorKind::UnexpectedEof { ref mut expected } => expected.push(thing),
+            | ErrorKind::UnexpectedEof { ref mut expected } => {
+                expected.push(thing);
+                expected.sort_unstable();
+                expected.dedup();
+            },
             ErrorKind::Custom(_) => unreachable!(),
         }
 
@@ -193,7 +201,11 @@ impl parze::error::Error<SrcNode<Token>> for Error {
             ErrorKind::UnexpectedSym {
                 ref mut expected, ..
             }
-            | ErrorKind::UnexpectedEof { ref mut expected } => expected.push(thing),
+            | ErrorKind::UnexpectedEof { ref mut expected } => {
+                expected.push(thing);
+                expected.sort_unstable();
+                expected.dedup();
+            },
             ErrorKind::Custom(_) => unreachable!(),
         }
 
@@ -203,7 +215,7 @@ impl parze::error::Error<SrcNode<Token>> for Error {
     fn merge(self, other: Self) -> Self { self.merge(other) }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Thing {
     Char(char),
     Token(Token),
