@@ -58,6 +58,8 @@ pub enum TypeInfo {
     },
     Struct(u32),
     Tuple(Vec<TypeId>),
+    FnRef(Option<u32>, Vec<TypeId>, TypeId),
+    FnDef(u32),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -107,6 +109,7 @@ pub struct InferContext<'a> {
     constraints: FastHashMap<ConstraintId, Constraint>,
 
     structs: FastHashMap<u32, Vec<(Ident, TypeId)>>,
+    functions: FastHashMap<u32, (Ident, Vec<TypeId>, TypeId)>,
 }
 
 impl<'a> InferContext<'a> {
@@ -127,7 +130,8 @@ impl<'a> InferContext<'a> {
             constraint_id_counter: self.constraint_id_counter,
             constraints: FastHashMap::default(),
 
-            structs: self.structs.clone(),
+            structs: FastHashMap::default(),
+            functions: FastHashMap::default(),
         }
     }
 
@@ -158,6 +162,24 @@ impl<'a> InferContext<'a> {
 
     pub fn add_struct(&mut self, id: u32, fields: Vec<(Ident, TypeId)>) {
         self.structs.insert(id, fields);
+    }
+
+    pub fn get_struct(&self, id: u32) -> &Vec<(Ident, TypeId)> {
+        self.structs
+            .get(&id)
+            .or_else(|| self.parent.map(|p| p.get_struct(id)))
+            .unwrap()
+    }
+
+    pub fn add_function(&mut self, id: u32, name: Ident, args: Vec<TypeId>, ret: TypeId) {
+        self.functions.insert(id, (name, args, ret));
+    }
+
+    pub fn get_function(&self, id: u32) -> &(Ident, Vec<TypeId>, TypeId) {
+        self.functions
+            .get(&id)
+            .or_else(|| self.parent.map(|p| p.get_function(id)))
+            .unwrap()
     }
 
     pub fn span(&self, id: TypeId) -> Span {
@@ -286,7 +308,6 @@ impl<'a> InferContext<'a> {
         struct TypeInfoDisplay<'a> {
             ctx: &'a InferContext<'a>,
             id: TypeId,
-            trailing: bool,
         }
 
         #[derive(Copy, Clone)]
@@ -302,9 +323,8 @@ impl<'a> InferContext<'a> {
         }
 
         impl<'a> TypeInfoDisplay<'a> {
-            fn with_id(mut self, id: TypeId, trailing: bool) -> Self {
+            fn with_id(mut self, id: TypeId) -> Self {
                 self.id = id;
-                self.trailing = trailing;
                 self
             }
         }
@@ -315,7 +335,7 @@ impl<'a> InferContext<'a> {
                 match self.ctx.get(self.id) {
                     Unknown => write!(f, "?"),
                     Empty => write!(f, "()"),
-                    Ref(id) => self.with_id(id, self.trailing).fmt(f),
+                    Ref(id) => self.with_id(id).fmt(f),
                     Scalar(scalar) => write!(f, "{}", ScalarInfoDisplay {
                         ctx: self.ctx,
                         id: scalar
@@ -364,29 +384,44 @@ impl<'a> InferContext<'a> {
                                 .map(|(name, ty)| format!(
                                     "{}: {}",
                                     name.as_str(),
-                                    self.with_id(*ty, true)
+                                    self.with_id(*ty)
                                 ))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         )?;
-                        write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })?;
-                        Ok(())
+                        write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })
                     },
-                    Tuple(ids) => {
-                        write!(f, "(")?;
+                    Tuple(ids) => write!(
+                        f,
+                        "({})",
+                        ids.iter()
+                            .map(|id| format!("{}", self.with_id(*id)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    FnRef(id, args, ret) => write!(
+                        f,
+                        "fn({:?})({}) -> {}",
+                        id,
+                        args.iter()
+                            .map(|id| format!("{}", self.with_id(*id)))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        self.with_id(ret)
+                    ),
+                    FnDef(id) => {
+                        let (name, args, ret) = self.ctx.get_function(id);
 
                         write!(
                             f,
-                            "{}",
-                            ids.iter()
-                                .map(|id| format!("{}", self.with_id(*id, true)))
+                            "fn({}) -> {} {{ {} }}",
+                            args.iter()
+                                .map(|id| format!("{}", self.with_id(*id)))
                                 .collect::<Vec<_>>()
-                                .join(", ")
-                        )?;
-
-                        write!(f, ")")?;
-
-                        Ok(())
+                                .join(", "),
+                            self.with_id(*ret),
+                            name
+                        )
                     },
                 }
             }
@@ -428,11 +463,7 @@ impl<'a> InferContext<'a> {
             }
         }
 
-        TypeInfoDisplay {
-            ctx: self,
-            id,
-            trailing: true,
-        }
+        TypeInfoDisplay { ctx: self, id }
     }
 
     #[allow(clippy::unit_arg)]
@@ -494,6 +525,29 @@ impl<'a> InferContext<'a> {
                 }
 
                 Ok(())
+            },
+            (FnDef(a), FnDef(b)) if a == b => Ok(()),
+            (FnRef(a_ty, a_args, a_out), FnRef(b_ty, b_args, b_out))
+                if ((a_ty.is_none() || b_ty.is_none()) || a_ty == b_ty)
+                    && a_args.len() == b_args.len() =>
+            {
+                for (a, b) in a_args.into_iter().zip(b_args.into_iter()) {
+                    self.unify_inner(iter + 1, a, b)?;
+                }
+                self.unify_inner(iter + 1, a_out, b_out)
+            }
+            (FnRef(_, ref_args, ref_out), FnDef(def))
+            | (FnDef(def), FnRef(_, ref_args, ref_out)) => {
+                let (_, args, out) = self.get_function(def).clone();
+
+                if args.len() != ref_args.len() {
+                    return Err((a, b));
+                }
+
+                for (a, b) in ref_args.into_iter().zip(args.into_iter()) {
+                    self.unify_inner(iter + 1, a, b)?;
+                }
+                self.unify_inner(iter + 1, ref_out, out)
             },
             (_, _) => Err((a, b)),
         }
@@ -900,7 +954,7 @@ impl<'a> InferContext<'a> {
                 match self.get(self.get_base(record)) {
                     TypeInfo::Unknown => Ok(false), // Can't infer yet
                     TypeInfo::Struct(id) => {
-                        let fields = self.structs.get(&id).unwrap();
+                        let fields = self.get_struct(id);
 
                         if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == *field) {
                             let ty = *ty;
@@ -1575,6 +1629,14 @@ impl<'a> InferContext<'a> {
                     .map(|id| self.reconstruct_inner(iter + 1, id))
                     .collect::<Result<_, _>>()?,
             ),
+            FnRef(gen, _, _) => {
+                if let Some(id) = gen {
+                    Type::FnRef(id)
+                } else {
+                    return Err(ReconstructError::Unknown(id));
+                }
+            },
+            FnDef(id) => Type::FnDef(id),
         };
 
         Ok(SrcNode::new(ty, self.span(id)))

@@ -23,7 +23,7 @@ fn fragment frag_main() {
 }
 
 fn unsound() -> Vector<4,Float> {
-    return v_position
+    v4(1.)
 }
 
 fn not_tuple() -> (Int) {
@@ -43,4 +43,7 @@ struct Test(Int,Float);
 fn tuple_struct(strct: Test) -> Int {
     strct.0
 }
- 
+
+fn pain(f: fn() -> Int) -> Int {
+    f()
+}

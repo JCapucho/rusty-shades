@@ -121,7 +121,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "0.2.0"
-source = "git+https://github.com/gfx-rs/naga.git?rev=92c1ffb588fea859305b59b790dd08b3c943593d#92c1ffb588fea859305b59b790dd08b3c943593d"
+source = "git+https://github.com/gfx-rs/naga.git?rev=90c56aca2fcdd1ca0568d78aa4bde7ef5e4b3a4e#90c56aca2fcdd1ca0568d78aa4bde7ef5e4b3a4e"
 dependencies = [
  "bitflags",
  "fxhash",

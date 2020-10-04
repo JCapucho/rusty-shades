@@ -1,17 +1,17 @@
-pub use crate::hir::AssignTarget;
 use crate::{
     error::Error,
     hir::{self},
     node::{Node, SrcNode},
     src::Span,
     ty::Type,
-    BinaryOp, FunctionModifier, Ident, Literal, UnaryOp,
+    AssignTarget, BinaryOp, FunctionModifier, Ident, Literal, UnaryOp,
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 
 pub type TypedExpr = Node<Expr, Type>;
 
 mod const_solver;
+mod monomorphize;
 
 #[derive(Debug)]
 pub struct Global {
@@ -71,7 +71,7 @@ pub enum Expr {
         op: UnaryOp,
     },
     Call {
-        name: u32,
+        id: u32,
         args: Vec<TypedExpr>,
     },
     Literal(Literal),
@@ -95,9 +95,16 @@ pub enum Expr {
 #[derive(Debug)]
 pub struct Function {
     pub name: Ident,
-    pub modifier: Option<FunctionModifier>,
     pub args: Vec<Type>,
     pub ret: Type,
+    pub body: Vec<Statement>,
+    pub locals: FastHashMap<u32, Type>,
+}
+
+#[derive(Debug)]
+pub struct EntryPoint {
+    pub name: Ident,
+    pub stage: FunctionModifier,
     pub body: Vec<Statement>,
     pub locals: FastHashMap<u32, Type>,
 }
@@ -122,6 +129,7 @@ pub struct Module {
     pub structs: FastHashMap<u32, Struct>,
     pub functions: FastHashMap<u32, Function>,
     pub constants: FastHashMap<u32, Constant>,
+    pub entry_points: Vec<EntryPoint>,
 }
 
 #[derive(Debug)]
@@ -205,7 +213,10 @@ impl hir::Module {
                     globals.insert(pos, Global {
                         name: global.name,
                         ty: global.ty,
-                        binding: Binding::Descriptor { set, binding },
+                        binding: Binding::Resource {
+                            group: set,
+                            binding,
+                        },
                         storage: StorageClass::Uniform,
                     });
 
@@ -266,6 +277,17 @@ impl hir::Module {
             functions.into_iter().map(Result::unwrap).collect()
         };
 
+        let entry_points = {
+            let (entry_points, e): (Vec<_>, Vec<_>) = self
+                .entry_points
+                .into_iter()
+                .map(|entry| entry.build_ir(&mut globals, &mut global_lookups, structs))
+                .partition(Result::is_ok);
+            errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+
+            entry_points.into_iter().map(Result::unwrap).collect()
+        };
+
         if errors.is_empty() {
             Ok(Module {
                 functions,
@@ -276,6 +298,7 @@ impl hir::Module {
                     .collect(),
                 globals,
                 constants,
+                entry_points,
             })
         } else {
             Err(errors)
@@ -321,7 +344,54 @@ impl SrcNode<hir::Function> {
         }
 
         let mut builder = StatementBuilder {
-            modifier: func.modifier,
+            modifier: None,
+            locals: &mut func.locals,
+            globals,
+            globals_lookup,
+            structs,
+        };
+
+        for sta in func.body.into_iter() {
+            errors.append(&mut sta.build_ir(&mut builder, &mut body, None));
+        }
+
+        let args = func
+            .args
+            .into_iter()
+            .filter(|ty| match ty {
+                Type::Empty | Type::FnRef(_) | Type::FnDef(_) => false,
+                _ => true,
+            })
+            .collect();
+
+        if errors.is_empty() {
+            Ok(Function {
+                name: func.name,
+                args,
+                ret: func.ret,
+                body,
+                locals: func.locals,
+            })
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+impl SrcNode<hir::EntryPoint> {
+    fn build_ir(
+        self,
+        globals: &mut FastHashMap<u32, Global>,
+        globals_lookup: &mut FastHashMap<u32, GlobalLookup>,
+        structs: &FastHashMap<u32, SrcNode<hir::Struct>>,
+    ) -> Result<EntryPoint, Vec<Error>> {
+        let mut func = self.into_inner();
+
+        let mut errors = vec![];
+        let mut body = vec![];
+
+        let mut builder = StatementBuilder {
+            modifier: Some(func.stage),
             locals: &mut func.locals,
             globals,
             globals_lookup,
@@ -333,11 +403,9 @@ impl SrcNode<hir::Function> {
         }
 
         if errors.is_empty() {
-            Ok(Function {
+            Ok(EntryPoint {
                 name: func.name,
-                modifier: func.modifier,
-                args: func.args,
-                ret: func.ret,
+                stage: func.stage,
                 body,
                 locals: func.locals,
             })
@@ -455,15 +523,31 @@ impl hir::TypedNode {
 
                 Expr::UnaryOp { tgt, op }
             },
-            hir::Expr::Call { name, args } => {
+            hir::Expr::Call { fun, args } => {
                 let mut constructed_args = vec![];
 
                 for arg in args {
+                    match arg.ty() {
+                        Type::Empty | Type::FnRef(_) | Type::FnDef(_) => continue,
+                        _ => {},
+                    }
+
                     constructed_args.push(fallthrough!(arg.build_ir(builder, body, nested))?);
                 }
 
+                let id = if let Type::FnDef(id) = fun.ty() {
+                    *id
+                } else {
+                    errors.push(
+                        Error::custom(String::from("Couldn't resolve a function id"))
+                            .with_span(span),
+                    );
+
+                    0
+                };
+
                 Expr::Call {
-                    name,
+                    id,
                     args: constructed_args,
                 }
             },
@@ -728,17 +812,15 @@ impl hir::TypedNode {
                     reject: {
                         let mut body = vec![];
 
-                        if let Some(reject) = reject {
-                            if !block_returns(&reject, &ty) {
-                                errors.push(
-                                    Error::custom(String::from("Block doesn't return"))
-                                        .with_span(reject.span()),
-                                )
-                            }
+                        if !block_returns(&reject, &ty) {
+                            errors.push(
+                                Error::custom(String::from("Block doesn't return"))
+                                    .with_span(reject.span()),
+                            )
+                        }
 
-                            for sta in reject.into_inner() {
-                                errors.append(&mut sta.build_ir(builder, &mut body, Some(local)));
-                            }
+                        for sta in reject.into_inner() {
+                            errors.append(&mut sta.build_ir(builder, &mut body, Some(local)));
                         }
 
                         body
@@ -757,6 +839,7 @@ impl hir::TypedNode {
                 Expr::Index { base, index }
             },
             hir::Expr::Constant(id) => Expr::Constant(id),
+            hir::Expr::Function(_) => todo!(),
         };
 
         if errors.is_empty() {

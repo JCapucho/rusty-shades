@@ -1,14 +1,15 @@
 use crate::{
     error::Error,
-    ir::{self, AssignTarget, Expr, Function, Module, Statement, Struct, TypedExpr},
+    ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::Type,
-    BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp,
+    AssignTarget, BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp,
 };
 use naga::{
-    Arena, BinaryOperator, Constant, ConstantInner, EntryPoint, Expression, FastHashMap,
-    Function as NagaFunction, FunctionOrigin, GlobalUse, GlobalVariable, Handle, Header,
+    Arena, BinaryOperator, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
+    FastHashMap, Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header,
     LocalVariable, MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage,
-    Statement as NagaStatement, StructMember, Type as NagaType, TypeInner, UnaryOperator,
+    Statement as NagaStatement, StorageAccess, StructMember, Type as NagaType, TypeInner,
+    UnaryOperator,
 };
 
 #[derive(Debug)]
@@ -32,8 +33,6 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
 
     let mut globals_lookup = FastHashMap::default();
     let mut constants_lookup = FastHashMap::default();
-
-    let mut entry_points = vec![];
 
     for (id, strct) in module.structs.iter() {
         let (ty, offset) =
@@ -68,6 +67,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
             binding: Some(global.binding.clone()),
             ty,
             interpolation: None,
+            storage_access: StorageAccess::empty(),
         });
 
         globals_lookup.insert(*id, GlobalLookup::ContextLess(handle));
@@ -143,7 +143,6 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
 
     let mut func_builder = FunctionBuilder {
         constants: &mut constants,
-        entry_points: &mut entry_points,
         functions: &module.functions,
         functions_arena: &mut functions,
         functions_lookup: FastHashMap::default(),
@@ -157,6 +156,18 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
     for (id, function) in module.functions.iter() {
         match function.build_naga(module, *id, &mut func_builder, 0) {
             Ok(_) => {},
+            Err(mut e) => {
+                errors.append(&mut e);
+                continue;
+            },
+        };
+    }
+
+    let mut entry_points = FastHashMap::default();
+
+    for entry in module.entry_points.iter() {
+        match entry.build_naga(module, &mut func_builder) {
+            Ok((stage, name, entry)) => entry_points.insert((stage, name), entry),
             Err(mut e) => {
                 errors.append(&mut e);
                 continue;
@@ -187,7 +198,6 @@ struct FunctionBuilder<'a> {
     globals_lookup: &'a FastHashMap<u32, GlobalLookup>,
     constants: &'a mut Arena<Constant>,
     functions_arena: &'a mut Arena<NagaFunction>,
-    entry_points: &'a mut Vec<EntryPoint>,
     functions_lookup: FastHashMap<u32, Handle<NagaFunction>>,
     functions: &'a FastHashMap<u32, Function>,
     structs_lookup: &'a FastHashMap<u32, (Handle<NagaType>, u32)>,
@@ -279,7 +289,7 @@ impl Function {
                         module,
                         &locals_lookup,
                         &mut expressions,
-                        self.modifier,
+                        None,
                         builder,
                         iter,
                     )
@@ -299,39 +309,108 @@ impl Function {
             body.push(NagaStatement::Return { value: None });
         }
 
-        let global_usage = GlobalUse::scan(&expressions, &body, &builder.globals);
-
-        let handle = builder.functions_arena.append(NagaFunction {
+        let mut fun = NagaFunction {
             name: Some(self.name.to_string()),
             parameter_types,
             return_type,
-            global_usage,
+            global_usage: Vec::new(),
             expressions,
             body,
             local_variables,
-        });
+        };
 
-        match self.modifier {
-            Some(FunctionModifier::Vertex) => {
-                builder.entry_points.push(EntryPoint {
-                    stage: ShaderStage::Vertex,
-                    name: self.name.to_string(),
-                    function: handle,
-                });
-            },
-            Some(FunctionModifier::Fragment) => {
-                builder.entry_points.push(EntryPoint {
-                    stage: ShaderStage::Fragment,
-                    name: self.name.to_string(),
-                    function: handle,
-                });
-            },
-            None => {},
-        }
+        fun.fill_global_use(&builder.globals);
+
+        let handle = builder.functions_arena.append(fun);
 
         if errors.is_empty() {
             builder.functions_lookup.insert(id, handle);
             Ok(handle)
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+impl EntryPoint {
+    fn build_naga<'a>(
+        &self,
+        module: &Module,
+        builder: &mut FunctionBuilder<'a>,
+    ) -> Result<(ShaderStage, String, NagaEntryPoint), Vec<Error>> {
+        let mut errors = vec![];
+
+        let mut local_variables = Arena::new();
+        let mut locals_lookup = FastHashMap::default();
+
+        for (id, ty) in self.locals.iter() {
+            let ty = match ty
+                .build_naga(builder.types, builder.structs_lookup)
+                .and_then(|ty| {
+                    ty.ok_or_else(|| Error::custom(String::from("Global cannot be of type ()")))
+                }) {
+                Ok(t) => t.0,
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                },
+            };
+
+            let handle = local_variables.append(LocalVariable {
+                name: None,
+                ty,
+                init: None,
+            });
+
+            locals_lookup.insert(*id, handle);
+        }
+
+        let mut expressions = Arena::new();
+
+        let mut body = {
+            let (body, e): (Vec<_>, Vec<_>) = self
+                .body
+                .iter()
+                .map(|sta| {
+                    sta.build_naga(module, &locals_lookup, &mut expressions, None, builder, 0)
+                })
+                .partition(Result::is_ok);
+            let body: Vec<_> = body.into_iter().map(Result::unwrap).collect();
+            errors.extend(e.into_iter().map(Result::unwrap_err));
+
+            body
+        };
+
+        if body
+            .last()
+            .map(|s| !matches!(s, NagaStatement::Return { .. }))
+            .unwrap_or(true)
+        {
+            body.push(NagaStatement::Return { value: None });
+        }
+
+        let mut function = NagaFunction {
+            name: None,
+            parameter_types: Vec::new(),
+            return_type: None,
+            global_usage: Vec::new(),
+            expressions,
+            body,
+            local_variables,
+        };
+
+        function.fill_global_use(&builder.globals);
+
+        if errors.is_empty() {
+            let entry = NagaEntryPoint {
+                // TODO
+                early_depth_test: None,
+                // TODO
+                workgroup_size: [0; 3],
+                function,
+            };
+
+            Ok((self.stage.build_naga(), self.name.to_string(), entry))
         } else {
             Err(errors)
         }
@@ -387,6 +466,7 @@ impl Type {
     ) -> Result<Option<(Handle<NagaType>, u32)>, Error> {
         Ok(match self {
             Type::Empty => None,
+            Type::FnDef(_) | Type::FnRef(_) => None,
             Type::Scalar(scalar) => {
                 let (kind, width) = scalar.build_naga();
 
@@ -654,7 +734,7 @@ impl TypedExpr {
                     expr: expressions.append(tgt),
                 }
             },
-            Expr::Call { name, args } => {
+            Expr::Call { id, args } => {
                 let arguments = args
                     .iter()
                     .map(|arg| {
@@ -672,10 +752,8 @@ impl TypedExpr {
                     .collect::<Result<_, _>>()?;
 
                 let origin = {
-                    if let Some(function) = builder.functions.get(name) {
-                        function
-                            .build_naga(module, *name, builder, iter + 1)
-                            .unwrap()
+                    if let Some(function) = builder.functions.get(id) {
+                        function.build_naga(module, *id, builder, iter + 1).unwrap()
                     } else {
                         unreachable!()
                     }
@@ -838,6 +916,15 @@ impl UnaryOp {
         match self {
             UnaryOp::BitWiseNot => UnaryOperator::Not,
             UnaryOp::Negation => UnaryOperator::Negate,
+        }
+    }
+}
+
+impl FunctionModifier {
+    fn build_naga(&self) -> ShaderStage {
+        match self {
+            FunctionModifier::Vertex => ShaderStage::Vertex,
+            FunctionModifier::Fragment => ShaderStage::Fragment,
         }
     }
 }

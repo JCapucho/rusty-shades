@@ -13,6 +13,8 @@ pub enum Type {
     },
     Struct(u32),
     Tuple(Vec<SrcNode<Self>>),
+    FnRef(u32),
+    FnDef(u32)
 }
 
 impl Type {

@@ -26,27 +26,9 @@ fn main() -> io::Result<()> {
 
     let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
 
-    println!("=================");
-    println!("===== HIR  ======");
-    println!("{:#?}", module);
-    println!("=================");
-    println!("=================\n\n\n");
-
     let module = handle_errors(module.build_ir(), &files, file_id)?;
 
-    println!("=================");
-    println!("===== IR  =======");
-    println!("{:#?}", module);
-    println!("=================");
-    println!("=================\n\n\n");
-
     let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
-
-    println!("=================");
-    println!("==== Naga IR ====");
-    println!("{:#?}", naga_ir);
-    println!("=================");
-    println!("=================");
 
     // let spirv = spv::Writer::new(&naga_ir.header,
     // spv::WriterFlags::DEBUG).write(&naga_ir);
@@ -71,7 +53,7 @@ fn main() -> io::Result<()> {
         .open("debug.vert")?;
 
     naga::back::glsl::write(&naga_ir, &mut output, naga::back::glsl::Options {
-        entry_point: (String::from("vertex_main"), naga::ShaderStage::Vertex),
+        entry_point: (naga::ShaderStage::Vertex, String::from("vertex_main")),
         version: naga::back::glsl::Version::Embedded(310),
     })
     .unwrap();

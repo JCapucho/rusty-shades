@@ -4,15 +4,13 @@ use crate::{
     node::{Node, SrcNode},
     src::Span,
     ty::Type,
-    BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
+    AssignTarget, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
 };
 use internment::ArcIntern;
 use naga::{FastHashMap, VectorSize};
 
-const BUILTIN_TYPES: &[&str] = &["Vector", "Matrix"];
-const BUILTIN_FUNCTIONS: &[&str] = &["v2", "v3", "v4", "m2", "m3", "m4"];
-
 mod infer;
+pub mod visitor;
 
 use infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
 
@@ -43,19 +41,49 @@ impl Literal {
 }
 
 #[derive(Debug)]
+pub struct Module {
+    pub globals: FastHashMap<u32, SrcNode<Global>>,
+    pub structs: FastHashMap<u32, SrcNode<Struct>>,
+    pub functions: FastHashMap<u32, SrcNode<Function>>,
+    pub constants: FastHashMap<u32, SrcNode<Constant>>,
+    pub entry_points: Vec<SrcNode<EntryPoint>>,
+}
+
+#[derive(Debug)]
 pub struct Function {
     pub name: Ident,
-    pub modifier: Option<FunctionModifier>,
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum AssignTarget {
-    Local(u32),
-    Global(u32),
+#[derive(Debug)]
+pub struct Global {
+    pub name: Ident,
+    pub modifier: GlobalModifier,
+    pub ty: Type,
+}
+
+#[derive(Debug)]
+pub struct Struct {
+    pub name: Ident,
+    pub fields: FastHashMap<Ident, (u32, SrcNode<Type>)>,
+}
+
+#[derive(Debug)]
+pub struct Constant {
+    pub name: Ident,
+    pub expr: TypedNode,
+    pub ty: Type,
+}
+
+#[derive(Debug)]
+pub struct EntryPoint {
+    pub name: Ident,
+    pub stage: FunctionModifier,
+    pub body: Vec<Statement<(Type, Span)>>,
+    pub locals: FastHashMap<u32, Type>,
 }
 
 #[derive(Debug, Clone)]
@@ -92,7 +120,7 @@ pub enum Expr<M> {
         op: UnaryOp,
     },
     Call {
-        name: u32,
+        fun: Node<Self, M>,
         args: Vec<Node<Self, M>>,
     },
     Literal(Literal),
@@ -107,12 +135,13 @@ pub enum Expr<M> {
     Local(u32),
     Global(u32),
     Constant(u32),
+    Function(u32),
     Return(Option<Node<Self, M>>),
     If {
         condition: Node<Self, M>,
         accept: SrcNode<Vec<Statement<M>>>,
         else_ifs: Vec<ElseIf<M>>,
-        reject: Option<SrcNode<Vec<Statement<M>>>>,
+        reject: SrcNode<Vec<Statement<M>>>,
     },
     Index {
         base: Node<Self, M>,
@@ -135,8 +164,8 @@ impl InferNode {
                     tgt: tgt.into_expr(infer_ctx)?,
                     op,
                 },
-                Expr::Call { name, args } => Expr::Call {
-                    name,
+                Expr::Call { fun, args } => Expr::Call {
+                    fun: fun.into_expr(infer_ctx)?,
                     args: args
                         .into_iter()
                         .map(|a| Ok(a.into_expr(infer_ctx)?))
@@ -158,6 +187,7 @@ impl InferNode {
                 Expr::Local(id) => Expr::Local(id),
                 Expr::Global(id) => Expr::Global(id),
                 Expr::Constant(id) => Expr::Constant(id),
+                Expr::Function(id) => Expr::Function(id),
                 Expr::Return(expr) => {
                     Expr::Return(expr.map(|e| e.into_expr(infer_ctx)).transpose()?)
                 },
@@ -189,17 +219,13 @@ impl InferNode {
                             ))
                         })
                         .collect::<Result<_, _>>()?,
-                    reject: reject
-                        .as_ref()
-                        .map(|r| {
-                            Ok(SrcNode::new(
-                                r.iter()
-                                    .map(|a| a.clone().into_statement(infer_ctx))
-                                    .collect::<Result<_, _>>()?,
-                                r.span(),
-                            ))
-                        })
-                        .transpose()?,
+                    reject: SrcNode::new(
+                        reject
+                            .iter()
+                            .map(|a| a.clone().into_statement(infer_ctx))
+                            .collect::<Result<_, _>>()?,
+                        reject.span(),
+                    ),
                 },
                 Expr::Index { base, index } => Expr::Index {
                     base: base.into_expr(infer_ctx)?,
@@ -212,26 +238,6 @@ impl InferNode {
 }
 
 #[derive(Debug)]
-pub struct Global {
-    pub name: Ident,
-    pub modifier: GlobalModifier,
-    pub ty: Type,
-}
-
-#[derive(Debug)]
-pub struct Struct {
-    pub name: Ident,
-    pub fields: FastHashMap<Ident, (u32, SrcNode<Type>)>,
-}
-
-#[derive(Debug)]
-pub struct Constant {
-    pub name: Ident,
-    pub expr: TypedNode,
-    pub ty: Type,
-}
-
-#[derive(Debug)]
 struct PartialGlobal {
     modifier: GlobalModifier,
     ty: TypeId,
@@ -239,16 +245,23 @@ struct PartialGlobal {
 
 #[derive(Debug)]
 struct PartialConstant {
-    pub id: u32,
-    pub init: SrcNode<ast::Expression>,
-    pub ty: TypeId,
+    id: u32,
+    init: SrcNode<ast::Expression>,
+    ty: TypeId,
 }
 
 #[derive(Debug)]
 struct PartialFunction {
-    modifier: Option<FunctionModifier>,
+    id: u32,
     args: FastHashMap<Ident, (u32, TypeId)>,
     ret: TypeId,
+    body: SrcNode<Block>,
+}
+
+#[derive(Debug)]
+struct PartialEntryPoint {
+    name: Ident,
+    stage: FunctionModifier,
     body: SrcNode<Block>,
 }
 
@@ -265,14 +278,7 @@ struct PartialModule {
     globals: FastHashMap<Ident, SrcNode<PartialGlobal>>,
     functions: FastHashMap<Ident, SrcNode<PartialFunction>>,
     constants: FastHashMap<Ident, SrcNode<PartialConstant>>,
-}
-
-#[derive(Debug)]
-pub struct Module {
-    pub globals: FastHashMap<u32, SrcNode<Global>>,
-    pub structs: FastHashMap<u32, SrcNode<Struct>>,
-    pub functions: FastHashMap<u32, SrcNode<Function>>,
-    pub constants: FastHashMap<u32, SrcNode<Constant>>,
+    entry_points: Vec<SrcNode<PartialEntryPoint>>,
 }
 
 impl Module {
@@ -282,7 +288,6 @@ impl Module {
 
         let mut errors = vec![];
         let mut functions = FastHashMap::default();
-        let mut functions_lookup = FastHashMap::default();
 
         let mut globals_lookup = FastHashMap::default();
 
@@ -322,26 +327,21 @@ impl Module {
             globals.into_iter().map(Result::unwrap).collect()
         };
 
-        for name in partial.functions.keys() {
-            let id = functions_lookup.len() as u32;
-
-            functions_lookup.insert(name.clone(), id);
-        }
-
         for (name, func) in partial.functions.iter() {
+            let mut scoped = infer_ctx.scoped();
+
             let mut body = vec![];
             let mut locals = vec![];
             let mut locals_lookup = FastHashMap::default();
 
             let mut builder = StatementBuilder {
-                infer_ctx: &mut infer_ctx,
+                infer_ctx: &mut scoped,
                 locals: &mut locals,
                 args: &func.args,
                 globals_lookup: &globals_lookup,
                 structs: &partial.structs,
                 ret: func.ret,
                 functions: &partial.functions,
-                functions_lookup: &functions_lookup,
                 constants: &partial.constants,
             };
 
@@ -352,19 +352,17 @@ impl Module {
                 }
             }
 
-            match infer_ctx.solve_all() {
+            match scoped.solve_all() {
                 Ok(_) => {},
-                Err(e) => {
-                    errors.push(e);
-                    return Err(errors);
-                },
+                Err(e) => errors.push(e),
             };
 
-            let ret = match infer_ctx.reconstruct(func.ret, Span::None) {
+            let ret = match scoped.reconstruct(func.ret, Span::None) {
                 Ok(t) => t.into_inner(),
                 Err(e) => {
                     errors.push(e);
-                    continue;
+                    // Dummy type for error
+                    Type::Empty
                 },
             };
 
@@ -374,11 +372,7 @@ impl Module {
 
                 let (args, e): (Vec<_>, Vec<_>) = sorted
                     .into_iter()
-                    .map(|(_, ty)| {
-                        infer_ctx
-                            .reconstruct(*ty, Span::None)
-                            .map(|i| i.into_inner())
-                    })
+                    .map(|(_, ty)| scoped.reconstruct(*ty, Span::None).map(|i| i.into_inner()))
                     .partition(Result::is_ok);
                 let args: Vec<_> = args.into_iter().map(Result::unwrap).collect();
                 errors.extend(e.into_iter().map(Result::unwrap_err));
@@ -390,7 +384,7 @@ impl Module {
                 let (locals, e): (Vec<_>, Vec<_>) = locals
                     .iter()
                     .map(|(id, val)| {
-                        let ty = infer_ctx.reconstruct(*val, Span::None)?.into_inner();
+                        let ty = scoped.reconstruct(*val, Span::None)?.into_inner();
 
                         Ok((*id, ty))
                     })
@@ -403,7 +397,7 @@ impl Module {
             let body = {
                 let (body, e): (Vec<_>, Vec<_>) = body
                     .into_iter()
-                    .map(|sta| sta.into_statement(&mut infer_ctx))
+                    .map(|sta| sta.into_statement(&mut scoped))
                     .partition(Result::is_ok);
                 errors.extend(e.into_iter().map(Result::unwrap_err));
 
@@ -411,11 +405,10 @@ impl Module {
             };
 
             functions.insert(
-                *functions_lookup.get(name).unwrap(),
+                func.id,
                 SrcNode::new(
                     Function {
                         name: name.clone(),
-                        modifier: func.modifier,
                         args,
                         ret,
                         body,
@@ -425,6 +418,77 @@ impl Module {
                 ),
             );
         }
+
+        let entry_points = partial
+            .entry_points
+            .iter()
+            .map(|func| {
+                let mut scoped = infer_ctx.scoped();
+
+                let mut body = vec![];
+                let mut locals = vec![];
+                let mut locals_lookup = FastHashMap::default();
+
+                let ret = scoped.insert(TypeInfo::Empty, Span::None);
+
+                let mut builder = StatementBuilder {
+                    infer_ctx: &mut scoped,
+                    locals: &mut locals,
+                    args: &FastHashMap::default(),
+                    globals_lookup: &globals_lookup,
+                    structs: &partial.structs,
+                    ret,
+                    functions: &partial.functions,
+                    constants: &partial.constants,
+                };
+
+                for sta in func.body.inner() {
+                    match sta.build_hir(&mut builder, &mut locals_lookup, ret) {
+                        Ok(s) => body.push(s),
+                        Err(mut e) => errors.append(&mut e),
+                    }
+                }
+
+                match scoped.solve_all() {
+                    Ok(_) => {},
+                    Err(e) => errors.push(e),
+                };
+
+                let locals = {
+                    let (locals, e): (Vec<_>, Vec<_>) = locals
+                        .iter()
+                        .map(|(id, val)| {
+                            let ty = scoped.reconstruct(*val, Span::None)?.into_inner();
+
+                            Ok((*id, ty))
+                        })
+                        .partition(Result::is_ok);
+                    errors.extend(e.into_iter().map(Result::unwrap_err));
+
+                    locals.into_iter().map(Result::unwrap).collect()
+                };
+
+                let body = {
+                    let (body, e): (Vec<_>, Vec<_>) = body
+                        .into_iter()
+                        .map(|sta| sta.into_statement(&mut scoped))
+                        .partition(Result::is_ok);
+                    errors.extend(e.into_iter().map(Result::unwrap_err));
+
+                    body.into_iter().map(Result::unwrap).collect()
+                };
+
+                SrcNode::new(
+                    EntryPoint {
+                        name: func.name.clone(),
+                        stage: func.stage,
+                        body,
+                        locals,
+                    },
+                    func.span(),
+                )
+            })
+            .collect();
 
         let structs = {
             let (structs, e): (Vec<_>, Vec<_>) = partial
@@ -459,18 +523,19 @@ impl Module {
                 .constants
                 .iter()
                 .map(|(key, partial_const)| {
+                    let mut scoped = infer_ctx.scoped();
+
                     let mut errors = vec![];
                     let mut locals = vec![];
 
                     let mut const_builder = StatementBuilder {
-                        infer_ctx: &mut infer_ctx,
+                        infer_ctx: &mut scoped,
                         locals: &mut locals,
                         args: &FastHashMap::default(),
                         globals_lookup: &FastHashMap::default(),
                         structs: &FastHashMap::default(),
                         ret: partial_const.ty,
                         functions: &FastHashMap::default(),
-                        functions_lookup: &FastHashMap::default(),
                         constants: &partial.constants,
                     };
 
@@ -480,14 +545,14 @@ impl Module {
                         partial_const.ty,
                     )?;
 
-                    match infer_ctx.unify(expr.type_id(), partial_const.ty) {
+                    match scoped.unify(expr.type_id(), partial_const.ty) {
                         Ok(_) => {},
                         Err(e) => errors.push(e),
                     }
 
                     let constant = Constant {
                         name: key.clone(),
-                        ty: match infer_ctx.reconstruct(partial_const.ty, partial_const.span()) {
+                        ty: match scoped.reconstruct(partial_const.ty, partial_const.span()) {
                             Ok(s) => s,
                             Err(e) => {
                                 errors.push(e);
@@ -495,7 +560,7 @@ impl Module {
                             },
                         }
                         .into_inner(),
-                        expr: match expr.into_expr(&mut infer_ctx) {
+                        expr: match expr.into_expr(&mut scoped) {
                             Ok(s) => s,
                             Err(e) => {
                                 errors.push(e);
@@ -525,6 +590,7 @@ impl Module {
                 globals,
                 structs,
                 constants,
+                entry_points,
             })
         } else {
             Err(errors)
@@ -542,8 +608,10 @@ impl Module {
         let mut functions = FastHashMap::default();
         let mut constants = FastHashMap::default();
         let mut names = FastHashMap::default();
+        let mut entry_points = Vec::new();
 
         let mut struct_id = 0;
+        let mut func_id = 0;
 
         for statement in statements {
             match statement.inner() {
@@ -655,15 +723,6 @@ impl Module {
                     args,
                     body,
                 } => {
-                    if BUILTIN_FUNCTIONS.contains(&ident.as_str()) {
-                        errors.push(
-                            Error::custom(String::from(
-                                "Cannot define a function with a builtin name",
-                            ))
-                            .with_span(ident.span()),
-                        );
-                    }
-
                     if let Some(span) = names.get(ident.inner()) {
                         errors.push(
                             Error::custom(String::from("Name already defined"))
@@ -674,69 +733,110 @@ impl Module {
 
                     names.insert(ident.inner().clone(), ident.span());
 
-                    if let (Some(modifier), Some(ret)) = (modifier, ty) {
-                        errors.push(
-                            Error::custom(String::from("Entry point function can't return"))
-                                .with_span(modifier.span())
-                                .with_span(ret.span()),
-                        );
-                    }
+                    if let Some(stage) = modifier {
+                        if let Some(ret) = ty {
+                            errors.push(
+                                Error::custom(String::from("Entry point function can't return"))
+                                    .with_span(stage.span())
+                                    .with_span(ret.span()),
+                            );
+                        }
 
-                    let ret = match ty
-                        .as_ref()
-                        .map(|r| {
-                            r.build_ast_ty(statements, &mut structs, infer_ctx, 0, &mut struct_id)
-                        })
-                        .transpose()
-                    {
-                        Ok(t) => t.unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None)),
-                        Err(mut e) => {
-                            errors.append(&mut e);
-                            continue;
-                        },
-                    };
+                        if !args.is_empty() {
+                            errors.push(
+                                Error::custom(String::from(
+                                    "Entry point function can't have arguments",
+                                ))
+                                .with_span(stage.span())
+                                .with_span(args.span()),
+                            );
+                        }
 
-                    let mut constructed_args =
-                        FastHashMap::with_capacity_and_hasher(args.len(), Default::default());
-
-                    for (pos, arg) in args.iter().enumerate() {
-                        constructed_args.insert(
-                            arg.ident.inner().clone(),
-                            (
-                                pos as u32,
-                                match arg.ty.build_ast_ty(
+                        entry_points.push(SrcNode::new(
+                            PartialEntryPoint {
+                                name: ident.inner().clone(),
+                                stage: *stage.inner(),
+                                body: body.clone(),
+                            },
+                            statement.span(),
+                        ));
+                    } else {
+                        let ret = match ty
+                            .as_ref()
+                            .map(|r| {
+                                r.build_ast_ty(
                                     statements,
                                     &mut structs,
                                     infer_ctx,
                                     0,
                                     &mut struct_id,
-                                ) {
-                                    Ok(t) => t,
-                                    Err(mut e) => {
-                                        errors.append(&mut e);
-                                        continue;
+                                    &mut None,
+                                )
+                            })
+                            .transpose()
+                        {
+                            Ok(t) => {
+                                t.unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None))
+                            },
+                            Err(mut e) => {
+                                errors.append(&mut e);
+                                continue;
+                            },
+                        };
+
+                        let mut constructed_args =
+                            FastHashMap::with_capacity_and_hasher(args.len(), Default::default());
+                        let mut id = Some(0);
+
+                        for (pos, arg) in args.iter().enumerate() {
+                            constructed_args.insert(
+                                arg.ident.inner().clone(),
+                                (
+                                    pos as u32,
+                                    match arg.ty.build_ast_ty(
+                                        statements,
+                                        &mut structs,
+                                        infer_ctx,
+                                        0,
+                                        &mut struct_id,
+                                        &mut id,
+                                    ) {
+                                        Ok(t) => t,
+                                        Err(mut e) => {
+                                            errors.append(&mut e);
+                                            continue;
+                                        },
                                     },
+                                ),
+                            );
+                        }
+
+                        func_id += 1;
+
+                        infer_ctx.add_function(
+                            func_id,
+                            ident.inner().clone(),
+                            {
+                                let mut args = constructed_args.values().collect::<Vec<_>>();
+                                args.sort_by(|a, b| a.0.cmp(&b.0));
+                                args.into_iter().map(|(_, ty)| *ty).collect()
+                            },
+                            ret,
+                        );
+
+                        functions.insert(
+                            ident.inner().clone(),
+                            SrcNode::new(
+                                PartialFunction {
+                                    id: func_id,
+                                    body: body.clone(),
+                                    args: constructed_args,
+                                    ret,
                                 },
+                                statement.span(),
                             ),
                         );
                     }
-
-                    if !errors.is_empty() {
-                        continue;
-                    }
-
-                    functions.insert(
-                        ident.inner().clone(),
-                        SrcNode::new(
-                            PartialFunction {
-                                modifier: modifier.as_ref().map(|i| *i.inner()),
-                                body: body.clone(),
-                                args: constructed_args,
-                                ret,
-                            },
-                            statement.span(),
-                        ),
-                    );
                 },
                 Item::Const { ident, ty, init } => {
                     if let Some(span) = names.get(ident.inner()) {
@@ -777,6 +877,7 @@ impl Module {
             globals,
             structs,
             constants,
+            entry_points,
         })
     }
 }
@@ -797,13 +898,6 @@ fn build_struct(
     if iter > MAX_ITERS {
         errors.push(Error::custom(String::from("Recursive type")).with_span(span));
         return Err(errors);
-    }
-
-    if BUILTIN_TYPES.contains(&&***ident.inner()) {
-        errors.push(
-            Error::custom(String::from("Cannot define a type with a builtin name"))
-                .with_span(ident.span()),
-        );
     }
 
     if let Some(ty) = structs.get(ident.inner()) {
@@ -1013,12 +1107,36 @@ impl SrcNode<ast::TypeWithFunction> {
         infer_ctx: &mut InferContext,
         iter: usize,
         struct_id: &mut u32,
+        func_id: &mut Option<u32>,
     ) -> Result<TypeId, Vec<Error>> {
         match self.inner() {
             ast::TypeWithFunction::Type(ty) => {
                 ty.build_ast_ty(statements, structs, infer_ctx, iter, struct_id)
             },
-            ast::TypeWithFunction::Function(_, _) => todo!(),
+            ast::TypeWithFunction::Function(args, ret) => {
+                let args = args
+                    .iter()
+                    .map(|arg| {
+                        arg.build_ast_ty(statements, structs, infer_ctx, iter, struct_id, func_id)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                let ret = ret
+                    .as_ref()
+                    .map(|ty| {
+                        ty.build_ast_ty(statements, structs, infer_ctx, iter, struct_id, func_id)
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None));
+
+                let id = infer_ctx.insert(TypeInfo::FnRef(*func_id, args, ret), self.span());
+
+                if let Some(ref mut id) = func_id {
+                    *id += 1;
+                }
+
+                Ok(id)
+            },
         }
     }
 }
@@ -1030,7 +1148,6 @@ struct StatementBuilder<'a, 'b> {
     structs: &'a FastHashMap<Ident, SrcNode<PartialStruct>>,
     ret: TypeId,
     functions: &'a FastHashMap<Ident, SrcNode<PartialFunction>>,
-    functions_lookup: &'a FastHashMap<Ident, u32>,
     constants: &'a FastHashMap<Ident, SrcNode<PartialConstant>>,
 }
 
@@ -1172,32 +1289,29 @@ impl SrcNode<ast::Expression> {
                     (out, self.span()),
                 )
             },
-            ast::Expression::Call {
-                name,
-                args: call_args,
-            } => match name.inner().as_str() {
-                "v2" | "v3" | "v4" | "m2" | "m3" | "m4" => {
-                    let elements: Vec<_> = {
-                        let (elements, e): (Vec<_>, Vec<_>) = call_args
-                            .iter()
-                            .map(|arg| arg.build_hir(builder, locals_lookup, out))
-                            .partition(Result::is_ok);
-                        errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+            ast::Expression::Constructor { ty, size, elements } => {
+                let elements: Vec<_> = {
+                    let (elements, e): (Vec<_>, Vec<_>) = elements
+                        .iter()
+                        .map(|arg| arg.build_hir(builder, locals_lookup, out))
+                        .partition(Result::is_ok);
+                    errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
 
-                        elements.into_iter().map(Result::unwrap).collect()
-                    };
+                    elements.into_iter().map(Result::unwrap).collect()
+                };
 
-                    let size = match name.chars().last().unwrap() {
-                        '2' => VectorSize::Bi,
-                        '3' => VectorSize::Tri,
-                        '4' => VectorSize::Quad,
-                        _ => unreachable!(),
-                    };
+                let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
 
-                    let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
+                let out = match ty {
+                    ast::ConstructorType::Vector => {
+                        let size = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
 
-                    let out = if name.starts_with('m') {
-                        let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(size));
+                        builder
+                            .infer_ctx
+                            .insert(TypeInfo::Vector(base, size), self.span())
+                    },
+                    ast::ConstructorType::Matrix => {
+                        let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
                         let columns = builder.infer_ctx.add_size(SizeInfo::Unknown);
 
                         builder.infer_ctx.insert(
@@ -1208,80 +1322,62 @@ impl SrcNode<ast::Expression> {
                             },
                             self.span(),
                         )
-                    } else {
-                        let size = builder.infer_ctx.add_size(SizeInfo::Concrete(size));
+                    },
+                };
 
-                        builder
-                            .infer_ctx
-                            .insert(TypeInfo::Vector(base, size), self.span())
-                    };
+                builder.infer_ctx.add_constraint(Constraint::Constructor {
+                    out,
+                    elements: elements.iter().map(|e| e.type_id()).collect(),
+                });
 
-                    builder.infer_ctx.add_constraint(Constraint::Constructor {
-                        out,
-                        elements: elements.iter().map(|e| e.type_id()).collect(),
-                    });
-
-                    InferNode::new(Expr::Constructor { elements }, (out, self.span()))
-                },
-                _ => {
-                    if let Some(func) = builder.functions.get(name.inner()) {
-                        if func.modifier.is_some() {
-                            errors.push(
-                                Error::custom(String::from("Cannot call entry point function"))
-                                    .with_span(name.span())
-                                    .with_span(func.span()),
-                            );
-                        }
-
-                        if call_args.len() != func.args.len() {
-                            errors.push(
-                                Error::custom(format!(
-                                    "Function takes {} arguments {} supplied",
-                                    func.args.len(),
-                                    builder.args.len()
-                                ))
-                                .with_span(name.span()),
-                            );
-                        }
-
-                        let mut func_args: Vec<_> = func.args.values().collect();
-                        func_args.sort_by(|(a, _), (b, _)| a.cmp(b));
-
-                        let mut constructed_args = Vec::with_capacity(call_args.len());
-
-                        for ((_, ty), arg) in func_args.iter().zip(call_args.iter()) {
-                            match arg.build_hir(builder, locals_lookup, out) {
-                                Ok(arg) => {
-                                    match builder.infer_ctx.unify(arg.type_id(), *ty) {
-                                        Ok(_) => {},
-                                        Err(e) => errors.push(e),
-                                    }
-
-                                    constructed_args.push(arg)
-                                },
-                                Err(mut e) => errors.append(&mut e),
-                            };
-                        }
-
-                        if !errors.is_empty() {
-                            return Err(errors);
-                        }
-
-                        InferNode::new(
-                            Expr::Call {
-                                name: *builder.functions_lookup.get(name.inner()).unwrap(),
-                                args: constructed_args,
-                            },
-                            (func.ret, self.span()),
-                        )
-                    } else {
-                        errors.push(
-                            Error::custom(String::from("Function doesn't exist"))
-                                .with_span(name.span()),
-                        );
+                InferNode::new(Expr::Constructor { elements }, (out, self.span()))
+            },
+            ast::Expression::Call {
+                fun,
+                args: call_args,
+            } => {
+                let fun = match fun.build_hir(builder, locals_lookup, out) {
+                    Ok(t) => t,
+                    Err(ref mut e) => {
+                        errors.append(e);
                         return Err(errors);
-                    }
-                },
+                    },
+                };
+                let mut constructed_args = Vec::with_capacity(call_args.len());
+
+                for arg in call_args.iter() {
+                    match arg.build_hir(builder, locals_lookup, out) {
+                        Ok(arg) => constructed_args.push(arg),
+                        Err(mut e) => errors.append(&mut e),
+                    };
+                }
+
+                let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, Span::None);
+                let func_ty = builder.infer_ctx.insert(
+                    TypeInfo::FnRef(
+                        None,
+                        constructed_args.iter().map(InferNode::type_id).collect(),
+                        out_ty,
+                    ),
+                    Span::None,
+                );
+
+                match builder.infer_ctx.unify(fun.type_id(), func_ty) {
+                    Ok(_) => {},
+                    Err(e) => errors.push(e),
+                }
+
+                if !errors.is_empty() {
+                    return Err(errors);
+                }
+
+                InferNode::new(
+                    Expr::Call {
+                        fun,
+                        args: constructed_args,
+                    },
+                    (out_ty, self.span()),
+                )
             },
             ast::Expression::Literal(lit) => {
                 let base = builder.infer_ctx.add_scalar(lit.scalar_info());
@@ -1320,6 +1416,12 @@ impl SrcNode<ast::Expression> {
                     InferNode::new(Expr::Local(*var), (*local, self.span()))
                 } else if let Some((id, ty)) = builder.args.get(var.inner()) {
                     InferNode::new(Expr::Arg(*id), (*ty, self.span()))
+                } else if let Some(fun) = builder.functions.get(var.inner()) {
+                    let ty = builder
+                        .infer_ctx
+                        .insert(TypeInfo::FnDef(fun.id), self.span());
+
+                    InferNode::new(Expr::Function(fun.id), (ty, self.span()))
                 } else if let Some((var, ty)) = builder.globals_lookup.get(var.inner()) {
                     InferNode::new(Expr::Global(*var), (*ty, self.span()))
                 } else if let Some(constant) = builder.constants.get(var.inner()) {
@@ -1423,7 +1525,8 @@ impl SrcNode<ast::Expression> {
                             r.span(),
                         ))
                     })
-                    .transpose()?;
+                    .transpose()?
+                    .unwrap_or_else(|| SrcNode::new(Vec::new(), Span::None));
 
                 InferNode::new(
                     Expr::If {

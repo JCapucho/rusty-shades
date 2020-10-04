@@ -62,6 +62,12 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, ()> {
     Ok(spirv)
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum AssignTarget {
+    Local(u32),
+    Global(u32),
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum FunctionModifier {
     Vertex,

@@ -1,11 +1,11 @@
 use crate::{
     error::Error,
-    hir::{AssignTarget, Statement, TypedNode},
+    hir::{Statement, TypedNode},
     ir::ConstantInner,
     node::SrcNode,
     src::Span,
     ty::Type,
-    BinaryOp, Literal, UnaryOp,
+    AssignTarget, BinaryOp, Literal, UnaryOp,
 };
 use naga::FastHashMap;
 
@@ -184,6 +184,7 @@ impl TypedNode {
                 })
             },
             crate::hir::Expr::Arg(_) => unreachable!(),
+            crate::hir::Expr::Function(_) => unreachable!(),
             crate::hir::Expr::Local(id) => Ok(locals.get(&id).unwrap().clone()),
             crate::hir::Expr::Global(_) => unreachable!(),
             crate::hir::Expr::Constant(id) => get_constant(*id),
@@ -218,7 +219,7 @@ impl TypedNode {
                         }
                     }
 
-                    reject.as_ref().unwrap().solve(get_constant, locals)
+                    reject.solve(get_constant, locals)
                 }
             },
             crate::hir::Expr::Index { base, index } => {

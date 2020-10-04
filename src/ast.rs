@@ -26,7 +26,7 @@ pub enum Item {
         modifier: Option<SrcNode<FunctionModifier>>,
         ident: SrcNode<Ident>,
         ty: Option<SrcNode<TypeWithFunction>>,
-        args: Vec<SrcNode<IdentTypePair<TypeWithFunction>>>,
+        args: SrcNode<Vec<SrcNode<IdentTypePair<TypeWithFunction>>>>,
         body: SrcNode<Block>,
     },
     StructDef {
@@ -62,7 +62,7 @@ pub enum Expression {
         op: SrcNode<UnaryOp>,
     },
     Call {
-        name: SrcNode<Ident>,
+        fun: SrcNode<Expression>,
         args: SrcNode<Vec<SrcNode<Expression>>>,
     },
     Literal(Literal),
@@ -81,6 +81,11 @@ pub enum Expression {
     Index {
         base: SrcNode<Expression>,
         index: SrcNode<Expression>,
+    },
+    Constructor {
+        ty: ConstructorType,
+        size: VectorSize,
+        elements: SrcNode<Vec<SrcNode<Self>>>,
     },
     TupleConstructor(Vec<SrcNode<Self>>),
 }
@@ -102,6 +107,12 @@ pub enum Type {
         rows: VectorSize,
         ty: ScalarType,
     },
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum ConstructorType {
+    Vector,
+    Matrix,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -149,6 +160,22 @@ fn vector_size_parser()
         Token::Literal(Literal::Uint(2)) => Some(VectorSize::Bi),
         Token::Literal(Literal::Uint(3)) => Some(VectorSize::Tri),
         Token::Literal(Literal::Uint(4)) => Some(VectorSize::Quad),
+        _ => None,
+    })
+}
+
+fn constructor_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = (ConstructorType, VectorSize)>, Error> {
+    permit_map(|token: Node<_>| match &*token {
+        Token::Identifier(ident) => Some(match &*ident.as_str() {
+            "v2" => (ConstructorType::Vector, VectorSize::Bi),
+            "v3" => (ConstructorType::Vector, VectorSize::Tri),
+            "v4" => (ConstructorType::Vector, VectorSize::Quad),
+            "m2" => (ConstructorType::Matrix, VectorSize::Bi),
+            "m3" => (ConstructorType::Matrix, VectorSize::Tri),
+            "m4" => (ConstructorType::Matrix, VectorSize::Quad),
+            _ => return None,
+        }),
         _ => None,
     })
 }
@@ -220,7 +247,7 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             )
             .map(|(size, ty)| Type::Vector(size, ty));
 
-        let matrix_parser = just(Token::Vector)
+        let matrix_parser = just(Token::Matrix)
             .padding_for(
                 just(Token::Less)
                     .padding_for(
@@ -255,6 +282,7 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
         parentheses_parser.or(tuple_parser)
     })
 }
+
 fn type_with_function_parser()
 -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TypeWithFunction>>, Error> {
     use std::iter;
@@ -347,15 +375,15 @@ fn expr_parser(
             })
             .boxed();
 
-        let call = ident_parser()
+        let constructors = constructor_parser()
             .then(
                 just(Token::OpenDelimiter(Delimiter::Parentheses))
                     .padding_for(expr.clone().separated_by(just(Token::Comma)))
                     .map_with_span(SrcNode::new)
                     .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
             )
-            .map_with_span(|(ident, args), span| {
-                SrcNode::new(Expression::Call { name: ident, args }, span)
+            .map_with_span(|((ty, size), elements), span| {
+                SrcNode::new(Expression::Constructor { ty, size, elements }, span)
             })
             .boxed();
 
@@ -382,13 +410,27 @@ fn expr_parser(
                 )
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
                 .map_with_span(SrcNode::new))
-            .or(call)
+            .or(constructors)
             .or(ident_parser()
                 .map_with_span(|name, span| SrcNode::new(Expression::Variable(name), span)))
             .or(if_block)
             .boxed();
 
-        let struct_access = atom
+        let call = atom
+            .then(
+                just(Token::OpenDelimiter(Delimiter::Parentheses))
+                    .padding_for(expr.clone().separated_by(just(Token::Comma)))
+                    .map_with_span(SrcNode::new)
+                    .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
+                    .or_not(),
+            )
+            .map_with_span(|(fun, args), span| match args {
+                Some(args) => SrcNode::new(Expression::Call { fun, args }, span),
+                None => fun,
+            })
+            .boxed();
+
+        let struct_access = call
             .then(
                 just(Token::Dot)
                     .padding_for(ident_parser().or(uint_parser().map_with_span(|num, span| {
@@ -685,6 +727,7 @@ fn function_parser()
                 .padding_for(
                     ident_type_with_function_pair_parser().separated_by(just(Token::Comma)),
                 )
+                .map_with_span(SrcNode::new)
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
         )
         .then(

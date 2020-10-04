@@ -11,9 +11,9 @@ parze = { git = "https://github.com/zesterer/parze-new.git", rev = "d42e00dbd0d6
 ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
 naga = { git = "https://github.com/gfx-rs/naga.git", features = [
-    "spirv",
+    "spv-out",
     "glsl-out"
-], rev = "92c1ffb588fea859305b59b790dd08b3c943593d" }
+], rev = "90c56aca2fcdd1ca0568d78aa4bde7ef5e4b3a4e" }
 paste = "1.0"
 
 [features]

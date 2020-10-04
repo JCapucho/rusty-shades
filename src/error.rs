@@ -19,7 +19,7 @@ impl fmt::Display for ErrorKind {
                     .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
-                    .join(",")
+                    .join(", ")
             ),
             ErrorKind::UnexpectedEof { expected } => write!(
                 f,
@@ -28,7 +28,7 @@ impl fmt::Display for ErrorKind {
                     .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
-                    .join(",")
+                    .join(", ")
             ),
             ErrorKind::Custom(msg) => write!(f, "{}", msg),
         }

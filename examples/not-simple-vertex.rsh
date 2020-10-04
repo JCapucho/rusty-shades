@@ -25,6 +25,6 @@ fn vertex main() {
     v_color = a_color;
     v_normal = a_normal;
         
-    v_position = (locals.transform * vec4(a_position, 1.0)).xyz;
-    gl_Position = globals.view_proj * locals.transform * vec4(a_position, 1.0);
+    v_position = (locals.transform * v4(a_position, 1.0)).xyz;
+    gl_position = globals.view_proj * locals.transform * v4(a_position, 1.0);
 }
