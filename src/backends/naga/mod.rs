@@ -465,8 +465,8 @@ impl Type {
         structs_lookup: &FastHashMap<u32, (Handle<NagaType>, u32)>,
     ) -> Result<Option<(Handle<NagaType>, u32)>, Error> {
         Ok(match self {
-            Type::Empty => None,
-            Type::FnDef(_) | Type::FnRef(_) => None,
+            Type::Empty | Type::FnDef(_) => None,
+            Type::Generic(_) => unreachable!(),
             Type::Scalar(scalar) => {
                 let (kind, width) = scalar.build_naga();
 

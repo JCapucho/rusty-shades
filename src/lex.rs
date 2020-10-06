@@ -14,6 +14,7 @@ pub enum Token {
     Global,
     Const,
     Fn,
+    FnTrait,
     Return,
     If,
     Else,
@@ -102,6 +103,7 @@ impl fmt::Display for Token {
             Token::Global => write!(f, "global"),
             Token::Const => write!(f, "const"),
             Token::Fn => write!(f, "fn"),
+            Token::FnTrait => write!(f, "Fn"),
             Token::Return => write!(f, "return"),
             Token::If => write!(f, "if"),
             Token::Else => write!(f, "else"),
@@ -269,6 +271,7 @@ pub fn lex(code: &str) -> Result<Vec<SrcNode<Token>>, Vec<Error>> {
             .or(ident.map(|s| match s.as_str() {
                 "const" => Token::Const,
                 "fn" => Token::Fn,
+                "Fn" => Token::FnTrait,
                 "return" => Token::Return,
                 "if" => Token::If,
                 "else" => Token::Else,

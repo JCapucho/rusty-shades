@@ -12,6 +12,10 @@ const HELP: Vector<3,Uint> = if false {TRUE_HELP} else {FALSE_HELP};
 
 // single line comment
 fn vertex vertex_main() {
+    let a = pass_trough(0);
+    let b = pass_trough(0.0);
+    a = test_pain();
+
     let tmp = m4(2. * v_position)[0];
     f_color = tmp;
     gl_position = v_position;
@@ -44,6 +48,22 @@ fn tuple_struct(strct: Test) -> Int {
     strct.0
 }
 
-fn pain(f: fn() -> Int) -> Int {
+fn test_pass_trough(t: Int) -> Int {
+    pass_trough(t)
+}
+
+fn test_pain() -> Int {
+    pain(tuple_access)
+}
+
+// fn test_pain_pass_trough() -> Int {
+//     pass_trough(pain(tuple_access))
+// }
+
+fn pass_trough<T>(t: T) -> T {
+    t
+}
+
+fn pain<T: Fn() -> Int>(f: T) -> Int {
     f()
 }

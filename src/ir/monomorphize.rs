@@ -1,45 +1,43 @@
 use crate::{
-    hir::{Expr, Function},
+    hir::{Function, TypedNode},
     node::SrcNode,
     ty::Type,
 };
 use naga::FastHashMap;
 
-pub fn requires_monomorphization(fun: &Function) -> bool {
-    for arg in fun.args.iter() {
-        match arg {
-            Type::FnRef(_) => return true,
-            _ => {},
+pub fn collect(
+    hir_functions: &FastHashMap<u32, SrcNode<Function>>,
+    called_fun: &Type,
+    ret: &Type,
+    args: &[TypedNode],
+    generics: &[Type],
+) -> Vec<Type> {
+    let id = match instantiate_ty(called_fun, generics) {
+        Type::FnDef(id) => id,
+        _ => unreachable!(),
+    };
+
+    let called_fun = hir_functions.get(id).unwrap();
+
+    let mut called_generics = vec![Type::Empty; called_fun.generics.len()];
+
+    for (a, b) in called_fun.args.iter().zip(args.iter()) {
+        if let Type::Generic(pos) = a {
+            called_generics[*pos as usize] = instantiate_ty(b.ty(), generics).clone();
         }
     }
 
-    false
+    // TODO: fix generics in general
+    if let Type::Generic(pos) = called_fun.ret {
+        called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
+    }
+
+    called_generics
 }
 
-pub fn collect(functions: &FastHashMap<u32, SrcNode<Function>>, fn_id: u32) -> Vec<Vec<Type>> {
-    let mut variants = Vec::new();
-
-    let tgt_fn = functions.get(&fn_id).unwrap();
-
-    for function in functions.values() {
-        for sta in function.body.iter() {
-            sta.visit(&mut |expr| match expr {
-                Expr::Call { fun, args } if fun.ty() == &Type::FnDef(fn_id) => {
-                    let mut types = Vec::new();
-
-                    for (arg, param) in tgt_fn.args.iter().zip(args.iter()) {
-                        match arg {
-                            Type::FnRef(_) => types.push(param.ty().clone()),
-                            _ => {},
-                        }
-                    }
-
-                    variants.push(types)
-                },
-                _ => {},
-            });
-        }
+pub fn instantiate_ty<'a>(ty: &'a Type, generics: &'a [Type]) -> &'a Type {
+    match ty {
+        Type::Generic(id) => instantiate_ty(&generics[*id as usize], generics),
+        _ => ty,
     }
-
-    variants
 }

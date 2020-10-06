@@ -13,11 +13,8 @@ codespan-reporting = { version = "0.9", optional = true }
 naga = { git = "https://github.com/gfx-rs/naga.git", features = [
     "spv-out",
     "glsl-out"
-], rev = "90c56aca2fcdd1ca0568d78aa4bde7ef5e4b3a4e" }
+], rev = "34e46d0a763433c86169de3e288cfdbfca986668" }
 paste = "1.0"
 
 [features]
 default = ["codespan-reporting"]
-
-[profile.dev]
-debug = false

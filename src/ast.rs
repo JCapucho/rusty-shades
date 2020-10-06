@@ -25,13 +25,14 @@ pub enum Item {
     Function {
         modifier: Option<SrcNode<FunctionModifier>>,
         ident: SrcNode<Ident>,
-        ty: Option<SrcNode<TypeWithFunction>>,
-        args: SrcNode<Vec<SrcNode<IdentTypePair<TypeWithFunction>>>>,
+        generics: SrcNode<Vec<SrcNode<Generic>>>,
+        args: SrcNode<Vec<SrcNode<IdentTypePair>>>,
+        ret: Option<SrcNode<Type>>,
         body: SrcNode<Block>,
     },
     StructDef {
         ident: SrcNode<Ident>,
-        fields: Vec<SrcNode<IdentTypePair<Type>>>,
+        fields: Vec<SrcNode<IdentTypePair>>,
     },
 }
 
@@ -91,16 +92,30 @@ pub enum Expression {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct IdentTypePair<T> {
+pub struct IdentTypePair {
     pub ident: SrcNode<Ident>,
-    pub ty: SrcNode<T>,
+    pub ty: SrcNode<Type>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Generic {
+    pub ident: SrcNode<Ident>,
+    pub bound: Option<SrcNode<TraitBound>>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum TraitBound {
+    Fn {
+        args: SrcNode<Vec<SrcNode<Type>>>,
+        ret: Option<SrcNode<Type>>,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Type {
     ScalarType(ScalarType),
     Tuple(Vec<SrcNode<Self>>),
-    Struct(SrcNode<Ident>),
+    Named(SrcNode<Ident>),
     Vector(VectorSize, ScalarType),
     Matrix {
         columns: VectorSize,
@@ -113,21 +128,6 @@ pub enum Type {
 pub enum ConstructorType {
     Vector,
     Matrix,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub enum TypeWithFunction {
-    Type(SrcNode<Type>),
-    Function(
-        Vec<SrcNode<TypeWithFunction>>,
-        Option<SrcNode<TypeWithFunction>>,
-    ),
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub enum Generic {
-    UInt(u64),
-    ScalarType(ScalarType),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
@@ -234,7 +234,7 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
     recursive(|ty| {
         let ty = ty.link();
 
-        let struct_parser = ident_parser().map(Type::Struct);
+        let named_parser = ident_parser().map(Type::Named);
 
         let vector_parser = just(Token::Vector)
             .padding_for(
@@ -270,7 +270,7 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             .or(just(Token::ScalarType(ScalarType::Float)).to(Type::ScalarType(ScalarType::Float)))
             .or(just(Token::ScalarType(ScalarType::Double))
                 .to(Type::ScalarType(ScalarType::Double)))
-            .or(struct_parser)
+            .or(named_parser)
             .or(vector_parser)
             .or(matrix_parser)
             .map_with_span(SrcNode::new);
@@ -280,23 +280,6 @@ fn type_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = Src
             .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))));
 
         parentheses_parser.or(tuple_parser)
-    })
-}
-
-fn type_with_function_parser()
--> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TypeWithFunction>>, Error> {
-    use std::iter;
-
-    recursive(|ty| {
-        let ty = ty.link();
-
-        seq(iter::once(Token::Fn).chain(iter::once(Token::OpenDelimiter(Delimiter::Parentheses))))
-            .padding_for(ty.clone().separated_by(just(Token::Comma)))
-            .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
-            .then(just(Token::Arrow).padding_for(ty).or_not())
-            .map(|(args, ret)| TypeWithFunction::Function(args, ret))
-            .or(type_parser().map(TypeWithFunction::Type))
-            .map_with_span(SrcNode::new)
     })
 }
 
@@ -661,18 +644,9 @@ fn global_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = S
 }
 
 fn ident_type_pair_parser()
--> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair<Type>>>, Error> {
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair>>, Error> {
     ident_parser()
         .then(just(Token::Colon).padding_for(type_parser()))
-        .map_with_span(|(ident, ty), span| SrcNode::new(IdentTypePair { ident, ty }, span))
-}
-
-fn ident_type_with_function_pair_parser() -> Parser<
-    impl Pattern<Error, Input = Node<Token>, Output = SrcNode<IdentTypePair<TypeWithFunction>>>,
-    Error,
-> {
-    ident_parser()
-        .then(just(Token::Colon).padding_for(type_with_function_parser()))
         .map_with_span(|(ident, ty), span| SrcNode::new(IdentTypePair { ident, ty }, span))
 }
 
@@ -717,42 +691,76 @@ fn struct_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = S
         })
 }
 
+fn trait_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<TraitBound>>, Error> {
+    use std::iter;
+
+    seq(iter::once(Token::FnTrait).chain(iter::once(Token::OpenDelimiter(Delimiter::Parentheses))))
+        .padding_for(
+            type_parser()
+                .separated_by(just(Token::Comma))
+                .map_with_span(SrcNode::new),
+        )
+        .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses)))
+        .then(just(Token::Arrow).padding_for(type_parser()).or_not())
+        .map_with_span(|(args, ret), span| SrcNode::new(TraitBound::Fn { args, ret }, span))
+}
+
+fn generic_parser()
+-> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Generic>>, Error> {
+    ident_parser()
+        .then(just(Token::Colon).padding_for(trait_parser()).or_not())
+        .map_with_span(|(ident, bound), span| SrcNode::new(Generic { ident, bound }, span))
+}
+
 fn function_parser()
 -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error> {
     just(Token::Fn)
         .padding_for(function_modifier_parser().or_not())
         .then(ident_parser())
         .then(
+            just(Token::Less)
+                .padding_for(generic_parser().separated_by(just(Token::Comma)))
+                .padded_by(just(Token::Greater))
+                .or_not()
+                .map_with_span(|generics, span| {
+                    SrcNode::new(
+                        match generics {
+                            Some(generics) => generics,
+                            None => Vec::new(),
+                        },
+                        span,
+                    )
+                }),
+        )
+        .then(
             just(Token::OpenDelimiter(Delimiter::Parentheses))
-                .padding_for(
-                    ident_type_with_function_pair_parser().separated_by(just(Token::Comma)),
-                )
+                .padding_for(ident_type_pair_parser().separated_by(just(Token::Comma)))
                 .map_with_span(SrcNode::new)
                 .padded_by(just(Token::CloseDelimiter(Delimiter::Parentheses))),
         )
-        .then(
-            just(Token::Arrow)
-                .padding_for(type_with_function_parser())
-                .or_not(),
-        )
+        .then(just(Token::Arrow).padding_for(type_parser()).or_not())
         .then(
             just(Token::OpenDelimiter(Delimiter::CurlyBraces))
                 .padding_for(statement_parser())
                 .padded_by(just(Token::CloseDelimiter(Delimiter::CurlyBraces)))
                 .map_with_span(SrcNode::new),
         )
-        .map_with_span(|((((modifier, ident), args), ty), body), span| {
-            SrcNode::new(
-                Item::Function {
-                    modifier,
-                    ident,
-                    ty,
-                    args,
-                    body,
-                },
-                span,
-            )
-        })
+        .map_with_span(
+            |(((((modifier, ident), generics), args), ret), body), span| {
+                SrcNode::new(
+                    Item::Function {
+                        modifier,
+                        ident,
+                        generics,
+                        ret,
+                        args,
+                        body,
+                    },
+                    span,
+                )
+            },
+        )
 }
 
 fn const_parser() -> Parser<impl Pattern<Error, Input = Node<Token>, Output = SrcNode<Item>>, Error>

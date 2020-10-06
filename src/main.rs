@@ -26,7 +26,11 @@ fn main() -> io::Result<()> {
 
     let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
 
+    println!("{:#?}", module);
+
     let module = handle_errors(module.build_ir(), &files, file_id)?;
+
+    println!("{:#?}", module);
 
     let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
 

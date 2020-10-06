@@ -49,13 +49,15 @@ pub struct Module {
     pub entry_points: Vec<SrcNode<EntryPoint>>,
 }
 
-#[derive(Debug)]
+// TODO: Make this non clone
+#[derive(Debug, Clone)]
 pub struct Function {
     pub name: Ident,
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
+    pub generics: Vec<Ident>,
 }
 
 #[derive(Debug)]
@@ -256,6 +258,7 @@ struct PartialFunction {
     args: FastHashMap<Ident, (u32, TypeId)>,
     ret: TypeId,
     body: SrcNode<Block>,
+    generics: Vec<(Ident, Option<TraitBound>)>,
 }
 
 #[derive(Debug)]
@@ -270,6 +273,14 @@ struct PartialStruct {
     id: u32,
     ty: TypeId,
     fields: FastHashMap<Ident, (u32, TypeId)>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TraitBound {
+    None,
+    Fn { args: Vec<TypeId>, ret: TypeId },
+    // Signals that there was a error, not an actual bound
+    Error,
 }
 
 #[derive(Debug)]
@@ -409,6 +420,7 @@ impl Module {
                 SrcNode::new(
                     Function {
                         name: name.clone(),
+                        generics: func.generics.iter().map(|(name, _)| name.clone()).collect(),
                         args,
                         ret,
                         body,
@@ -598,7 +610,7 @@ impl Module {
     }
 
     fn first_pass(
-        statements: &[SrcNode<ast::Item>],
+        items: &[SrcNode<ast::Item>],
         infer_ctx: &mut InferContext,
     ) -> Result<PartialModule, Vec<Error>> {
         let mut errors = Vec::new();
@@ -613,7 +625,7 @@ impl Module {
         let mut struct_id = 0;
         let mut func_id = 0;
 
-        for statement in statements {
+        for statement in items {
             match statement.inner() {
                 Item::StructDef { ident, fields } => {
                     if let Some(span) = names.get(ident.inner()) {
@@ -627,16 +639,15 @@ impl Module {
 
                     names.insert(ident.inner().clone(), ident.span());
 
-                    match build_struct(
-                        ident,
-                        fields,
-                        statement.span(),
-                        statements,
-                        &mut structs,
+                    let mut builder = TypeBuilder {
                         infer_ctx,
-                        &mut struct_id,
-                        0,
-                    ) {
+                        struct_id: &mut struct_id,
+                        generics: &[],
+                        items,
+                        structs: &mut structs,
+                    };
+
+                    match build_struct(ident, fields, statement.span(), &mut builder, 0) {
                         Ok(_) => {},
                         Err(mut e) => errors.append(&mut e),
                     }
@@ -657,11 +668,17 @@ impl Module {
 
                     names.insert(ident.inner().clone(), ident.span());
 
+                    let mut builder = TypeBuilder {
+                        infer_ctx,
+                        struct_id: &mut struct_id,
+                        generics: &[],
+                        items,
+                        structs: &mut structs,
+                    };
+
                     let ty = match ty
                         .as_ref()
-                        .map(|ty| {
-                            ty.build_ast_ty(statements, &mut structs, infer_ctx, 0, &mut struct_id)
-                        })
+                        .map(|ty| ty.build_ast_ty(&mut builder, 0))
                         .transpose()
                     {
                         Ok(t) => t,
@@ -719,10 +736,19 @@ impl Module {
                 Item::Function {
                     modifier,
                     ident,
-                    ty,
+                    generics,
+                    ret,
                     args,
                     body,
                 } => {
+                    let mut builder = TypeBuilder {
+                        infer_ctx,
+                        struct_id: &mut struct_id,
+                        generics: &generics,
+                        items,
+                        structs: &mut structs,
+                    };
+
                     if let Some(span) = names.get(ident.inner()) {
                         errors.push(
                             Error::custom(String::from("Name already defined"))
@@ -734,7 +760,7 @@ impl Module {
                     names.insert(ident.inner().clone(), ident.span());
 
                     if let Some(stage) = modifier {
-                        if let Some(ret) = ty {
+                        if let Some(ret) = ret {
                             errors.push(
                                 Error::custom(String::from("Entry point function can't return"))
                                     .with_span(stage.span())
@@ -761,55 +787,57 @@ impl Module {
                             statement.span(),
                         ));
                     } else {
-                        let ret = match ty
+                        let ret = match ret
                             .as_ref()
-                            .map(|r| {
-                                r.build_ast_ty(
-                                    statements,
-                                    &mut structs,
-                                    infer_ctx,
-                                    0,
-                                    &mut struct_id,
-                                    &mut None,
-                                )
-                            })
+                            .map(|r| r.build_ast_ty(&mut builder, 0))
                             .transpose()
                         {
-                            Ok(t) => {
-                                t.unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None))
-                            },
+                            Ok(t) => t.unwrap_or_else(|| {
+                                builder.infer_ctx.insert(TypeInfo::Empty, Span::None)
+                            }),
                             Err(mut e) => {
                                 errors.append(&mut e);
-                                continue;
+                                builder.infer_ctx.insert(
+                                    TypeInfo::Empty,
+                                    ret.as_ref().map(|r| r.span()).unwrap_or(Span::None),
+                                )
                             },
                         };
 
-                        let mut constructed_args =
-                            FastHashMap::with_capacity_and_hasher(args.len(), Default::default());
-                        let mut id = Some(0);
-
-                        for (pos, arg) in args.iter().enumerate() {
-                            constructed_args.insert(
-                                arg.ident.inner().clone(),
+                        let constructed_args: FastHashMap<_, _> = args
+                            .iter()
+                            .enumerate()
+                            .map(|(pos, arg)| {
                                 (
-                                    pos as u32,
-                                    match arg.ty.build_ast_ty(
-                                        statements,
-                                        &mut structs,
-                                        infer_ctx,
-                                        0,
-                                        &mut struct_id,
-                                        &mut id,
-                                    ) {
+                                    arg.ident.inner().clone(),
+                                    (pos as u32, match arg.ty.build_ast_ty(&mut builder, 0) {
                                         Ok(t) => t,
                                         Err(mut e) => {
                                             errors.append(&mut e);
-                                            continue;
+                                            builder.infer_ctx.insert(TypeInfo::Empty, arg.span())
                                         },
-                                    },
-                                ),
-                            );
-                        }
+                                    }),
+                                )
+                            })
+                            .collect();
+
+                        let generics = generics
+                            .iter()
+                            .map(|generic| {
+                                (
+                                    generic.ident.inner().clone(),
+                                    generic.bound.as_ref().map(|b| {
+                                        match b.build_hir(&mut builder) {
+                                            Ok(bound) => bound,
+                                            Err(mut e) => {
+                                                errors.append(&mut e);
+                                                TraitBound::Error
+                                            },
+                                        }
+                                    }),
+                                )
+                            })
+                            .collect();
 
                         func_id += 1;
 
@@ -831,6 +859,7 @@ impl Module {
                                     id: func_id,
                                     body: body.clone(),
                                     args: constructed_args,
+                                    generics,
                                     ret,
                                 },
                                 statement.span(),
@@ -849,9 +878,16 @@ impl Module {
 
                     names.insert(ident.inner().clone(), ident.span());
 
+                    let mut builder = TypeBuilder {
+                        infer_ctx,
+                        struct_id: &mut struct_id,
+                        generics: &[],
+                        items,
+                        structs: &mut structs,
+                    };
+
                     let id = constants.len() as u32;
-                    let ty =
-                        ty.build_ast_ty(statements, &mut structs, infer_ctx, 0, &mut struct_id)?;
+                    let ty = ty.build_ast_ty(&mut builder, 0)?;
 
                     constants.insert(
                         ident.inner().clone(),
@@ -882,14 +918,11 @@ impl Module {
     }
 }
 
-fn build_struct(
+fn build_struct<'a, 'b>(
     ident: &SrcNode<ArcIntern<String>>,
-    fields: &[SrcNode<IdentTypePair<ast::Type>>],
+    fields: &[SrcNode<IdentTypePair>],
     span: Span,
-    statements: &[SrcNode<ast::Item>],
-    structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
-    infer_ctx: &mut InferContext,
-    struct_id: &mut u32,
+    builder: &mut TypeBuilder<'a, 'b>,
     iter: usize,
 ) -> Result<TypeId, Vec<Error>> {
     let mut errors = vec![];
@@ -900,17 +933,14 @@ fn build_struct(
         return Err(errors);
     }
 
-    if let Some(ty) = structs.get(ident.inner()) {
+    if let Some(ty) = builder.structs.get(ident.inner()) {
         return Ok(ty.ty);
     }
 
     let mut resolved_fields = FastHashMap::default();
 
     for (pos, field) in fields.iter().enumerate() {
-        let ty = match field
-            .ty
-            .build_ast_ty(statements, structs, infer_ctx, iter + 1, struct_id)
-        {
+        let ty = match field.ty.build_ast_ty(builder, iter + 1) {
             Ok(ty) => ty,
             Err(mut e) => {
                 errors.append(&mut e);
@@ -921,9 +951,11 @@ fn build_struct(
         resolved_fields.insert(field.ident.inner().clone(), (pos as u32, ty));
     }
 
-    let id = infer_ctx.insert(TypeInfo::Struct(*struct_id), span);
-    infer_ctx.add_struct(
-        *struct_id,
+    let id = builder
+        .infer_ctx
+        .insert(TypeInfo::Struct(*builder.struct_id), span);
+    builder.infer_ctx.add_struct(
+        *builder.struct_id,
         resolved_fields
             .clone()
             .into_iter()
@@ -931,19 +963,19 @@ fn build_struct(
             .collect(),
     );
 
-    structs.insert(
+    builder.structs.insert(
         ident.inner().clone(),
         SrcNode::new(
             PartialStruct {
                 fields: resolved_fields,
                 ty: id,
-                id: *struct_id,
+                id: *builder.struct_id,
             },
             span,
         ),
     );
 
-    *struct_id += 1;
+    *builder.struct_id += 1;
 
     if errors.is_empty() {
         Ok(id)
@@ -952,27 +984,56 @@ fn build_struct(
     }
 }
 
+struct TypeBuilder<'a, 'b> {
+    infer_ctx: &'a mut InferContext<'b>,
+    items: &'a [SrcNode<ast::Item>],
+    structs: &'a mut FastHashMap<Ident, SrcNode<PartialStruct>>,
+    struct_id: &'a mut u32,
+    generics: &'a [SrcNode<ast::Generic>],
+}
+
 impl SrcNode<ast::Type> {
-    fn build_ast_ty(
+    fn build_ast_ty<'a, 'b>(
         &self,
-        statements: &[SrcNode<ast::Item>],
-        structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
-        infer_ctx: &mut InferContext,
+        builder: &mut TypeBuilder<'a, 'b>,
         iter: usize,
-        struct_id: &mut u32,
     ) -> Result<TypeId, Vec<Error>> {
         let mut errors = vec![];
 
         let ty = match self.inner() {
             ast::Type::ScalarType(scalar) => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
-                infer_ctx.insert(TypeInfo::Scalar(base), self.span())
+                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Scalar(base), self.span())
             },
-            ast::Type::Struct(name) => {
-                if let Some(ty) = structs.get(name.inner()) {
+            ast::Type::Named(name) => {
+                if let Some((pos, gen)) = builder
+                    .generics
+                    .iter()
+                    .enumerate()
+                    .find(|(_, gen)| &gen.ident == name)
+                {
+                    let bound = gen
+                        .bound
+                        .as_ref()
+                        .map(|b| match b.build_hir(builder) {
+                            Ok(bound) => bound,
+                            Err(mut e) => {
+                                errors.append(&mut e);
+                                TraitBound::Error
+                            },
+                        })
+                        .unwrap_or(TraitBound::None);
+
+                    builder
+                        .infer_ctx
+                        .insert(TypeInfo::Generic(pos as u32, bound), gen.span())
+                } else if let Some(ty) = builder.structs.get(name.inner()) {
                     ty.ty
                 } else if let Some((ident, fields, span)) =
-                    statements
+                    builder
+                        .items
                         .iter()
                         .find_map(|statement| match statement.inner() {
                             Item::StructDef { ident, fields } if ident == name => {
@@ -981,16 +1042,7 @@ impl SrcNode<ast::Type> {
                             _ => None,
                         })
                 {
-                    match build_struct(
-                        ident,
-                        fields,
-                        span,
-                        statements,
-                        structs,
-                        infer_ctx,
-                        struct_id,
-                        iter + 1,
-                    ) {
+                    match build_struct(ident, fields, span, builder, iter + 1) {
                         Ok(t) => t,
                         Err(mut e) => {
                             errors.append(&mut e);
@@ -1006,23 +1058,27 @@ impl SrcNode<ast::Type> {
             ast::Type::Tuple(types) => {
                 let types = types
                     .iter()
-                    .map(|ty| ty.build_ast_ty(statements, structs, infer_ctx, iter + 1, struct_id))
+                    .map(|ty| ty.build_ast_ty(builder, iter + 1))
                     .collect::<Result<_, _>>()?;
 
-                infer_ctx.insert(TypeInfo::Tuple(types), self.span())
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Tuple(types), self.span())
             },
             ast::Type::Vector(size, ty) => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
-                let size = infer_ctx.add_size(SizeInfo::Concrete(*size));
+                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let size = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
 
-                infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Vector(base, size), self.span())
             },
             ast::Type::Matrix { columns, rows, ty } => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
-                let columns = infer_ctx.add_size(SizeInfo::Concrete(*columns));
-                let rows = infer_ctx.add_size(SizeInfo::Concrete(*rows));
+                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+                let columns = builder.infer_ctx.add_size(SizeInfo::Concrete(*columns));
+                let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*rows));
 
-                infer_ctx.insert(
+                builder.infer_ctx.insert(
                     TypeInfo::Matrix {
                         columns,
                         rows,
@@ -1052,7 +1108,7 @@ impl SrcNode<ast::Type> {
                 let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
                 infer_ctx.insert(TypeInfo::Scalar(base), self.span())
             },
-            ast::Type::Struct(name) => {
+            ast::Type::Named(name) => {
                 if let Some(ty) = structs.get(name.inner()) {
                     ty.ty
                 } else {
@@ -1099,47 +1155,6 @@ impl SrcNode<ast::Type> {
     }
 }
 
-impl SrcNode<ast::TypeWithFunction> {
-    fn build_ast_ty(
-        &self,
-        statements: &[SrcNode<ast::Item>],
-        structs: &mut FastHashMap<Ident, SrcNode<PartialStruct>>,
-        infer_ctx: &mut InferContext,
-        iter: usize,
-        struct_id: &mut u32,
-        func_id: &mut Option<u32>,
-    ) -> Result<TypeId, Vec<Error>> {
-        match self.inner() {
-            ast::TypeWithFunction::Type(ty) => {
-                ty.build_ast_ty(statements, structs, infer_ctx, iter, struct_id)
-            },
-            ast::TypeWithFunction::Function(args, ret) => {
-                let args = args
-                    .iter()
-                    .map(|arg| {
-                        arg.build_ast_ty(statements, structs, infer_ctx, iter, struct_id, func_id)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                let ret = ret
-                    .as_ref()
-                    .map(|ty| {
-                        ty.build_ast_ty(statements, structs, infer_ctx, iter, struct_id, func_id)
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| infer_ctx.insert(TypeInfo::Empty, Span::None));
-
-                let id = infer_ctx.insert(TypeInfo::FnRef(*func_id, args, ret), self.span());
-
-                if let Some(ref mut id) = func_id {
-                    *id += 1;
-                }
-
-                Ok(id)
-            },
-        }
-    }
-}
 struct StatementBuilder<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     locals: &'a mut Vec<(u32, TypeId)>,
@@ -1353,19 +1368,12 @@ impl SrcNode<ast::Expression> {
                 }
 
                 let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, Span::None);
-                let func_ty = builder.infer_ctx.insert(
-                    TypeInfo::FnRef(
-                        None,
-                        constructed_args.iter().map(InferNode::type_id).collect(),
-                        out_ty,
-                    ),
-                    Span::None,
-                );
 
-                match builder.infer_ctx.unify(fun.type_id(), func_ty) {
-                    Ok(_) => {},
-                    Err(e) => errors.push(e),
-                }
+                builder.infer_ctx.add_constraint(Constraint::Call {
+                    fun: fun.type_id(),
+                    args: constructed_args.iter().map(InferNode::type_id).collect(),
+                    ret: out_ty,
+                });
 
                 if !errors.is_empty() {
                     return Err(errors);
@@ -1587,5 +1595,48 @@ impl SrcNode<ast::Expression> {
                 InferNode::new(Expr::Constructor { elements }, (out, self.span()))
             },
         })
+    }
+}
+
+impl SrcNode<ast::TraitBound> {
+    fn build_hir<'a, 'b>(
+        &self,
+        builder: &mut TypeBuilder<'a, 'b>,
+    ) -> Result<TraitBound, Vec<Error>> {
+        let mut errors = vec![];
+
+        let bound = match self.inner() {
+            ast::TraitBound::Fn { args, ret } => {
+                let args = args
+                    .iter()
+                    .map(|ty| match ty.build_ast_ty(builder, 0) {
+                        Ok(ty) => ty,
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            builder.infer_ctx.insert(TypeInfo::Empty, ty.span())
+                        },
+                    })
+                    .collect();
+
+                let ret = ret
+                    .as_ref()
+                    .map(|ret| match ret.build_ast_ty(builder, 0) {
+                        Ok(ty) => ty,
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            builder.infer_ctx.insert(TypeInfo::Empty, ret.span())
+                        },
+                    })
+                    .unwrap_or_else(|| builder.infer_ctx.insert(TypeInfo::Empty, Span::None));
+
+                TraitBound::Fn { args, ret }
+            },
+        };
+
+        if errors.is_empty() {
+            Ok(bound)
+        } else {
+            Err(errors)
+        }
     }
 }

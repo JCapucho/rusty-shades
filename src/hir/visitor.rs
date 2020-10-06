@@ -1,7 +1,8 @@
-use super::{Expr, Statement};
+use super::{Expr, Statement, TypedNode};
+use crate::{src::Span, ty::Type};
 
-impl<M> Statement<M> {
-    pub fn visit(&self, f: &mut impl FnMut(&Expr<M>)) {
+impl Statement<(Type, Span)> {
+    pub fn visit(&self, f: &mut impl FnMut(&TypedNode)) {
         match self {
             Statement::Expr(expr) => expr.visit(f),
             Statement::ExprSemi(expr) => expr.visit(f),
@@ -10,11 +11,11 @@ impl<M> Statement<M> {
     }
 }
 
-impl<M> Expr<M> {
-    pub fn visit(&self, f: &mut impl FnMut(&Expr<M>)) {
+impl TypedNode {
+    pub fn visit(&self, f: &mut impl FnMut(&TypedNode)) {
         f(self);
 
-        match self {
+        match self.inner() {
             Expr::BinaryOp { left, right, .. } => {
                 left.visit(f);
                 right.visit(f);
