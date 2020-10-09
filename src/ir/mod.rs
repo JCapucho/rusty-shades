@@ -517,7 +517,6 @@ impl hir::TypedNode {
         }
 
         let mut errors = vec![];
-        println!("{:#?} {:#?}", self, sta_builder.generics);
         let mut ty = self.ty().clone();
         let span = self.span();
 

@@ -171,7 +171,7 @@ impl InferNode {
                     args: args
                         .into_iter()
                         .map(|a| Ok(a.into_expr(infer_ctx)?))
-                        .collect::<Result<_, _>>()?,
+                        .collect::<Result<_, Error>>()?,
                 },
                 Expr::Literal(lit) => Expr::Literal(lit),
                 Expr::Access { base, field } => {
@@ -183,7 +183,7 @@ impl InferNode {
                     elements: elements
                         .into_iter()
                         .map(|a| Ok(a.into_expr(infer_ctx)?))
-                        .collect::<Result<_, _>>()?,
+                        .collect::<Result<_, Error>>()?,
                 },
                 Expr::Arg(id) => Expr::Arg(id),
                 Expr::Local(id) => Expr::Local(id),
@@ -220,7 +220,7 @@ impl InferNode {
                                 ),
                             ))
                         })
-                        .collect::<Result<_, _>>()?,
+                        .collect::<Result<_, Error>>()?,
                     reject: SrcNode::new(
                         reject
                             .iter()
@@ -507,7 +507,7 @@ impl Module {
                 .structs
                 .iter()
                 .map(|(key, partial_strct)| {
-                    let fields: Result<_, _> = partial_strct
+                    let fields: Result<_, Error> = partial_strct
                         .fields
                         .iter()
                         .map(|(key, (pos, ty))| {

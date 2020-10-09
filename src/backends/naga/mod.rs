@@ -613,7 +613,7 @@ impl Statement {
             Statement::Return(expr) => NagaStatement::Return {
                 value: expr
                     .as_ref()
-                    .map(|e| {
+                    .map::<Result<_, Error>, _>(|e| {
                         let expr = e.build_naga(
                             module,
                             locals_lookup,
@@ -737,7 +737,7 @@ impl TypedExpr {
             Expr::Call { id, args } => {
                 let arguments = args
                     .iter()
-                    .map(|arg| {
+                    .map::<Result<_, Error>, _>(|arg| {
                         let handle = arg.build_naga(
                             module,
                             locals_lookup,
@@ -749,7 +749,7 @@ impl TypedExpr {
 
                         Ok(expressions.append(handle))
                     })
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<_, Error>>()?;
 
                 let origin = {
                     if let Some(function) = builder.functions.get(id) {
@@ -825,7 +825,7 @@ impl TypedExpr {
 
                         Ok(expressions.append(handle))
                     })
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<_, Error>>()?;
 
                 let ty = self
                     .attr()

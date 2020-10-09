@@ -197,6 +197,7 @@ pub enum Token {
     #[error]
     #[regex(r"[ \r\t\n\f]+", logos::skip)]
     #[regex(r"//[^\n]*\n?", logos::skip)]
+    // TODO: Nested multi-line comments
     #[regex(r"/\*(?:[^*]|\*[^/])*\*/", logos::skip)]
     Error,
 }

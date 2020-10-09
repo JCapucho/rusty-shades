@@ -110,7 +110,7 @@ impl TypedNode {
                 let elements: Vec<_> = elements
                     .iter()
                     .map(|ele| Ok((ele.solve(get_constant, locals)?, ele.ty())))
-                    .collect::<Result<_, _>>()?;
+                    .collect::<Result<_, Error>>()?;
 
                 Ok(match self.ty() {
                     Type::Vector(_, _) => {

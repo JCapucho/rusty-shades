@@ -13,6 +13,9 @@ use crate::{
 use ordered_float::OrderedFloat;
 use naga::VectorSize;
 
+// TODO: Error recovery
+
+#[LALR]
 grammar;
 
 extern {
