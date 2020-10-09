@@ -9,7 +9,10 @@ global out=2 v_normal: Vector<3, Float>;
 global position gl_position;
 
 global uniform=(set=0,binding=0) globals: Globals;
-global uniform=(set=2,binding=0) locals: Locals;
+global uniform { 
+    set=2
+    binding=0
+} locals: Locals;
 
 struct Globals {
     view_proj: Matrix<4, 4, Float>,

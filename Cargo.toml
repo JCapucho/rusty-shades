@@ -6,8 +6,7 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-internment = "0.4.0"
-parze = { git = "https://github.com/zesterer/parze-new.git", rev = "d42e00dbd0d6efe083a266d7d456a822440c54e3" }
+internment = "0.4"
 ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
 naga = { git = "https://github.com/gfx-rs/naga.git", features = [
@@ -15,6 +14,11 @@ naga = { git = "https://github.com/gfx-rs/naga.git", features = [
     "glsl-out"
 ], rev = "34e46d0a763433c86169de3e288cfdbfca986668" }
 paste = "1.0"
+logos = "0.11"
+lalrpop-util = "0.19"
 
 [features]
 default = ["codespan-reporting"]
+
+[build-dependencies]
+lalrpop = "0.19"

@@ -5,8 +5,9 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
+use lalrpop_util::ParseError;
 use naga::back::spv;
-use rusty_shades::{ast, backends, error::Error, hir, lex};
+use rusty_shades::{ast, backends, error::Error, grammar, hir, lexer};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
@@ -20,9 +21,34 @@ fn main() -> io::Result<()> {
 
     let file_id = files.add(NAME, &code);
 
-    let tokens = handle_errors(lex::lex(&code), &files, file_id)?;
+    let lexer = lexer::Lexer::new(&code);
 
-    let ast = handle_errors(ast::parse(&tokens), &files, file_id)?;
+    // TODO: Error handling
+    let ast = match grammar::ProgramParser::new().parse(lexer) {
+        Ok(t) => Ok(t),
+        Err(e) => match e {
+            ParseError::UnrecognizedToken {
+                token: (start, _, end),
+                ref expected,
+            } => {
+                let diagnostic = codespan_reporting::diagnostic::Diagnostic::error()
+                    .with_labels(vec![codespan_reporting::diagnostic::Label::new(
+                        codespan_reporting::diagnostic::LabelStyle::Primary,
+                        file_id,
+                        start.as_usize()..end.as_usize(),
+                    )])
+                    .with_notes(expected.clone());
+                let writer = StandardStream::stderr(ColorChoice::Always);
+                let config = codespan_reporting::term::Config::default();
+
+                term::emit(&mut writer.lock(), &config, &files, &diagnostic)?;
+
+                Err(e)
+            },
+            _ => Err(e),
+        },
+    }
+    .unwrap();
 
     let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
 

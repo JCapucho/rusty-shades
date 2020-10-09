@@ -1,12 +1,13 @@
 // matches! is only supported since 1.42
 // we have no set msrv but if we ever set one this will be useful
 #![allow(clippy::match_like_matches_macro)]
+
 pub mod ast;
 pub mod backends;
 pub mod error;
 pub mod hir;
 pub mod ir;
-pub mod lex;
+pub mod lexer;
 pub mod node;
 pub mod src;
 pub mod ty;
@@ -19,11 +20,14 @@ use codespan_reporting::{
     },
 };
 use internment::ArcIntern;
+use lalrpop_util::lalrpop_mod;
 use naga::back::spv;
 use ordered_float::OrderedFloat;
 use std::fmt;
 
 pub type Ident = ArcIntern<String>;
+
+lalrpop_mod!(pub grammar);
 
 macro_rules! handle_errors {
     ($res:expr,$files:expr,$file_id:expr) => {
@@ -51,9 +55,10 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, ()> {
 
     let file_id = files.add("shader.rsh", code);
 
-    let tokens = handle_errors!(lex::lex(code), &files, file_id);
+    let lexer = lexer::Lexer::new(code);
 
-    let ast = handle_errors!(ast::parse(&tokens), &files, file_id);
+    // TODO: Error handling
+    let ast = grammar::ProgramParser::new().parse(lexer).unwrap();
 
     let module = handle_errors!(hir::Module::build(&ast), &files, file_id);
     let module = handle_errors!(module.build_ir(), &files, file_id);

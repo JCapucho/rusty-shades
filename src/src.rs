@@ -1,8 +1,6 @@
-use crate::node::SrcNode;
-use parze::span::Span as ParzeSpan;
 use std::{fmt, ops::Range};
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Default)]
 pub struct Loc(usize);
 
 impl Loc {
@@ -13,17 +11,6 @@ impl Loc {
     pub fn min(self, other: Self) -> Self { Self(self.0.min(other.0)) }
 
     pub fn max(self, other: Self) -> Self { Self(self.0.max(other.0)) }
-
-    pub fn in_context(&self, code: &str) -> (usize, usize) {
-        let mut pos = self.0;
-        for (i, line) in code.lines().enumerate() {
-            if pos < line.len() + 1 {
-                return (i, pos);
-            }
-            pos -= line.len() + 1;
-        }
-        (code.lines().count(), 0)
-    }
 
     pub const fn next(self) -> Self { Self(self.0 + 1) }
 
@@ -125,13 +112,6 @@ impl Span {
         }
     }
 
-    pub fn in_context(&self, code: &str) -> Option<((usize, usize), (usize, usize))> {
-        match self {
-            Span::Range(from, until) => Some((from.in_context(code), until.in_context(code))),
-            Span::None => None,
-        }
-    }
-
     pub fn as_range(self) -> Option<Range<usize>> {
         match self {
             Span::None => None,
@@ -159,27 +139,4 @@ impl From<(usize, usize)> for Span {
 
 impl<T: Into<Loc>> From<Range<T>> for Span {
     fn from(range: Range<T>) -> Self { Self::range(range.start.into(), range.end.into()) }
-}
-
-impl ParzeSpan<char> for Span {
-    fn none() -> Self { Span::none() }
-
-    fn single(index: usize, _sym: &char) -> Self { Span::single(index.into()) }
-
-    fn group(_syms: &[char], range: Range<usize>) -> Self {
-        Self::range(range.start.into(), range.end.into())
-    }
-}
-
-impl<T> ParzeSpan<SrcNode<T>> for Span {
-    fn none() -> Self { Span::none() }
-
-    fn single(_index: usize, sym: &SrcNode<T>) -> Self { sym.span() }
-
-    fn group(syms: &[SrcNode<T>], _range: Range<usize>) -> Self {
-        syms.first()
-            .map(|s| s.span())
-            .unwrap_or_else(Span::none)
-            .union(syms.last().map(|s| s.span()).unwrap_or_else(Span::none))
-    }
 }
