@@ -2,15 +2,15 @@ use crate::{
     error::Error,
     ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::Type,
-    AssignTarget, BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp,
+    AssignTarget,
 };
 use naga::{
-    Arena, BinaryOperator, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
-    FastHashMap, Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header,
-    LocalVariable, MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage,
-    Statement as NagaStatement, StorageAccess, StructMember, Type as NagaType, TypeInner,
-    UnaryOperator,
+    Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression, FastHashMap,
+    Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
+    MemberOrigin, Module as NagaModule, ShaderStage, Statement as NagaStatement, StorageAccess,
+    StructMember, Type as NagaType, TypeInner,
 };
+use rsh_common::FunctionModifier;
 
 #[derive(Debug)]
 pub enum GlobalLookup {
@@ -88,17 +88,21 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         };
 
         let inner = match constant.inner {
-            ir::ConstantInner::Scalar(scalar) => scalar.build_naga(),
+            ir::ConstantInner::Scalar(scalar) => scalar.into(),
             ir::ConstantInner::Vector(vec) => match constant.ty {
                 Type::Vector(base, size) => {
                     let mut elements = Vec::with_capacity(size as usize);
+                    let ty = types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: base.into(),
+                    });
 
                     for item in vec.iter().take(size as usize) {
                         elements.push(constants.fetch_or_append(Constant {
                             name: None,
                             specialization: None,
-                            ty: base.build_and_add(&mut types),
-                            inner: item.build_naga(),
+                            ty,
+                            inner: Into::into(*item),
                         }))
                     }
 
@@ -113,14 +117,18 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
                     base,
                 } => {
                     let mut elements = Vec::with_capacity(rows as usize * columns as usize);
+                    let ty = types.fetch_or_append(NagaType {
+                        name: None,
+                        inner: base.into(),
+                    });
 
                     for x in 0..rows as usize {
                         for y in 0..columns as usize {
                             elements.push(constants.fetch_or_append(Constant {
                                 name: None,
                                 specialization: None,
-                                ty: base.build_and_add(&mut types),
-                                inner: mat[x * 4 + y].build_naga(),
+                                ty,
+                                inner: mat[x * 4 + y].into(),
                             }))
                         }
                     }
@@ -410,7 +418,7 @@ impl EntryPoint {
                 function,
             };
 
-            Ok((self.stage.build_naga(), self.name.to_string(), entry))
+            Ok((self.stage.into(), self.name.to_string(), entry))
         } else {
             Err(errors)
         }
@@ -468,7 +476,7 @@ impl Type {
             Type::Empty | Type::FnDef(_) => None,
             Type::Generic(_) => unreachable!(),
             Type::Scalar(scalar) => {
-                let (kind, width) = scalar.build_naga();
+                let (kind, width) = scalar.naga_kind_width();
 
                 Some((
                     types.fetch_or_append(NagaType {
@@ -479,7 +487,7 @@ impl Type {
                 ))
             },
             Type::Vector(scalar, size) => {
-                let (kind, width) = scalar.build_naga();
+                let (kind, width) = scalar.naga_kind_width();
 
                 Some((
                     types.fetch_or_append(NagaType {
@@ -498,7 +506,7 @@ impl Type {
                 rows,
                 base,
             } => {
-                let (kind, width) = base.build_naga();
+                let (kind, width) = base.naga_kind_width();
 
                 Some((
                     types.fetch_or_append(NagaType {
@@ -541,27 +549,6 @@ impl Type {
                     offset,
                 ))
             },
-        })
-    }
-}
-
-impl ScalarType {
-    fn build_naga(&self) -> (ScalarKind, u8) {
-        match self {
-            ScalarType::Uint => (ScalarKind::Uint, 4),
-            ScalarType::Int => (ScalarKind::Sint, 4),
-            ScalarType::Float => (ScalarKind::Float, 4),
-            ScalarType::Double => (ScalarKind::Float, 8),
-            ScalarType::Bool => (ScalarKind::Bool, 1),
-        }
-    }
-
-    fn build_and_add(&self, types: &mut Arena<NagaType>) -> Handle<NagaType> {
-        let (kind, width) = self.build_naga();
-
-        types.fetch_or_append(NagaType {
-            name: None,
-            inner: TypeInner::Scalar { kind, width },
         })
     }
 }
@@ -720,7 +707,7 @@ impl TypedExpr {
                 )?;
 
                 Expression::Binary {
-                    op: op.build_naga(),
+                    op: Into::into(*op),
                     left: expressions.append(left),
                     right: expressions.append(right),
                 }
@@ -730,7 +717,7 @@ impl TypedExpr {
                     tgt.build_naga(module, locals_lookup, expressions, modifier, builder, iter)?;
 
                 Expression::Unary {
-                    op: op.build_naga(),
+                    op: Into::into(*op),
                     expr: expressions.append(tgt),
                 }
             },
@@ -775,7 +762,7 @@ impl TypedExpr {
                     name: None,
                     ty,
                     specialization: None,
-                    inner: literal.build_naga(),
+                    inner: Into::into(*literal),
                 });
 
                 Expression::Constant(handle)
@@ -874,57 +861,5 @@ impl TypedExpr {
             ),
             Expr::Constant(id) => Expression::Constant(*builder.constants_lookup.get(id).unwrap()),
         })
-    }
-}
-
-impl Literal {
-    fn build_naga(&self) -> ConstantInner {
-        match self {
-            Literal::Int(val) => ConstantInner::Sint(*val),
-            Literal::Uint(val) => ConstantInner::Uint(*val),
-            Literal::Float(val) => ConstantInner::Float(**val),
-            Literal::Boolean(val) => ConstantInner::Bool(*val),
-        }
-    }
-}
-
-impl BinaryOp {
-    fn build_naga(&self) -> BinaryOperator {
-        match self {
-            BinaryOp::LogicalOr => BinaryOperator::LogicalOr,
-            BinaryOp::LogicalAnd => BinaryOperator::LogicalAnd,
-            BinaryOp::Equality => BinaryOperator::Equal,
-            BinaryOp::Inequality => BinaryOperator::NotEqual,
-            BinaryOp::Greater => BinaryOperator::Greater,
-            BinaryOp::GreaterEqual => BinaryOperator::GreaterEqual,
-            BinaryOp::Less => BinaryOperator::LessEqual,
-            BinaryOp::LessEqual => BinaryOperator::LessEqual,
-            BinaryOp::BitWiseOr => BinaryOperator::InclusiveOr,
-            BinaryOp::BitWiseXor => BinaryOperator::ExclusiveOr,
-            BinaryOp::BitWiseAnd => BinaryOperator::And,
-            BinaryOp::Addition => BinaryOperator::Add,
-            BinaryOp::Subtraction => BinaryOperator::Subtract,
-            BinaryOp::Multiplication => BinaryOperator::Multiply,
-            BinaryOp::Division => BinaryOperator::Divide,
-            BinaryOp::Remainder => BinaryOperator::Modulo,
-        }
-    }
-}
-
-impl UnaryOp {
-    fn build_naga(&self) -> UnaryOperator {
-        match self {
-            UnaryOp::BitWiseNot => UnaryOperator::Not,
-            UnaryOp::Negation => UnaryOperator::Negate,
-        }
-    }
-}
-
-impl FunctionModifier {
-    fn build_naga(&self) -> ShaderStage {
-        match self {
-            FunctionModifier::Vertex => ShaderStage::Vertex,
-            FunctionModifier::Fragment => ShaderStage::Fragment,
-        }
     }
 }

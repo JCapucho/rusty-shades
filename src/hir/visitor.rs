@@ -1,5 +1,6 @@
 use super::{Expr, Statement, TypedNode};
-use crate::{src::Span, ty::Type};
+use crate::ty::Type;
+use rsh_common::src::Span;
 
 impl Statement<(Type, Span)> {
     pub fn visit(&self, f: &mut impl FnMut(&TypedNode)) {

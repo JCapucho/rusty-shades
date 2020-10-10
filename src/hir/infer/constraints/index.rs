@@ -1,5 +1,6 @@
 use super::{InferContext, ScalarInfo, TypeId, TypeInfo};
-use crate::{error::Error, ScalarType};
+use crate::error::Error;
+use rsh_common::ScalarType;
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_index(

@@ -1,5 +1,6 @@
 use super::{InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, node::SrcNode, src::Span, BinaryOp, ScalarType};
+use crate::{error::Error, node::SrcNode};
+use rsh_common::{src::Span, BinaryOp, ScalarType};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_binary(

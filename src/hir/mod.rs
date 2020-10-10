@@ -2,12 +2,11 @@ use crate::{
     ast::{self, Block, GlobalModifier, IdentTypePair, Item},
     error::Error,
     node::{Node, SrcNode},
-    src::Span,
     ty::Type,
-    AssignTarget, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp,
+    AssignTarget,
 };
-use internment::ArcIntern;
 use naga::{FastHashMap, VectorSize};
+use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp};
 
 mod infer;
 /// Pretty printing of the HIR
@@ -29,17 +28,6 @@ impl TypedNode {
     pub fn ty(&self) -> &Type { &self.attr().0 }
 
     pub fn span(&self) -> Span { self.attr().1 }
-}
-
-impl Literal {
-    pub fn scalar_info(&self) -> ScalarInfo {
-        match self {
-            Literal::Int(_) => ScalarInfo::Int,
-            Literal::Uint(_) => ScalarInfo::Int,
-            Literal::Float(_) => ScalarInfo::Float,
-            Literal::Boolean(_) => ScalarInfo::Concrete(ScalarType::Bool),
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -921,7 +909,7 @@ impl Module {
 }
 
 fn build_struct<'a, 'b>(
-    ident: &SrcNode<ArcIntern<String>>,
+    ident: &SrcNode<Ident>,
     fields: &[SrcNode<IdentTypePair>],
     span: Span,
     builder: &mut TypeBuilder<'a, 'b>,
@@ -1390,7 +1378,7 @@ impl SrcNode<ast::Expression> {
                 )
             },
             ast::Expression::Literal(lit) => {
-                let base = builder.infer_ctx.add_scalar(lit.scalar_info());
+                let base = builder.infer_ctx.add_scalar(lit);
                 let out = builder
                     .infer_ctx
                     .insert(TypeInfo::Scalar(base), self.span());

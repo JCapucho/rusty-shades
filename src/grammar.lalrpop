@@ -1,16 +1,17 @@
 use crate::{
-    Ident,
-    lexer::{Token, LexerError},
+    node::SrcNode,
+    ast::*
+};
+use rsh_common::{
     FunctionModifier,
     Literal,
     ScalarType,
-    src::{Span, Loc},
-    node::SrcNode,
     BinaryOp,
     UnaryOp,
-    ast::*
+    src::{Span, Loc},
+    Ident,
 };
-use ordered_float::OrderedFloat;
+use rsh_lexer::{Token, LexerError};
 use naga::VectorSize;
 
 // TODO: Error recovery
@@ -36,7 +37,7 @@ extern {
 
         "uint" => Token::Uint(<u64>),
         "int"=> Token::Int(<i64>),
-        "float"=> Token::Float(<OrderedFloat<f64>>),
+        "float"=> Token::Float(<f64>),
         "bool"=> Token::Bool(<bool>),
 
         "2" => Token::Two,

@@ -6,15 +6,14 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-internment = "0.4"
-ordered-float = "1.0"
 codespan-reporting = { version = "0.9", optional = true }
 naga = { git = "https://github.com/gfx-rs/naga.git", features = [
     "spv-out",
     "glsl-out"
 ], rev = "34e46d0a763433c86169de3e288cfdbfca986668" }
 paste = "1.0"
-logos = "0.11"
+rsh-common = { path = "./rsh-common", features = ["naga"] }
+rsh-lexer = { path = "./rsh-lexer" }
 lalrpop-util = "0.19"
 
 [features]
@@ -22,3 +21,6 @@ default = ["codespan-reporting"]
 
 [build-dependencies]
 lalrpop = "0.19"
+
+[workspace]
+members = ["rsh-lexer", "rsh-common"]

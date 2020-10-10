@@ -1,4 +1,4 @@
-use crate::src::Span;
+use rsh_common::src::Span;
 use std::fmt;
 
 impl fmt::Display for super::Module {
@@ -73,15 +73,6 @@ impl fmt::Display for super::EntryPoint {
         }
 
         writeln!(f, "}}")
-    }
-}
-
-impl fmt::Display for super::FunctionModifier {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            crate::FunctionModifier::Vertex => write!(f, "vertex"),
-            crate::FunctionModifier::Fragment => write!(f, "fragment"),
-        }
     }
 }
 

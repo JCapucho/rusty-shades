@@ -3,11 +3,11 @@ use crate::{
     hir::{Statement, TypedNode},
     ir::ConstantInner,
     node::SrcNode,
-    src::Span,
     ty::Type,
-    AssignTarget, BinaryOp, Literal, UnaryOp,
+    AssignTarget,
 };
 use naga::FastHashMap;
+use rsh_common::{src::Span, BinaryOp, Literal, UnaryOp};
 
 impl TypedNode {
     pub(super) fn solve(
@@ -22,31 +22,31 @@ impl TypedNode {
 
                 Ok(match (left, right) {
                     (ConstantInner::Scalar(a), ConstantInner::Scalar(b)) => {
-                        ConstantInner::Scalar(a.apply_binary_op(*op, b))
+                        ConstantInner::Scalar(apply_binary_op(a, *op, b))
                     },
                     (ConstantInner::Vector(mut a), ConstantInner::Vector(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
-                            .for_each(|(a, b)| *a = a.apply_binary_op(*op, *b));
+                            .for_each(|(a, b)| *a = apply_binary_op(*a, *op, *b));
 
                         ConstantInner::Vector(a)
                     },
                     (ConstantInner::Matrix(mut a), ConstantInner::Matrix(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
-                            .for_each(|(a, b)| *a = a.apply_binary_op(*op, *b));
+                            .for_each(|(a, b)| *a = apply_binary_op(*a, *op, *b));
 
                         ConstantInner::Matrix(a)
                     },
                     (ConstantInner::Scalar(a), ConstantInner::Vector(mut b))
                     | (ConstantInner::Vector(mut b), ConstantInner::Scalar(a)) => {
-                        b.iter_mut().for_each(|b| *b = b.apply_binary_op(*op, a));
+                        b.iter_mut().for_each(|b| *b = apply_binary_op(*b, *op, a));
 
                         ConstantInner::Vector(b)
                     },
                     (ConstantInner::Scalar(a), ConstantInner::Matrix(mut b))
                     | (ConstantInner::Matrix(mut b), ConstantInner::Scalar(a)) => {
-                        b.iter_mut().for_each(|b| *b = b.apply_binary_op(*op, a));
+                        b.iter_mut().for_each(|b| *b = apply_binary_op(*b, *op, a));
 
                         ConstantInner::Matrix(b)
                     },
@@ -57,14 +57,14 @@ impl TypedNode {
                 let tgt = tgt.solve(get_constant, locals)?;
 
                 Ok(match tgt {
-                    ConstantInner::Scalar(a) => ConstantInner::Scalar(a.apply_unary_op(*op)),
+                    ConstantInner::Scalar(a) => ConstantInner::Scalar(apply_unary_op(a, *op)),
                     ConstantInner::Vector(mut a) => {
-                        a.iter_mut().for_each(|a| *a = a.apply_unary_op(*op));
+                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, *op));
 
                         ConstantInner::Vector(a)
                     },
                     ConstantInner::Matrix(mut a) => {
-                        a.iter_mut().for_each(|a| *a = a.apply_unary_op(*op));
+                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, *op));
 
                         ConstantInner::Matrix(a)
                     },
@@ -262,107 +262,105 @@ impl SrcNode<Vec<Statement<(Type, Span)>>> {
     }
 }
 
-impl Literal {
-    fn apply_binary_op(self, op: BinaryOp, other: Self) -> Self {
-        match op {
-            BinaryOp::LogicalOr => match (self, other) {
-                (Literal::Boolean(a), Literal::Boolean(b)) => Literal::Boolean(a || b),
-                _ => unreachable!(),
-            },
-            BinaryOp::LogicalAnd => match (self, other) {
-                (Literal::Boolean(a), Literal::Boolean(b)) => Literal::Boolean(a && b),
-                _ => unreachable!(),
-            },
+fn apply_binary_op(a: Literal, op: BinaryOp, b: Literal) -> Literal {
+    match op {
+        BinaryOp::LogicalOr => match (a, b) {
+            (Literal::Boolean(a), Literal::Boolean(b)) => Literal::Boolean(a || b),
+            _ => unreachable!(),
+        },
+        BinaryOp::LogicalAnd => match (a, b) {
+            (Literal::Boolean(a), Literal::Boolean(b)) => Literal::Boolean(a && b),
+            _ => unreachable!(),
+        },
 
-            BinaryOp::Equality => Literal::Boolean(self == other),
-            BinaryOp::Inequality => Literal::Boolean(self != other),
-            BinaryOp::Greater => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a > b),
-                _ => unreachable!(),
-            },
-            BinaryOp::GreaterEqual => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a >= b),
-                _ => unreachable!(),
-            },
-            BinaryOp::Less => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a < b),
-                _ => unreachable!(),
-            },
-            BinaryOp::LessEqual => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a <= b),
-                _ => unreachable!(),
-            },
+        BinaryOp::Equality => Literal::Boolean(a == b),
+        BinaryOp::Inequality => Literal::Boolean(a != b),
+        BinaryOp::Greater => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a > b),
+            _ => unreachable!(),
+        },
+        BinaryOp::GreaterEqual => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a >= b),
+            _ => unreachable!(),
+        },
+        BinaryOp::Less => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a < b),
+            _ => unreachable!(),
+        },
+        BinaryOp::LessEqual => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Boolean(a > b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Boolean(a > b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Boolean(a <= b),
+            _ => unreachable!(),
+        },
 
-            BinaryOp::BitWiseOr => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a | b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a | b),
-                _ => unreachable!(),
-            },
-            BinaryOp::BitWiseXor => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a ^ b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a ^ b),
-                _ => unreachable!(),
-            },
-            BinaryOp::BitWiseAnd => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a & b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a & b),
-                _ => unreachable!(),
-            },
+        BinaryOp::BitWiseOr => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a | b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a | b),
+            _ => unreachable!(),
+        },
+        BinaryOp::BitWiseXor => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a ^ b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a ^ b),
+            _ => unreachable!(),
+        },
+        BinaryOp::BitWiseAnd => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a & b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a & b),
+            _ => unreachable!(),
+        },
 
-            BinaryOp::Addition => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a + b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a + b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Float(a + b),
-                _ => unreachable!(),
-            },
-            BinaryOp::Subtraction => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a - b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a - b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Float(a - b),
-                _ => unreachable!(),
-            },
-            BinaryOp::Multiplication => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a * b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a * b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Float(a * b),
-                _ => unreachable!(),
-            },
-            BinaryOp::Division => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a / b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a / b),
-                (Literal::Float(a), Literal::Float(b)) => Literal::Float(a / b),
-                _ => unreachable!(),
-            },
-            BinaryOp::Remainder => match (self, other) {
-                (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a % b),
-                (Literal::Int(a), Literal::Int(b)) => Literal::Int(a % b),
-                _ => unreachable!(),
-            },
-        }
+        BinaryOp::Addition => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a + b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a + b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Float(a + b),
+            _ => unreachable!(),
+        },
+        BinaryOp::Subtraction => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a - b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a - b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Float(a - b),
+            _ => unreachable!(),
+        },
+        BinaryOp::Multiplication => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a * b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a * b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Float(a * b),
+            _ => unreachable!(),
+        },
+        BinaryOp::Division => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a / b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a / b),
+            (Literal::Float(a), Literal::Float(b)) => Literal::Float(a / b),
+            _ => unreachable!(),
+        },
+        BinaryOp::Remainder => match (a, b) {
+            (Literal::Uint(a), Literal::Uint(b)) => Literal::Uint(a % b),
+            (Literal::Int(a), Literal::Int(b)) => Literal::Int(a % b),
+            _ => unreachable!(),
+        },
     }
+}
 
-    fn apply_unary_op(self, op: UnaryOp) -> Self {
-        match op {
-            UnaryOp::BitWiseNot => match self {
-                Literal::Uint(a) => Literal::Uint(!a),
-                Literal::Int(a) => Literal::Int(!a),
-                Literal::Boolean(a) => Literal::Boolean(!a),
-                _ => unreachable!(),
-            },
-            UnaryOp::Negation => match self {
-                Literal::Int(a) => Literal::Int(-a),
-                Literal::Float(a) => Literal::Float(-a),
-                _ => unreachable!(),
-            },
-        }
+fn apply_unary_op(tgt: Literal, op: UnaryOp) -> Literal {
+    match op {
+        UnaryOp::BitWiseNot => match tgt {
+            Literal::Uint(a) => Literal::Uint(!a),
+            Literal::Int(a) => Literal::Int(!a),
+            Literal::Boolean(a) => Literal::Boolean(!a),
+            _ => unreachable!(),
+        },
+        UnaryOp::Negation => match tgt {
+            Literal::Int(a) => Literal::Int(-a),
+            Literal::Float(a) => Literal::Float(-a),
+            _ => unreachable!(),
+        },
     }
 }
 

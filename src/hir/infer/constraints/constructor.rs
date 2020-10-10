@@ -1,6 +1,7 @@
 use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, src::Span};
+use crate::error::Error;
 use naga::VectorSize;
+use rsh_common::src::Span;
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_constructor(

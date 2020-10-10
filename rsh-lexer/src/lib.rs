@@ -1,9 +1,8 @@
-use crate::{
-    node::SrcNode,
+use logos::{Lexer as LogosLexer, Logos};
+use rsh_common::{
     src::{Loc, Span},
     FunctionModifier, Ident, ScalarType,
 };
-use logos::{Lexer as LogosLexer, Logos};
 use std::fmt;
 
 fn ident(lex: &mut LogosLexer<Token>) -> Option<Ident> {
@@ -51,7 +50,7 @@ pub struct LexerError {
     pub text: String,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Logos)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Logos)]
 pub enum Token {
     #[regex(r"\p{XID_Start}\p{XID_Continue}*", ident)]
     Identifier(Ident),
@@ -73,7 +72,7 @@ pub enum Token {
     CloseSquareBrackets,
 
     #[regex("[-+]?[0-9]+\\.[0-9]*", |lex| lex.slice().parse().ok())]
-    Float(ordered_float::OrderedFloat<f64>),
+    Float(f64),
     #[regex("[-+][0-9]+", |lex| lex.slice().parse().ok())]
     Int(i64),
     #[regex("[0-9]+", |lex| lex.slice().parse().ok())]
@@ -294,10 +293,6 @@ impl fmt::Display for Token {
             Token::M4 => write!(f, "m4"),
         }
     }
-}
-
-impl PartialEq<Token> for SrcNode<Token> {
-    fn eq(&self, other: &Token) -> bool { &**self == other }
 }
 
 pub struct Lexer<'a>(LogosLexer<'a, Token>);

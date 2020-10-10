@@ -1,4 +1,4 @@
-use crate::src::Span;
+use rsh_common::src::Span;
 use std::{
     cmp::{Eq, PartialEq},
     fmt,

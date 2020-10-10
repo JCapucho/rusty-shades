@@ -6,7 +6,7 @@ use codespan_reporting::{
     },
 };
 use naga::back::spv;
-use rusty_shades::{ast, backends, error::Error, grammar, hir, lexer};
+use rusty_shades::{ast, backends, error::Error, grammar, hir};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
@@ -20,7 +20,7 @@ fn main() -> io::Result<()> {
 
     let file_id = files.add(NAME, &code);
 
-    let lexer = lexer::Lexer::new(&code);
+    let lexer = rsh_lexer::Lexer::new(&code);
 
     // TODO: Error handling
     let ast = handle_errors(

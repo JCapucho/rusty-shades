@@ -1,5 +1,6 @@
 use super::{InferContext, ScalarInfo, TypeId, TypeInfo};
-use crate::{error::Error, node::SrcNode, src::Span, ScalarType, UnaryOp};
+use crate::{error::Error, node::SrcNode};
+use rsh_common::{src::Span, ScalarType, UnaryOp};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_unary(

@@ -1,8 +1,6 @@
-use crate::{
-    lexer::{LexerError, Token},
-    src::{Loc, Span},
-};
 use lalrpop_util::ParseError;
+use rsh_common::src::{Loc, Span};
+use rsh_lexer::{LexerError, Token};
 
 #[derive(Debug)]
 pub struct Error {

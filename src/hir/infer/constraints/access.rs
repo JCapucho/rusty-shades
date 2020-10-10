@@ -1,6 +1,7 @@
 use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, hir::Ident, node::SrcNode, src::Span};
+use crate::{error::Error, hir::Ident, node::SrcNode};
 use naga::VectorSize;
+use rsh_common::src::Span;
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_access(

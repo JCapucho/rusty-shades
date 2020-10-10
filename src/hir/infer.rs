@@ -1,6 +1,7 @@
 use super::{Ident, TraitBound};
-use crate::{error::Error, node::SrcNode, src::Span, ty::Type, BinaryOp, ScalarType, UnaryOp};
+use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::{FastHashMap, VectorSize};
+use rsh_common::{src::Span, BinaryOp, Literal, ScalarType, UnaryOp};
 use std::fmt;
 
 mod constraints;
@@ -37,6 +38,17 @@ pub enum ScalarInfo {
     Float,
     Real,
     Concrete(ScalarType),
+}
+
+impl From<&Literal> for ScalarInfo {
+    fn from(lit: &Literal) -> Self {
+        match lit {
+            Literal::Int(_) => ScalarInfo::Int,
+            Literal::Uint(_) => ScalarInfo::Int,
+            Literal::Float(_) => ScalarInfo::Float,
+            Literal::Boolean(_) => ScalarInfo::Concrete(ScalarType::Bool),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Copy)]
@@ -155,9 +167,9 @@ impl<'a> InferContext<'a> {
         id
     }
 
-    pub fn add_scalar(&mut self, scalar: ScalarInfo) -> ScalarId {
+    pub fn add_scalar(&mut self, scalar: impl Into<ScalarInfo>) -> ScalarId {
         let id = self.scalars_id_counter.new_id();
-        self.scalars.insert(id, scalar);
+        self.scalars.insert(id, scalar.into());
         id
     }
 

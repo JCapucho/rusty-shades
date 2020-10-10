@@ -2,11 +2,11 @@ use crate::{
     error::Error,
     hir::{self},
     node::{Node, SrcNode},
-    src::Span,
     ty::Type,
-    AssignTarget, BinaryOp, FunctionModifier, Ident, Literal, UnaryOp,
+    AssignTarget,
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
+use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, UnaryOp};
 
 pub type TypedExpr = Node<Expr, Type>;
 
