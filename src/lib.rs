@@ -90,6 +90,17 @@ pub enum Literal {
     Boolean(bool),
 }
 
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Int(val) => write!(f, "{}", val),
+            Literal::Uint(val) => write!(f, "{}", val),
+            Literal::Float(val) => write!(f, "{}", val),
+            Literal::Boolean(val) => write!(f, "{}", val),
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum ScalarType {

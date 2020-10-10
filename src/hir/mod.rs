@@ -10,6 +10,8 @@ use internment::ArcIntern;
 use naga::{FastHashMap, VectorSize};
 
 mod infer;
+/// Pretty printing of the HIR
+mod pretty;
 pub mod visitor;
 
 use infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
@@ -53,11 +55,11 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: Ident,
+    pub generics: Vec<Ident>,
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
-    pub generics: Vec<Ident>,
 }
 
 #[derive(Debug)]
