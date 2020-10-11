@@ -555,18 +555,21 @@ impl<'a> InferContext<'a> {
         })
     }
 
-    fn ty_get_scalar(&self, a: TypeId) -> ScalarId {
+    fn ty_get_scalar(&mut self, a: TypeId) -> ScalarId {
         match self.get(a) {
             TypeInfo::Ref(a) => self.ty_get_scalar(a),
             TypeInfo::Scalar(a) => a,
             TypeInfo::Vector(a, _) => a,
+            TypeInfo::Matrix { .. } => self.add_scalar(ScalarInfo::Concrete(ScalarType::Float)),
             _ => unimplemented!(),
         }
     }
 
     fn unify_by_scalars(&mut self, a: TypeId, b: TypeId) -> Result<(), (TypeId, TypeId)> {
-        self.unify_scalar(self.ty_get_scalar(a), self.ty_get_scalar(b))
-            .map_err(|_| (a, b))
+        let a_scalar = self.ty_get_scalar(a);
+        let b_scalar = self.ty_get_scalar(b);
+
+        self.unify_scalar(a_scalar, b_scalar).map_err(|_| (a, b))
     }
 
     fn unify_or_check_bounds(&mut self, a: TypeId, b: TypeId) -> Result<(), Error> {
