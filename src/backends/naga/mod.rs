@@ -7,8 +7,8 @@ use crate::{
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression, FastHashMap,
     Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
-    MemberOrigin, Module as NagaModule, ShaderStage, Statement as NagaStatement, StorageAccess,
-    StructMember, Type as NagaType, TypeInner,
+    MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
+    StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
 use rsh_common::FunctionModifier;
 
@@ -111,15 +111,14 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
                 _ => unreachable!(),
             },
             ir::ConstantInner::Matrix(mat) => match constant.ty {
-                Type::Matrix {
-                    rows,
-                    columns,
-                    base,
-                } => {
+                Type::Matrix { rows, columns } => {
                     let mut elements = Vec::with_capacity(rows as usize * columns as usize);
                     let ty = types.fetch_or_append(NagaType {
                         name: None,
-                        inner: base.into(),
+                        inner: TypeInner::Scalar {
+                            kind: ScalarKind::Float,
+                            width: 4,
+                        },
                     });
 
                     for x in 0..rows as usize {
@@ -501,26 +500,18 @@ impl Type {
                     width as u32,
                 ))
             },
-            Type::Matrix {
-                columns,
-                rows,
-                base,
-            } => {
-                let (kind, width) = base.naga_kind_width();
-
-                Some((
-                    types.fetch_or_append(NagaType {
-                        name: None,
-                        inner: TypeInner::Matrix {
-                            columns: *columns,
-                            rows: *rows,
-                            kind,
-                            width,
-                        },
-                    }),
-                    width as u32,
-                ))
-            },
+            Type::Matrix { columns, rows } => Some((
+                types.fetch_or_append(NagaType {
+                    name: None,
+                    inner: TypeInner::Matrix {
+                        columns: *columns,
+                        rows: *rows,
+                        // TODO
+                        width: 4,
+                    },
+                }),
+                4,
+            )),
             Type::Struct(id) => Some(*structs_lookup.get(id).unwrap()),
             Type::Tuple(ids) => {
                 let mut offset = 0;

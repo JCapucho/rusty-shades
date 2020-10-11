@@ -1,4 +1,4 @@
-use super::{InferContext, SizeInfo, TypeId, TypeInfo};
+use super::{InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
 use crate::error::Error;
 use naga::VectorSize;
 use rsh_common::src::Span;
@@ -21,16 +21,12 @@ impl<'a> InferContext<'a> {
 
                 (base_ty, vec2, vec3, size)
             },
-            TypeInfo::Matrix {
-                base,
-                columns,
-                rows,
-            } => {
+            TypeInfo::Matrix { columns, rows } => {
+                let base = self.add_scalar(ScalarInfo::Float);
                 let vec_ty = self.insert(TypeInfo::Vector(base, columns), Span::None);
 
                 let mat2 = self.insert(
                     TypeInfo::Matrix {
-                        base,
                         columns,
                         rows: bi_size,
                     },
@@ -38,7 +34,6 @@ impl<'a> InferContext<'a> {
                 );
                 let mat3 = self.insert(
                     TypeInfo::Matrix {
-                        base,
                         columns,
                         rows: tri_size,
                     },

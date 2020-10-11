@@ -248,7 +248,7 @@ struct PartialFunction {
     args: FastHashMap<Ident, (u32, TypeId)>,
     ret: TypeId,
     body: SrcNode<Block>,
-    generics: Vec<(Ident, Option<TraitBound>)>,
+    generics: Vec<(Ident, TraitBound)>,
 }
 
 #[derive(Debug)]
@@ -314,7 +314,7 @@ impl Module {
                             name: name.clone(),
                             modifier: global.inner().modifier,
                             ty: infer_ctx
-                                .reconstruct(global.inner().ty, Span::None)?
+                                .reconstruct(global.inner().ty, global.span())?
                                 .into_inner(),
                         },
                         global.span(),
@@ -358,7 +358,7 @@ impl Module {
                 Err(e) => errors.push(e),
             };
 
-            let ret = match scoped.reconstruct(func.ret, Span::None) {
+            let ret = match scoped.reconstruct(func.ret, func.span()) {
                 Ok(t) => t.into_inner(),
                 Err(e) => {
                     errors.push(e);
@@ -816,15 +816,17 @@ impl Module {
                             .map(|generic| {
                                 (
                                     generic.ident.inner().clone(),
-                                    generic.bound.as_ref().map(|b| {
-                                        match b.build_hir(&mut builder) {
+                                    generic
+                                        .bound
+                                        .as_ref()
+                                        .map(|b| match b.build_hir(&mut builder) {
                                             Ok(bound) => bound,
                                             Err(mut e) => {
                                                 errors.append(&mut e);
                                                 TraitBound::Error
                                             },
-                                        }
-                                    }),
+                                        })
+                                        .unwrap_or(TraitBound::None),
                                 )
                             })
                             .collect();
@@ -1063,19 +1065,13 @@ impl SrcNode<ast::Type> {
                     .infer_ctx
                     .insert(TypeInfo::Vector(base, size), self.span())
             },
-            ast::Type::Matrix { columns, rows, ty } => {
-                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+            ast::Type::Matrix { columns, rows } => {
                 let columns = builder.infer_ctx.add_size(SizeInfo::Concrete(*columns));
                 let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*rows));
 
-                builder.infer_ctx.insert(
-                    TypeInfo::Matrix {
-                        columns,
-                        rows,
-                        base,
-                    },
-                    self.span(),
-                )
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Matrix { columns, rows }, self.span())
             },
         };
 
@@ -1121,19 +1117,11 @@ impl SrcNode<ast::Type> {
 
                 infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
             },
-            ast::Type::Matrix { columns, rows, ty } => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
+            ast::Type::Matrix { columns, rows } => {
                 let columns = infer_ctx.add_size(SizeInfo::Concrete(*columns));
                 let rows = infer_ctx.add_size(SizeInfo::Concrete(*rows));
 
-                infer_ctx.insert(
-                    TypeInfo::Matrix {
-                        columns,
-                        rows,
-                        base,
-                    },
-                    self.span(),
-                )
+                infer_ctx.insert(TypeInfo::Matrix { columns, rows }, self.span())
             },
         };
 
@@ -1305,10 +1293,9 @@ impl SrcNode<ast::Expression> {
                     elements.into_iter().map(Result::unwrap).collect()
                 };
 
-                let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
-
                 let out = match ty {
                     ast::ConstructorType::Vector => {
+                        let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
                         let size = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
 
                         builder
@@ -1319,14 +1306,9 @@ impl SrcNode<ast::Expression> {
                         let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
                         let columns = builder.infer_ctx.add_size(SizeInfo::Unknown);
 
-                        builder.infer_ctx.insert(
-                            TypeInfo::Matrix {
-                                base,
-                                rows,
-                                columns,
-                            },
-                            self.span(),
-                        )
+                        builder
+                            .infer_ctx
+                            .insert(TypeInfo::Matrix { rows, columns }, self.span())
                     },
                 };
 
@@ -1357,7 +1339,7 @@ impl SrcNode<ast::Expression> {
                     };
                 }
 
-                let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, Span::None);
+                let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
 
                 builder.infer_ctx.add_constraint(Constraint::Call {
                     fun: fun.type_id(),
@@ -1444,7 +1426,7 @@ impl SrcNode<ast::Expression> {
                     } else {
                         TypeInfo::Empty
                     },
-                    Span::None,
+                    self.span(),
                 );
 
                 let condition = condition.build_hir(builder, locals_lookup, out)?;

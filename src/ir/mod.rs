@@ -6,7 +6,7 @@ use crate::{
     AssignTarget,
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
-use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, UnaryOp};
+use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp};
 
 pub type TypedExpr = Node<Expr, Type>;
 
@@ -517,7 +517,7 @@ impl hir::TypedNode {
         }
 
         let mut errors = vec![];
-        let mut ty = self.ty().clone();
+        let ty = monomorphize::instantiate_ty(self.ty(), &sta_builder.generics).clone();
         let span = self.span();
 
         let expr = match self.into_inner() {
@@ -556,8 +556,6 @@ impl hir::TypedNode {
                         nested
                     ))?);
                 }
-
-                ty = monomorphize::instantiate_ty(&ty, &generics).clone();
 
                 let id = if let Type::FnDef(id) =
                     monomorphize::instantiate_ty(fun.ty(), sta_builder.generics)
@@ -725,11 +723,7 @@ impl hir::TypedNode {
                             for ele in constructed_elements.into_iter() {
                                 match *ele.attr() {
                                     Type::Vector(_, _) => tmp.push(ele),
-                                    Type::Matrix {
-                                        rows,
-                                        base,
-                                        columns,
-                                    } => {
+                                    Type::Matrix { rows, columns } => {
                                         // see the small optimization on vec
                                         let local = sta_builder.locals.len() as u32;
                                         let ty = ele.attr().clone();
@@ -749,7 +743,7 @@ impl hir::TypedNode {
                                                     ),
                                                     fields: vec![i as u32],
                                                 },
-                                                Type::Vector(base, columns),
+                                                Type::Vector(ScalarType::Float, columns),
                                             ))
                                         }
                                     },
@@ -902,7 +896,7 @@ impl hir::TypedNode {
                 Expr::Index { base, index }
             },
             hir::Expr::Constant(id) => Expr::Constant(id),
-            hir::Expr::Function(_) => todo!(),
+            hir::Expr::Function(_) => unreachable!(),
         };
 
         if errors.is_empty() {

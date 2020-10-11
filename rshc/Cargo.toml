@@ -1,0 +1,18 @@
+[package]
+name = "rshc"
+version = "0.1.0"
+authors = ["Capucho <jcapucho7@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+naga = { git = "https://github.com/gfx-rs/naga.git", rev = "2b268c926c6dff5e366226a9502c06725107489d" }
+codespan-reporting = { version = "0.9" }
+rusty_shades = { path = "..", features = ["codespan-reporting"] }
+clap = "2.33"
+
+[features]
+default = ["spirv", "glsl", "msl"]
+spirv = ["naga/spv-out"]
+glsl = ["naga/glsl-out"]
+msl = ["naga/msl-out"]

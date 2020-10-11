@@ -114,7 +114,6 @@ pub enum Type {
     Matrix {
         columns: VectorSize,
         rows: VectorSize,
-        ty: ScalarType,
     },
 }
 

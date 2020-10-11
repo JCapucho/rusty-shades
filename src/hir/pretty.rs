@@ -87,7 +87,7 @@ impl fmt::Display for super::Function {
                 write!(f, "{},", gen)?;
             }
 
-            write!(f, "<")?;
+            write!(f, ">")?;
         }
 
         write!(f, "(")?;
@@ -206,6 +206,6 @@ impl fmt::Display for super::TypedNode {
             super::Expr::Index { base, index } => write!(f, "{}[{}]", base, index)?,
         }
 
-        write!(f, ") : {}", self.ty())
+        write!(f, ": {})", self.ty())
     }
 }

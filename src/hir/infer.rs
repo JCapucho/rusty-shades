@@ -65,11 +65,7 @@ pub enum TypeInfo {
     Ref(TypeId),
     Scalar(ScalarId),
     Vector(ScalarId, SizeId),
-    Matrix {
-        columns: SizeId,
-        rows: SizeId,
-        base: ScalarId,
-    },
+    Matrix { columns: SizeId, rows: SizeId },
     Struct(u32),
     Tuple(Vec<TypeId>),
     FnDef(u32),
@@ -371,13 +367,9 @@ impl<'a> InferContext<'a> {
                             id: scalar
                         }
                     ),
-                    Matrix {
-                        columns,
-                        rows,
-                        base,
-                    } => write!(
+                    Matrix { columns, rows } => write!(
                         f,
-                        "Matrix<{},{},{}>",
+                        "Matrix<{},{}>",
                         SizeInfoDisplay {
                             ctx: self.ctx,
                             id: rows
@@ -386,10 +378,6 @@ impl<'a> InferContext<'a> {
                             ctx: self.ctx,
                             id: columns
                         },
-                        ScalarInfoDisplay {
-                            ctx: self.ctx,
-                            id: base
-                        }
                     ),
                     Struct(id) => {
                         let fields = self.ctx.structs.get(&id).unwrap();
@@ -514,15 +502,12 @@ impl<'a> InferContext<'a> {
                 Matrix {
                     columns: a_cols,
                     rows: a_rows,
-                    base: a_base,
                 },
                 Matrix {
                     columns: b_cols,
                     rows: b_rows,
-                    base: b_base,
                 },
             ) => {
-                self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
                 self.unify_size(a_cols, b_cols).map_err(|_| (a, b))?;
                 self.unify_size(a_rows, b_rows).map_err(|_| (a, b))?;
                 Ok(())
@@ -575,7 +560,6 @@ impl<'a> InferContext<'a> {
             TypeInfo::Ref(a) => self.ty_get_scalar(a),
             TypeInfo::Scalar(a) => a,
             TypeInfo::Vector(a, _) => a,
-            TypeInfo::Matrix { base, .. } => base,
             _ => unimplemented!(),
         }
     }
@@ -729,19 +713,12 @@ impl<'a> InferContext<'a> {
                 self.reconstruct_size(size)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
-            Matrix {
-                columns,
-                rows,
-                base,
-            } => Type::Matrix {
+            Matrix { columns, rows } => Type::Matrix {
                 columns: self
                     .reconstruct_size(columns)
                     .map_err(|_| ReconstructError::Unknown(id))?,
                 rows: self
                     .reconstruct_size(rows)
-                    .map_err(|_| ReconstructError::Unknown(id))?,
-                base: self
-                    .reconstruct_scalar(base)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             },
             Tuple(ids) => Type::Tuple(

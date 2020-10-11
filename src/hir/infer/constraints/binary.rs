@@ -11,7 +11,7 @@ impl<'a> InferContext<'a> {
         b: TypeId,
     ) -> Result<bool, Error> {
         #[allow(clippy::type_complexity)]
-        let matchers: [fn(_, _, _, _, _) -> Option<fn(_, _, _) -> _>; 7] = [
+        let matchers: [fn(_, _, _, _, _) -> Option<fn(_, _, _) -> _>; 12] = [
             // R op R => R
             |this: &Self, out, op, a, b| {
                 let mut this = this.scoped();
@@ -222,6 +222,225 @@ impl<'a> InferContext<'a> {
                 {
                     Some(|this: &mut Self, a, b| {
                         let _ = this.unify(a, b);
+                        (this.get(a), this.get(a), this.get(b))
+                    })
+                } else {
+                    None
+                }
+            },
+            // R op Mat<R> => Mat<R>
+            |this: &Self, out, op, a, b| {
+                let mut this = this.scoped();
+
+                let float = this.add_scalar(ScalarInfo::Float);
+                let num = this.insert(TypeInfo::Scalar(float), Span::none());
+                let rows_unknown = this.add_size(SizeInfo::Unknown);
+                let columns_unknown = this.add_size(SizeInfo::Unknown);
+                let mat = this.insert(
+                    TypeInfo::Matrix {
+                        columns: columns_unknown,
+                        rows: rows_unknown,
+                    },
+                    Span::none(),
+                );
+
+                if this.unify(mat, out).is_ok()
+                    && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
+                    && this.unify(num, a).is_ok()
+                    && this.unify(mat, b).is_ok()
+                {
+                    Some(|this: &mut Self, a, b| {
+                        let float = this.add_scalar(ScalarInfo::Float);
+                        let num = this.insert(TypeInfo::Scalar(float), Span::none());
+                        let rows_unknown = this.add_size(SizeInfo::Unknown);
+                        let columns_unknown = this.add_size(SizeInfo::Unknown);
+                        let mat = this.insert(
+                            TypeInfo::Matrix {
+                                columns: columns_unknown,
+                                rows: rows_unknown,
+                            },
+                            Span::none(),
+                        );
+
+                        let _ = this.unify(num, a);
+                        let _ = this.unify(mat, b);
+
+                        (this.get(b), this.get(a), this.get(b))
+                    })
+                } else {
+                    None
+                }
+            },
+            // Mat<R> op R => Mat<R>
+            |this: &Self, out, op, a, b| {
+                let mut this = this.scoped();
+
+                let float = this.add_scalar(ScalarInfo::Float);
+                let num = this.insert(TypeInfo::Scalar(float), Span::none());
+                let rows_unknown = this.add_size(SizeInfo::Unknown);
+                let columns_unknown = this.add_size(SizeInfo::Unknown);
+                let mat = this.insert(
+                    TypeInfo::Matrix {
+                        columns: columns_unknown,
+                        rows: rows_unknown,
+                    },
+                    Span::none(),
+                );
+
+                if this.unify(mat, out).is_ok()
+                    && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
+                    && this.unify(num, b).is_ok()
+                    && this.unify(mat, a).is_ok()
+                {
+                    Some(|this: &mut Self, a, b| {
+                        let float = this.add_scalar(ScalarInfo::Float);
+                        let num = this.insert(TypeInfo::Scalar(float), Span::none());
+                        let rows_unknown = this.add_size(SizeInfo::Unknown);
+                        let columns_unknown = this.add_size(SizeInfo::Unknown);
+                        let mat = this.insert(
+                            TypeInfo::Matrix {
+                                columns: columns_unknown,
+                                rows: rows_unknown,
+                            },
+                            Span::none(),
+                        );
+
+                        let _ = this.unify(mat, a);
+                        let _ = this.unify(num, b);
+
+                        (this.get(a), this.get(a), this.get(b))
+                    })
+                } else {
+                    None
+                }
+            },
+            // Mat<R> op Vec<R> => Vec<R>
+            |this: &Self, out, op, a, b| {
+                let mut this = this.scoped();
+
+                let float = this.add_scalar(ScalarInfo::Float);
+                let rows_unknown = this.add_size(SizeInfo::Unknown);
+                let columns_unknown = this.add_size(SizeInfo::Unknown);
+                let mat = this.insert(
+                    TypeInfo::Matrix {
+                        columns: columns_unknown,
+                        rows: rows_unknown,
+                    },
+                    Span::none(),
+                );
+                let vec = this.insert(TypeInfo::Vector(float, columns_unknown), Span::none());
+
+                if this.unify(vec, out).is_ok()
+                    && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
+                    && this.unify(mat, a).is_ok()
+                    && this.unify(vec, b).is_ok()
+                {
+                    Some(|this: &mut Self, a, b| {
+                        let float = this.add_scalar(ScalarInfo::Float);
+                        let rows_unknown = this.add_size(SizeInfo::Unknown);
+                        let columns_unknown = this.add_size(SizeInfo::Unknown);
+                        let mat = this.insert(
+                            TypeInfo::Matrix {
+                                columns: columns_unknown,
+                                rows: rows_unknown,
+                            },
+                            Span::none(),
+                        );
+                        let vec =
+                            this.insert(TypeInfo::Vector(float, columns_unknown), Span::none());
+
+                        let _ = this.unify(mat, a);
+                        let _ = this.unify(vec, b);
+
+                        (this.get(b), this.get(a), this.get(b))
+                    })
+                } else {
+                    None
+                }
+            },
+            // Vec<R> op Mat<R> => Vec<R>
+            |this: &Self, out, op, a, b| {
+                let mut this = this.scoped();
+
+                let float = this.add_scalar(ScalarInfo::Float);
+                let rows_unknown = this.add_size(SizeInfo::Unknown);
+                let columns_unknown = this.add_size(SizeInfo::Unknown);
+                let mat = this.insert(
+                    TypeInfo::Matrix {
+                        columns: columns_unknown,
+                        rows: rows_unknown,
+                    },
+                    Span::none(),
+                );
+                let vec = this.insert(TypeInfo::Vector(float, columns_unknown), Span::none());
+
+                if this.unify(vec, out).is_ok()
+                    && [BinaryOp::Multiplication, BinaryOp::Division].contains(&op)
+                    && this.unify(vec, a).is_ok()
+                    && this.unify(mat, b).is_ok()
+                {
+                    Some(|this: &mut Self, a, b| {
+                        let float = this.add_scalar(ScalarInfo::Float);
+                        let rows_unknown = this.add_size(SizeInfo::Unknown);
+                        let columns_unknown = this.add_size(SizeInfo::Unknown);
+                        let mat = this.insert(
+                            TypeInfo::Matrix {
+                                columns: columns_unknown,
+                                rows: rows_unknown,
+                            },
+                            Span::none(),
+                        );
+                        let vec =
+                            this.insert(TypeInfo::Vector(float, columns_unknown), Span::none());
+
+                        let _ = this.unify(vec, a);
+                        let _ = this.unify(mat, b);
+
+                        (this.get(a), this.get(a), this.get(b))
+                    })
+                } else {
+                    None
+                }
+            },
+            // Mat<R> op Mat<R> => Mat<R>
+            |this: &Self, out, op, a, b| {
+                let mut this = this.scoped();
+
+                let rows_unknown = this.add_size(SizeInfo::Unknown);
+                let columns_unknown = this.add_size(SizeInfo::Unknown);
+                let mat = this.insert(
+                    TypeInfo::Matrix {
+                        columns: columns_unknown,
+                        rows: rows_unknown,
+                    },
+                    Span::none(),
+                );
+
+                if this.unify(mat, out).is_ok()
+                    && [
+                        BinaryOp::Multiplication,
+                        BinaryOp::Division,
+                        BinaryOp::Addition,
+                        BinaryOp::Subtraction,
+                    ]
+                    .contains(&op)
+                    && this.unify(mat, a).is_ok()
+                    && this.unify(mat, b).is_ok()
+                {
+                    Some(|this: &mut Self, a, b| {
+                        let rows_unknown = this.add_size(SizeInfo::Unknown);
+                        let columns_unknown = this.add_size(SizeInfo::Unknown);
+                        let mat = this.insert(
+                            TypeInfo::Matrix {
+                                columns: columns_unknown,
+                                rows: rows_unknown,
+                            },
+                            Span::none(),
+                        );
+
+                        let _ = this.unify(mat, a);
+                        let _ = this.unify(mat, b);
+
                         (this.get(a), this.get(a), this.get(b))
                     })
                 } else {

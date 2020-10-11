@@ -23,7 +23,8 @@ impl<'a> InferContext<'a> {
 
                 Ok(true)
             },
-            TypeInfo::Matrix { columns, base, .. } => {
+            TypeInfo::Matrix { columns, .. } => {
+                let base = self.add_scalar(ScalarInfo::Float);
                 let out_id = self.insert(TypeInfo::Vector(base, columns), self.span(out));
 
                 self.unify(out, out_id)?;

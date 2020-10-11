@@ -11,7 +11,6 @@ pub enum Type {
     Matrix {
         columns: VectorSize,
         rows: VectorSize,
-        base: ScalarType,
     },
     Struct(u32),
     Tuple(Vec<SrcNode<Self>>),
@@ -29,11 +28,7 @@ impl fmt::Display for Type {
             Type::Empty => write!(f, "()"),
             Type::Scalar(scalar) => write!(f, "{}", scalar),
             Type::Vector(base, size) => write!(f, "Vector<{:?}, {}>", size, base),
-            Type::Matrix {
-                columns,
-                rows,
-                base,
-            } => write!(f, "Matrix<{:?}, {:?}, {}>", columns, rows, base),
+            Type::Matrix { columns, rows } => write!(f, "Matrix<{:?}, {:?}>", columns, rows),
             Type::Struct(pos) => write!(f, "Struct({})", pos),
             Type::Tuple(elements) => {
                 write!(f, "(")?;

@@ -27,7 +27,6 @@ pub fn collect(
         }
     }
 
-    // TODO: fix generics in general
     if let Type::Generic(pos) = called_fun.ret {
         called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
     }

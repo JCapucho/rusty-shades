@@ -221,8 +221,7 @@ AtomType: Type = {
     "scalar type" => Type::ScalarType(<>),
     SrcNode<Ident> => Type::Named(<>),
     "Vector" "<" <VectorSize> "," <"scalar type"> ">"  => Type::Vector(<>),
-    "Matrix" "<" <columns: VectorSize> "," <rows: VectorSize> ","
-        <ty: "scalar type"> ">" => Type::Matrix { <> },
+    "Matrix" "<" <columns: VectorSize> "," <rows: VectorSize> ">" => Type::Matrix { <> },
 }
 
 VectorSize: VectorSize = {
