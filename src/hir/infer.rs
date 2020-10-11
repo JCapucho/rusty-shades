@@ -560,6 +560,7 @@ impl<'a> InferContext<'a> {
             TypeInfo::Ref(a) => self.ty_get_scalar(a),
             TypeInfo::Scalar(a) => a,
             TypeInfo::Vector(a, _) => a,
+            // TODO: this shouldn't be needed (see the constructor constraint)
             TypeInfo::Matrix { .. } => self.add_scalar(ScalarInfo::Concrete(ScalarType::Float)),
             _ => unimplemented!(),
         }

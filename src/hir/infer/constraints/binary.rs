@@ -449,14 +449,6 @@ impl<'a> InferContext<'a> {
             },
         ];
 
-        println!(
-            "{} {} {} = {}",
-            self.display_type_info(a),
-            op.inner(),
-            self.display_type_info(b),
-            self.display_type_info(out)
-        );
-
         let mut matches = matchers
             .iter()
             .filter_map(|matcher| matcher(self, out, *op, a, b))

@@ -32,22 +32,22 @@ impl<'a> InferContext<'a> {
                 let generics = self.collect(&args, ret, &called_args, called_ret);
 
                 for (a, b) in called_args.iter().zip(args.iter()) {
-                    if let TypeInfo::Generic(pos, _) = self.get(*a) {
-                        let ty = generics.get(&pos).unwrap();
-
-                        self.unify_or_check_bounds(*ty, *b).unwrap();
+                    let a = if let TypeInfo::Generic(pos, _) = self.get(*a) {
+                        generics.get(&pos).unwrap()
                     } else {
-                        self.unify_or_check_bounds(*a, *b).unwrap();
-                    }
+                        a
+                    };
+
+                    self.unify(*a, *b).unwrap();
                 }
 
-                if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
-                    let ty = generics.get(&pos).unwrap();
-
-                    self.unify_or_check_bounds(*ty, ret).unwrap();
+                let called_ret = if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
+                    *generics.get(&pos).unwrap()
                 } else {
-                    self.unify_or_check_bounds(called_ret, ret).unwrap();
-                }
+                    called_ret
+                };
+
+                self.unify(called_ret, ret).unwrap();
 
                 Ok(true)
             },
@@ -71,22 +71,22 @@ impl<'a> InferContext<'a> {
         called_args: &[TypeId],
         called_ret: TypeId,
     ) -> FastHashMap<u32, TypeId> {
-        let mut called_generics = FastHashMap::default();
+        let mut generics = FastHashMap::default();
 
         for (a, b) in called_args.iter().zip(args.iter()) {
             if let TypeInfo::Generic(pos, _) = self.get(*a) {
-                let ty = called_generics.entry(pos).or_insert(*b);
+                let ty = *generics.entry(pos).or_insert(*b);
 
-                self.unify_or_check_bounds(*ty, *b).unwrap();
+                self.unify_or_check_bounds(ty, *b).unwrap();
             }
         }
 
         if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
-            let ty = called_generics.entry(pos).or_insert(ret);
+            let ty = *generics.entry(pos).or_insert(ret);
 
-            self.unify_or_check_bounds(*ty, ret).unwrap();
+            self.unify_or_check_bounds(ty, ret).unwrap();
         }
 
-        called_generics
+        generics
     }
 }

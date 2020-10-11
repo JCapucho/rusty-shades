@@ -16,7 +16,7 @@ fn vertex vertex_main() {
     let b = pass_trough(0.0);
     a = test_pain();
     a = pain2(tuple_access);
-    let c = pain2(tuple);
+    let c: (Int, Float) = pain2(tuple);
 
     let tmp = m4(2. * v_position)[0];
     f_color = tmp;
@@ -70,6 +70,6 @@ fn pain<T: Fn() -> Int>(f: T) -> Int {
     f()
 }
 
-fn pain2<T, F: Fn() -> T>(f: F) ->  T {
+fn pain2<T, F: Fn() -> T>(f: F) -> T {
     f()
 }
