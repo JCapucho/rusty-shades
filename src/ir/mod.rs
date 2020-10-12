@@ -322,9 +322,9 @@ impl hir::Struct {
 }
 
 impl SrcNode<hir::Function> {
-    fn build_ir<'a>(
+    fn build_ir(
         self,
-        builder: &mut FunctionBuilder<'a>,
+        builder: &mut FunctionBuilder<'_>,
         generics: Vec<Type>,
         id: u32,
     ) -> Result<u32, Vec<Error>> {
@@ -382,7 +382,7 @@ impl SrcNode<hir::Function> {
 }
 
 impl SrcNode<hir::EntryPoint> {
-    fn build_ir<'a>(self, builder: &mut FunctionBuilder<'a>) -> Result<EntryPoint, Vec<Error>> {
+    fn build_ir(self, builder: &mut FunctionBuilder<'_>) -> Result<EntryPoint, Vec<Error>> {
         let mut func = self.into_inner();
 
         let mut errors = vec![];

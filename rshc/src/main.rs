@@ -84,7 +84,7 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
                     "{}.{}",
                     path.file_stem()
                         .or_else(|| path.file_name())
-                        .unwrap_or(input.as_ref())
+                        .unwrap_or_else(|| input.as_ref())
                         .to_str()
                         .unwrap(),
                     prefix(target)
@@ -131,7 +131,7 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
             x?;
         },
         "glsl" => {
-            // TODO
+            // TODO: Support specifying version and stage
             naga::back::glsl::write(&naga_ir, &mut output, naga::back::glsl::Options {
                 entry_point: (naga::ShaderStage::Vertex, String::from("vertex_main")),
                 version: naga::back::glsl::Version::Embedded(310),

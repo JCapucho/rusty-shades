@@ -10,26 +10,27 @@ macro_rules! new_type_id {
     ($name:ident) => {
         #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
         pub struct $name(usize);
+    };
+    ($name:ident, $counter:ident) => {
+        new_type_id!($name);
 
-        paste::paste! {
-            #[derive(Debug, Copy, Clone, Default)]
-            pub struct [<$name Counter>](usize);
+        #[derive(Debug, Copy, Clone, Default)]
+        pub struct $counter(usize);
 
-            impl [<$name Counter>] {
-                pub fn new_id(&mut self) -> $name {
-                    let id = self.0;
-                    self.0 += 1;
-                    $name(id)
-                }
+        impl $counter {
+            pub fn new_id(&mut self) -> $name {
+                let id = self.0;
+                self.0 += 1;
+                $name(id)
             }
         }
     };
 }
 
-new_type_id!(ScalarId);
-new_type_id!(TypeId);
-new_type_id!(ConstraintId);
-new_type_id!(SizeId);
+new_type_id!(ScalarId, ScalarIdCounter);
+new_type_id!(TypeId, TypeIdCounter);
+new_type_id!(ConstraintId, ConstraintIdCounter);
+new_type_id!(SizeId, SizeIdCounter);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarInfo {

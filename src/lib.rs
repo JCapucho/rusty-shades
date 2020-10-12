@@ -2,8 +2,8 @@
 // we have no set msrv but if we ever set one this will be useful
 #![allow(clippy::match_like_matches_macro)]
 
-pub use rsh_lexer as lexer;
 pub use rsh_common as common;
+pub use rsh_lexer as lexer;
 
 pub mod ast;
 pub mod backends;
@@ -17,7 +17,7 @@ use error::Error;
 use lalrpop_util::lalrpop_mod;
 use naga::back::spv;
 
-lalrpop_mod!(pub grammar);
+lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
 #[cfg(feature = "spirv")]
 pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {

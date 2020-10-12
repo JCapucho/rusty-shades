@@ -474,7 +474,7 @@ checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
 [[package]]
 name = "naga"
 version = "0.2.0"
-source = "git+https://github.com/gfx-rs/naga.git?rev=2b268c926c6dff5e366226a9502c06725107489d#2b268c926c6dff5e366226a9502c06725107489d"
+source = "git+https://github.com/gfx-rs/naga.git?rev=b76dff9d9ccb99b5e4f377f99d8b46017a181d26#b76dff9d9ccb99b5e4f377f99d8b46017a181d26"
 dependencies = [
  "bitflags",
  "fxhash",
@@ -520,12 +520,6 @@ name = "opaque-debug"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2839e79665f131bdb5782e51f2c6c9599c133c6098982a54c794358bf432529c"
-
-[[package]]
-name = "paste"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6ddc8e145de01d9180ac7b78b9676f95a9c2447f6a88b2c2a04702211bc5d71"
 
 [[package]]
 name = "petgraph"
@@ -704,7 +698,6 @@ dependencies = [
  "lalrpop",
  "lalrpop-util",
  "naga",
- "paste",
  "rsh-common",
  "rsh-lexer",
 ]

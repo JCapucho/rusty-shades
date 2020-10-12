@@ -6,5 +6,5 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-naga = { git = "https://github.com/gfx-rs/naga.git", rev = "2b268c926c6dff5e366226a9502c06725107489d", optional = true }
+naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26", optional = true }
 internment = "0.4"
