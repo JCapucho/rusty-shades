@@ -10,9 +10,12 @@ naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f3
 codespan-reporting = { version = "0.9" }
 rusty_shades = { path = "..", features = ["codespan-reporting"] }
 clap = "2.33"
+ron = { version = "0.6", optional = true }
+serde = { version = "1.0", optional = true }
 
 [features]
-default = ["spirv", "glsl", "msl"]
+default = ["spirv", "glsl", "msl", "ir"]
 spirv = ["naga/spv-out"]
 glsl = ["naga/glsl-out"]
 msl = ["naga/msl-out"]
+ir = ["naga/serialize", "ron", "serde"]

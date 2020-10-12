@@ -24,6 +24,8 @@ const TARGETS: &[&str] = &[
     "glsl",
     #[cfg(feature = "msl")]
     "msl",
+    #[cfg(feature = "ir")]
+    "ron",
 ];
 
 fn main() -> io::Result<()> {
@@ -120,6 +122,7 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
         .open(output)?;
 
     match target {
+        #[cfg(feature = "spirv")]
         "spirv" => {
             let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
@@ -130,6 +133,7 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
 
             x?;
         },
+        #[cfg(feature = "glsl")]
         "glsl" => {
             // TODO: Support specifying version and stage
             naga::back::glsl::write(&naga_ir, &mut output, naga::back::glsl::Options {
@@ -138,7 +142,18 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
             })
             .unwrap();
         },
+        #[cfg(feature = "msl")]
         "msl" => todo!(),
+        #[cfg(feature = "ir")]
+        "ron" => {
+            use serde::Serialize;
+
+            let mut s =
+                ron::Serializer::new(output, Some(ron::ser::PrettyConfig::default()), false)
+                    .unwrap();
+
+            naga_ir.serialize(&mut s).unwrap();
+        },
         _ => unreachable!(),
     }
 
@@ -151,6 +166,7 @@ fn prefix(tgt: &str) -> &str {
         // TODO
         "glsl" => "glsl",
         "msl" => "msl",
+        "ron" => "ron",
         _ => unreachable!(),
     }
 }
