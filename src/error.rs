@@ -1,5 +1,8 @@
 use lalrpop_util::ParseError;
-use rsh_common::src::{Loc, Span};
+use rsh_common::{
+    src::{Loc, Span},
+    Rodeo,
+};
 use rsh_lexer::{LexerError, Token};
 
 #[derive(Debug)]
@@ -27,10 +30,8 @@ impl Error {
         self.hints.push(hint);
         self
     }
-}
 
-impl From<ParseError<Loc, Token, LexerError>> for Error {
-    fn from(e: ParseError<Loc, Token, LexerError>) -> Self {
+    pub fn from_parser_error(e: ParseError<Loc, Token, LexerError>, rodeo: &Rodeo) -> Self {
         match e {
             ParseError::InvalidToken { location } => {
                 Error::custom(String::from("Invalid token")).with_span(Span::single(location))
@@ -44,7 +45,7 @@ impl From<ParseError<Loc, Token, LexerError>> for Error {
             }
             | ParseError::ExtraToken {
                 token: (start, tok, end),
-            } => Error::custom(format!("Unexpected token: '{}'", tok))
+            } => Error::custom(format!("Unexpected token: '{}'", tok.display(rodeo)))
                 .with_span(Span::range(start, end)),
             ParseError::User { error } => {
                 Error::custom(format!("Unexpected token: '{}'", error.text)).with_span(error.span)

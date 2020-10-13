@@ -1,10 +1,12 @@
-use internment::ArcIntern;
+use lasso::{Spur, ThreadedRodeo};
 use std::fmt;
 
 #[cfg(feature = "naga")] mod naga;
 pub mod src;
 
-pub type Ident = ArcIntern<String>;
+pub type Ident = Spur;
+pub type Rodeo = ThreadedRodeo<Ident, fxhash::FxBuildHasher>;
+pub type Hasher = fxhash::FxBuildHasher;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum FunctionModifier {

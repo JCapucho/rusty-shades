@@ -10,7 +10,7 @@ use naga::{
     MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
     StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
-use rsh_common::FunctionModifier;
+use rsh_common::{FunctionModifier, Rodeo};
 
 #[derive(Debug)]
 pub enum GlobalLookup {
@@ -21,7 +21,7 @@ pub enum GlobalLookup {
     },
 }
 
-pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
+pub fn build(module: &Module, rodeo: &Rodeo) -> Result<NagaModule, Vec<Error>> {
     let mut errors = vec![];
 
     let mut structs_lookup = FastHashMap::default();
@@ -35,14 +35,18 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
     let mut constants_lookup = FastHashMap::default();
 
     for (id, strct) in module.structs.iter() {
-        let (ty, offset) =
-            match strct.build_naga(strct.name.to_string(), &mut types, &structs_lookup) {
-                Ok(t) => t,
-                Err(e) => {
-                    errors.push(e);
-                    continue;
-                },
-            };
+        let (ty, offset) = match strct.build_naga(
+            rodeo.resolve(&strct.name).to_string(),
+            &mut types,
+            &structs_lookup,
+            rodeo,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(e);
+                continue;
+            },
+        };
 
         structs_lookup.insert(*id, (types.append(ty), offset));
     }
@@ -62,7 +66,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         };
 
         let handle = globals.append(GlobalVariable {
-            name: Some(global.name.to_string()),
+            name: Some(rodeo.resolve(&global.name).to_string()),
             class: global.storage,
             binding: Some(global.binding.clone()),
             ty,
@@ -139,7 +143,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         };
 
         let handle = constants.append(Constant {
-            name: Some(constant.name.to_string()),
+            name: Some(rodeo.resolve(&constant.name).to_string()),
             specialization: None,
             ty,
             inner,
@@ -158,6 +162,7 @@ pub fn build(module: &Module) -> Result<NagaModule, Vec<Error>> {
         types: &mut types,
         structs_lookup: &structs_lookup,
         constants_lookup: &constants_lookup,
+        rodeo,
     };
 
     for (id, function) in module.functions.iter() {
@@ -209,6 +214,7 @@ struct FunctionBuilder<'a> {
     functions: &'a FastHashMap<u32, Function>,
     structs_lookup: &'a FastHashMap<u32, (Handle<NagaType>, u32)>,
     constants_lookup: &'a FastHashMap<u32, Handle<Constant>>,
+    rodeo: &'a Rodeo,
 }
 
 impl Function {
@@ -317,7 +323,7 @@ impl Function {
         }
 
         let mut fun = NagaFunction {
-            name: Some(self.name.to_string()),
+            name: Some(builder.rodeo.resolve(&self.name).to_string()),
             parameter_types,
             return_type,
             global_usage: Vec::new(),
@@ -417,7 +423,11 @@ impl EntryPoint {
                 function,
             };
 
-            Ok((self.stage.into(), self.name.to_string(), entry))
+            Ok((
+                self.stage.into(),
+                builder.rodeo.resolve(&self.name).to_string(),
+                entry,
+            ))
         } else {
             Err(errors)
         }
@@ -430,6 +440,7 @@ impl Struct {
         name: String,
         types: &mut Arena<NagaType>,
         structs_lookup: &FastHashMap<u32, (Handle<NagaType>, u32)>,
+        rodeo: &Rodeo,
     ) -> Result<(NagaType, u32), Error> {
         let mut offset = 0;
         let mut members = vec![];
@@ -445,7 +456,7 @@ impl Struct {
             };
 
             members.push(StructMember {
-                name: Some(name.to_string()),
+                name: Some(rodeo.resolve(&name).to_string()),
                 origin: MemberOrigin::Offset(offset),
                 ty,
             });

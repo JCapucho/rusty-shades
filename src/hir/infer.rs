@@ -1,7 +1,7 @@
 use super::{Ident, TraitBound};
 use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::{FastHashMap, VectorSize};
-use rsh_common::{src::Span, BinaryOp, Literal, ScalarType, UnaryOp};
+use rsh_common::{src::Span, BinaryOp, Literal, Rodeo, ScalarType, UnaryOp};
 use std::fmt;
 
 mod constraints;
@@ -107,9 +107,10 @@ pub enum Constraint {
     },
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct InferContext<'a> {
     parent: Option<&'a Self>,
+    rodeo: &'a Rodeo,
 
     scalars_id_counter: ScalarIdCounter,
     scalars: FastHashMap<ScalarId, ScalarInfo>,
@@ -129,9 +130,33 @@ pub struct InferContext<'a> {
 }
 
 impl<'a> InferContext<'a> {
+    pub fn new(rodeo: &'a Rodeo) -> Self {
+        Self {
+            parent: None,
+            rodeo,
+
+            scalars_id_counter: ScalarIdCounter::default(),
+            scalars: FastHashMap::default(),
+
+            types_id_counter: TypeIdCounter::default(),
+            types: FastHashMap::default(),
+            spans: FastHashMap::default(),
+
+            size_id_counter: SizeIdCounter::default(),
+            sizes: FastHashMap::default(),
+
+            constraint_id_counter: ConstraintIdCounter::default(),
+            constraints: FastHashMap::default(),
+
+            structs: FastHashMap::default(),
+            functions: FastHashMap::default(),
+        }
+    }
+
     pub fn scoped(&'a self) -> Self {
         Self {
             parent: Some(self),
+            rodeo: self.rodeo,
 
             scalars_id_counter: self.scalars_id_counter,
             scalars: FastHashMap::default(),
@@ -391,7 +416,7 @@ impl<'a> InferContext<'a> {
                                 .iter()
                                 .map(|(name, ty)| format!(
                                     "{}: {}",
-                                    name.as_str(),
+                                    self.ctx.rodeo.resolve(name),
                                     self.with_id(*ty)
                                 ))
                                 .collect::<Vec<_>>()
@@ -419,7 +444,7 @@ impl<'a> InferContext<'a> {
                                 .collect::<Vec<_>>()
                                 .join(", "),
                             self.with_id(*ret),
-                            name
+                            self.ctx.rodeo.resolve(name)
                         )
                     },
                 }

@@ -6,3 +6,5 @@
 *.vert
 *.frag
 *.comp
+*.ron
+*.msl

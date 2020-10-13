@@ -7,7 +7,14 @@ use codespan_reporting::{
     },
 };
 use naga::back::spv;
-use rusty_shades::{backends, error::Error, grammar, hir, lexer};
+use rusty_shades::{
+    backends,
+    common::{Hasher, Rodeo},
+    error::Error,
+    grammar, hir,
+    ir::Module as IrModule,
+    lexer,
+};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
@@ -99,21 +106,9 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
     let mut files = SimpleFiles::new();
     let file_id = files.add(input, &code);
 
-    let lexer = lexer::Lexer::new(&code);
+    let (module, rodeo) = handle_errors(parse(&code), &files, file_id)?;
 
-    let ast = handle_errors(
-        grammar::ProgramParser::new()
-            .parse(lexer)
-            .map_err(|e| vec![e.into()]),
-        &files,
-        file_id,
-    )?;
-
-    let module = handle_errors(hir::Module::build(&ast), &files, file_id)?;
-
-    let module = handle_errors(module.build_ir(), &files, file_id)?;
-
-    let naga_ir = handle_errors(backends::naga::build(&module), &files, file_id)?;
+    let naga_ir = handle_errors(backends::naga::build(&module, &rodeo), &files, file_id)?;
 
     let mut output = OpenOptions::new()
         .write(true)
@@ -158,6 +153,22 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn parse(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
+    let rodeo = Rodeo::with_hasher(Hasher::default());
+
+    let lexer = lexer::Lexer::new(&code, &rodeo);
+
+    let ast = grammar::ProgramParser::new()
+        .parse(&rodeo, lexer)
+        .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
+
+    let module = hir::Module::build(&ast, &rodeo)?;
+
+    let module = module.build_ir(&rodeo)?;
+
+    Ok((module, rodeo))
 }
 
 fn prefix(tgt: &str) -> &str {

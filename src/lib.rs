@@ -13,6 +13,7 @@ pub mod ir;
 pub mod node;
 pub mod ty;
 
+use common::{Hasher, Rodeo};
 use error::Error;
 use lalrpop_util::lalrpop_mod;
 use naga::back::spv;
@@ -21,16 +22,17 @@ lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
 #[cfg(feature = "spirv")]
 pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
-    let lexer = lexer::Lexer::new(code);
+    let rodeo = Rodeo::with_hasher(Hasher::default());
+    let lexer = lexer::Lexer::new(code, &rodeo);
 
     let ast = grammar::ProgramParser::new()
-        .parse(lexer)
-        .map_err(|e| vec![e.into()])?;
+        .parse(&rodeo, lexer)
+        .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
 
-    let module = hir::Module::build(&ast)?;
-    let module = module.build_ir()?;
+    let module = hir::Module::build(&ast, &rodeo)?;
+    let module = module.build_ir(&rodeo)?;
 
-    let naga_ir = backends::naga::build(&module)?;
+    let naga_ir = backends::naga::build(&module, &rodeo)?;
 
     let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 

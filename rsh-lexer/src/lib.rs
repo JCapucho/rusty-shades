@@ -1,14 +1,14 @@
 use logos::{Lexer as LogosLexer, Logos};
 use rsh_common::{
     src::{Loc, Span},
-    FunctionModifier, Ident, ScalarType,
+    FunctionModifier, Ident, Rodeo, ScalarType,
 };
 use std::fmt;
 
 fn ident(lex: &mut LogosLexer<Token>) -> Option<Ident> {
     let slice = lex.slice();
 
-    Some(Ident::new(slice[..slice.len()].to_string()))
+    Some(lex.extras.get_or_intern(&slice[..slice.len()]))
 }
 
 fn function_modifier(lex: &mut LogosLexer<Token>) -> Option<FunctionModifier> {
@@ -51,6 +51,7 @@ pub struct LexerError {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Logos)]
+#[logos(extras = &'s Rodeo)]
 pub enum Token {
     #[regex(r"\p{XID_Start}\p{XID_Continue}*", ident)]
     Identifier(Ident),
@@ -201,104 +202,117 @@ pub enum Token {
     Error,
 }
 
-impl fmt::Display for Token {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Token::Identifier(ident) => write!(f, "{}", ident),
-            Token::FunctionModifier(modifier) => write!(f, "{}", match modifier {
-                FunctionModifier::Vertex => "vertex",
-                FunctionModifier::Fragment => "fragment",
-            }),
-
-            Token::OpenParentheses => write!(f, "("),
-            Token::OpenCurlyBraces => write!(f, "{{"),
-            Token::OpenSquareBrackets => write!(f, "["),
-            Token::CloseParentheses => write!(f, ")"),
-            Token::CloseCurlyBraces => write!(f, "}}"),
-            Token::CloseSquareBrackets => write!(f, "]"),
-
-            Token::Bool(bool) => write!(f, "{}", bool),
-            Token::Uint(uint) => write!(f, "{}", uint),
-            Token::Int(int) => write!(f, "{}", int),
-            Token::Float(float) => write!(f, "{}", float),
-
-            Token::Two => write!(f, "2"),
-            Token::Three => write!(f, "3"),
-            Token::Four => write!(f, "4"),
-
-            Token::ScalarType(ty) => write!(f, "{}", match ty {
-                ScalarType::Double => "Double",
-                ScalarType::Float => "Float",
-                ScalarType::Int => "Int",
-                ScalarType::Uint => "Uint",
-                ScalarType::Bool => "Bool",
-            }),
-
-            Token::Global => write!(f, "global"),
-            Token::Const => write!(f, "const"),
-            Token::Fn => write!(f, "fn"),
-            Token::FnTrait => write!(f, "Fn"),
-            Token::Return => write!(f, "return"),
-            Token::If => write!(f, "if"),
-            Token::Else => write!(f, "else"),
-            Token::Let => write!(f, "let"),
-            Token::Struct => write!(f, "struct"),
-
-            Token::Vector => write!(f, "Vector"),
-            Token::Matrix => write!(f, "Matrix"),
-
-            Token::Colon => write!(f, ":"),
-            Token::Equal => write!(f, "="),
-            Token::Arrow => write!(f, "->"),
-            Token::Comma => write!(f, ","),
-            Token::SemiColon => write!(f, ";"),
-            Token::Dot => write!(f, "."),
-            Token::Dot2 => write!(f, ".."),
-
-            Token::LogicalOr => write!(f, "||"),
-            Token::LogicalAnd => write!(f, "&&"),
-
-            Token::Inequality => write!(f, "!="),
-            Token::Equality => write!(f, "=="),
-            Token::Greater => write!(f, ">"),
-            Token::GreaterEqual => write!(f, ">="),
-            Token::Less => write!(f, "<"),
-            Token::LessEqual => write!(f, "<="),
-
-            Token::BitWiseOr => write!(f, "|"),
-            Token::BitWiseXor => write!(f, "^"),
-            Token::BitWiseAnd => write!(f, "&"),
-
-            Token::Plus => write!(f, "+"),
-            Token::Minus => write!(f, "-"),
-            Token::Slash => write!(f, "/"),
-            Token::Star => write!(f, "*"),
-            Token::Bang => write!(f, "!"),
-            Token::Percent => write!(f, "%"),
-
-            Token::Position => write!(f, "position"),
-            Token::In => write!(f, "in"),
-            Token::Out => write!(f, "out"),
-            Token::Uniform => write!(f, "uniform"),
-            Token::Set => write!(f, "set"),
-            Token::Binding => write!(f, "binding"),
-
-            Token::Error => write!(f, "Error"),
-
-            Token::V2 => write!(f, "v2"),
-            Token::V3 => write!(f, "v3"),
-            Token::V4 => write!(f, "v4"),
-            Token::M2 => write!(f, "m2"),
-            Token::M3 => write!(f, "m3"),
-            Token::M4 => write!(f, "m4"),
+impl Token {
+    pub fn display<'a>(&'a self, rodeo: &'a Rodeo) -> impl fmt::Display + 'a {
+        struct TokenDisplay<'a> {
+            tok: &'a Token,
+            rodeo: &'a Rodeo,
         }
+
+        impl<'a> fmt::Display for TokenDisplay<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self.tok {
+                    Token::Identifier(ident) => write!(f, "{}", self.rodeo.resolve(ident)),
+                    Token::FunctionModifier(modifier) => write!(f, "{}", match modifier {
+                        FunctionModifier::Vertex => "vertex",
+                        FunctionModifier::Fragment => "fragment",
+                    }),
+
+                    Token::OpenParentheses => write!(f, "("),
+                    Token::OpenCurlyBraces => write!(f, "{{"),
+                    Token::OpenSquareBrackets => write!(f, "["),
+                    Token::CloseParentheses => write!(f, ")"),
+                    Token::CloseCurlyBraces => write!(f, "}}"),
+                    Token::CloseSquareBrackets => write!(f, "]"),
+
+                    Token::Bool(bool) => write!(f, "{}", bool),
+                    Token::Uint(uint) => write!(f, "{}", uint),
+                    Token::Int(int) => write!(f, "{}", int),
+                    Token::Float(float) => write!(f, "{}", float),
+
+                    Token::Two => write!(f, "2"),
+                    Token::Three => write!(f, "3"),
+                    Token::Four => write!(f, "4"),
+
+                    Token::ScalarType(ty) => write!(f, "{}", match ty {
+                        ScalarType::Double => "Double",
+                        ScalarType::Float => "Float",
+                        ScalarType::Int => "Int",
+                        ScalarType::Uint => "Uint",
+                        ScalarType::Bool => "Bool",
+                    }),
+
+                    Token::Global => write!(f, "global"),
+                    Token::Const => write!(f, "const"),
+                    Token::Fn => write!(f, "fn"),
+                    Token::FnTrait => write!(f, "Fn"),
+                    Token::Return => write!(f, "return"),
+                    Token::If => write!(f, "if"),
+                    Token::Else => write!(f, "else"),
+                    Token::Let => write!(f, "let"),
+                    Token::Struct => write!(f, "struct"),
+
+                    Token::Vector => write!(f, "Vector"),
+                    Token::Matrix => write!(f, "Matrix"),
+
+                    Token::Colon => write!(f, ":"),
+                    Token::Equal => write!(f, "="),
+                    Token::Arrow => write!(f, "->"),
+                    Token::Comma => write!(f, ","),
+                    Token::SemiColon => write!(f, ";"),
+                    Token::Dot => write!(f, "."),
+                    Token::Dot2 => write!(f, ".."),
+
+                    Token::LogicalOr => write!(f, "||"),
+                    Token::LogicalAnd => write!(f, "&&"),
+
+                    Token::Inequality => write!(f, "!="),
+                    Token::Equality => write!(f, "=="),
+                    Token::Greater => write!(f, ">"),
+                    Token::GreaterEqual => write!(f, ">="),
+                    Token::Less => write!(f, "<"),
+                    Token::LessEqual => write!(f, "<="),
+
+                    Token::BitWiseOr => write!(f, "|"),
+                    Token::BitWiseXor => write!(f, "^"),
+                    Token::BitWiseAnd => write!(f, "&"),
+
+                    Token::Plus => write!(f, "+"),
+                    Token::Minus => write!(f, "-"),
+                    Token::Slash => write!(f, "/"),
+                    Token::Star => write!(f, "*"),
+                    Token::Bang => write!(f, "!"),
+                    Token::Percent => write!(f, "%"),
+
+                    Token::Position => write!(f, "position"),
+                    Token::In => write!(f, "in"),
+                    Token::Out => write!(f, "out"),
+                    Token::Uniform => write!(f, "uniform"),
+                    Token::Set => write!(f, "set"),
+                    Token::Binding => write!(f, "binding"),
+
+                    Token::Error => write!(f, "Error"),
+
+                    Token::V2 => write!(f, "v2"),
+                    Token::V3 => write!(f, "v3"),
+                    Token::V4 => write!(f, "v4"),
+                    Token::M2 => write!(f, "m2"),
+                    Token::M3 => write!(f, "m3"),
+                    Token::M4 => write!(f, "m4"),
+                }
+            }
+        }
+
+        TokenDisplay { tok: self, rodeo }
     }
 }
 
 pub struct Lexer<'a>(LogosLexer<'a, Token>);
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str) -> Lexer<'a> { Lexer(Token::lexer(input)) }
+    pub fn new(input: &'a str, rodeo: &'a Rodeo) -> Lexer<'a> {
+        Lexer(Token::lexer_with_extras(input, rodeo))
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {

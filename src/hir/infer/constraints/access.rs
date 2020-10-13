@@ -10,6 +10,8 @@ impl<'a> InferContext<'a> {
         record: TypeId,
         field: SrcNode<Ident>,
     ) -> Result<bool, Error> {
+        let field_str = self.rodeo.resolve(field.inner());
+
         match self.get(self.get_base(record)) {
             TypeInfo::Unknown => Ok(false), // Can't infer yet
             TypeInfo::Struct(id) => {
@@ -22,7 +24,7 @@ impl<'a> InferContext<'a> {
                 } else {
                     Err(Error::custom(format!(
                         "No such field '{}' in struct '{}'",
-                        **field,
+                        field_str,
                         self.display_type_info(record),
                     ))
                     .with_span(field.span())
@@ -30,10 +32,10 @@ impl<'a> InferContext<'a> {
                 }
             },
             TypeInfo::Tuple(ids) => {
-                let idx: usize = field.parse().map_err(|_| {
+                let idx: usize = field_str.parse().map_err(|_| {
                     Error::custom(format!(
                         "No such field '{}' in '{}'",
-                        **field,
+                        field_str,
                         self.display_type_info(record),
                     ))
                     .with_span(field.span())
@@ -57,16 +59,16 @@ impl<'a> InferContext<'a> {
                 SizeInfo::Unknown => Ok(false),
                 SizeInfo::Ref(_) => unreachable!(),
                 SizeInfo::Concrete(size) => {
-                    if field.len() > 4 {
+                    if field_str.len() > 4 {
                         return Err(Error::custom(format!(
                             "Cannot build vector with {} components",
-                            field.len(),
+                            field_str.len(),
                         ))
                         .with_span(field.span())
                         .with_span(self.span(record)));
                     }
 
-                    for c in field.chars() {
+                    for c in field_str.chars() {
                         let fields: &[char] = match size {
                             VectorSize::Bi => &['x', 'y'],
                             VectorSize::Tri => &['x', 'y', 'z'],
@@ -83,7 +85,7 @@ impl<'a> InferContext<'a> {
                         }
                     }
 
-                    let ty = match field.len() {
+                    let ty = match field_str.len() {
                         1 => self.insert(TypeInfo::Scalar(scalar), Span::None),
                         2 => {
                             let size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));

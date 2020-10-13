@@ -10,6 +10,7 @@ use rsh_common::{
     UnaryOp,
     src::{Span, Loc},
     Ident,
+    Rodeo
 };
 use rsh_lexer::{Token, LexerError};
 use naga::VectorSize;
@@ -17,7 +18,7 @@ use naga::VectorSize;
 // TODO: Error recovery
 
 #[LALR]
-grammar;
+grammar<'a>(rodeo: &'a Rodeo);
 
 extern {
     type Location = Loc;
@@ -179,7 +180,7 @@ Struct: Item = {
                     SrcNode::new(
                         IdentTypePair {
                             ident: SrcNode::new(
-                                Ident::new(pos.to_string()),
+                                rodeo.get_or_intern(&pos.to_string()),
                                 Span::None
                             ),
                             ty
@@ -232,7 +233,7 @@ VectorSize: VectorSize = {
 
 Ident: Ident = {
     "identifier" => <>,
-    "position" => Ident::new(String::from("position"))
+    "position" => rodeo.get_or_intern_static("position")
 }
 
 GlobalModifier: GlobalModifier = {
@@ -362,7 +363,7 @@ StructAccess: Expression = {
 }
 Field: Ident = {
     Ident => <>,
-    Uint => Ident::new(<>.to_string())
+    Uint => rodeo.get_or_intern(&<>.to_string())
 }
 
 Call: Expression = {

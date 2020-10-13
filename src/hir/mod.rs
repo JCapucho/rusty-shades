@@ -6,11 +6,13 @@ use crate::{
     AssignTarget,
 };
 use naga::{FastHashMap, VectorSize};
-use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp};
+use rsh_common::{
+    src::Span, BinaryOp, FunctionModifier, Ident, Literal, Rodeo, ScalarType, UnaryOp,
+};
 
 mod infer;
 /// Pretty printing of the HIR
-mod pretty;
+pub mod pretty;
 pub mod visitor;
 
 use infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
@@ -283,8 +285,8 @@ struct PartialModule {
 }
 
 impl Module {
-    pub fn build(statements: &[SrcNode<ast::Item>]) -> Result<Module, Vec<Error>> {
-        let mut infer_ctx = InferContext::default();
+    pub fn build(statements: &[SrcNode<ast::Item>], rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
+        let mut infer_ctx = InferContext::new(rodeo);
         let partial = Self::first_pass(statements, &mut infer_ctx)?;
 
         let mut errors = vec![];
@@ -307,11 +309,11 @@ impl Module {
                 .map(|(name, global)| {
                     let key = globals_lookup.len() as u32;
 
-                    globals_lookup.insert(name.clone(), (key, global.inner().ty));
+                    globals_lookup.insert(*name, (key, global.inner().ty));
 
                     let global = SrcNode::new(
                         Global {
-                            name: name.clone(),
+                            name: *name,
                             modifier: global.inner().modifier,
                             ty: infer_ctx
                                 .reconstruct(global.inner().ty, global.span())?
@@ -409,8 +411,8 @@ impl Module {
                 func.id,
                 SrcNode::new(
                     Function {
-                        name: name.clone(),
-                        generics: func.generics.iter().map(|(name, _)| name.clone()).collect(),
+                        name: *name,
+                        generics: func.generics.iter().map(|(name, _)| *name).collect(),
                         args,
                         ret,
                         body,
@@ -482,7 +484,7 @@ impl Module {
 
                 SrcNode::new(
                     EntryPoint {
-                        name: func.name.clone(),
+                        name: func.name,
                         stage: func.stage,
                         body,
                         locals,
@@ -503,12 +505,12 @@ impl Module {
                         .map(|(key, (pos, ty))| {
                             let ty = infer_ctx.reconstruct(*ty, Span::None)?;
 
-                            Ok((key.clone(), (*pos, ty)))
+                            Ok((*key, (*pos, ty)))
                         })
                         .collect();
 
                     let strct = Struct {
-                        name: key.clone(),
+                        name: *key,
                         fields: fields?,
                     };
 
@@ -553,7 +555,7 @@ impl Module {
                     }
 
                     let constant = Constant {
-                        name: key.clone(),
+                        name: *key,
                         ty: match scoped.reconstruct(partial_const.ty, partial_const.span()) {
                             Ok(s) => s,
                             Err(e) => {
@@ -627,7 +629,7 @@ impl Module {
                         continue;
                     }
 
-                    names.insert(ident.inner().clone(), ident.span());
+                    names.insert(*ident.inner(), ident.span());
 
                     let mut builder = TypeBuilder {
                         infer_ctx,
@@ -656,7 +658,7 @@ impl Module {
                         continue;
                     }
 
-                    names.insert(ident.inner().clone(), ident.span());
+                    names.insert(*ident.inner(), ident.span());
 
                     let mut builder = TypeBuilder {
                         infer_ctx,
@@ -713,7 +715,7 @@ impl Module {
                     };
 
                     globals.insert(
-                        ident.inner().clone(),
+                        *ident.inner(),
                         SrcNode::new(
                             PartialGlobal {
                                 modifier: *modifier.inner(),
@@ -747,7 +749,7 @@ impl Module {
                         );
                     }
 
-                    names.insert(ident.inner().clone(), ident.span());
+                    names.insert(*ident.inner(), ident.span());
 
                     if let Some(stage) = modifier {
                         if let Some(ret) = ret {
@@ -770,7 +772,7 @@ impl Module {
 
                         entry_points.push(SrcNode::new(
                             PartialEntryPoint {
-                                name: ident.inner().clone(),
+                                name: *ident.inner(),
                                 stage: *stage.inner(),
                                 body: body.clone(),
                             },
@@ -799,7 +801,7 @@ impl Module {
                             .enumerate()
                             .map(|(pos, arg)| {
                                 (
-                                    arg.ident.inner().clone(),
+                                    *arg.ident.inner(),
                                     (pos as u32, match arg.ty.build_ast_ty(&mut builder, 0) {
                                         Ok(t) => t,
                                         Err(mut e) => {
@@ -815,7 +817,7 @@ impl Module {
                             .iter()
                             .map(|generic| {
                                 (
-                                    generic.ident.inner().clone(),
+                                    *generic.ident.inner(),
                                     generic
                                         .bound
                                         .as_ref()
@@ -835,7 +837,7 @@ impl Module {
 
                         infer_ctx.add_function(
                             func_id,
-                            ident.inner().clone(),
+                            *ident.inner(),
                             {
                                 let mut args = constructed_args.values().collect::<Vec<_>>();
                                 args.sort_by(|a, b| a.0.cmp(&b.0));
@@ -845,7 +847,7 @@ impl Module {
                         );
 
                         functions.insert(
-                            ident.inner().clone(),
+                            *ident.inner(),
                             SrcNode::new(
                                 PartialFunction {
                                     id: func_id,
@@ -868,7 +870,7 @@ impl Module {
                         );
                     }
 
-                    names.insert(ident.inner().clone(), ident.span());
+                    names.insert(*ident.inner(), ident.span());
 
                     let mut builder = TypeBuilder {
                         infer_ctx,
@@ -882,7 +884,7 @@ impl Module {
                     let ty = ty.build_ast_ty(&mut builder, 0)?;
 
                     constants.insert(
-                        ident.inner().clone(),
+                        *ident.inner(),
                         SrcNode::new(
                             PartialConstant {
                                 id,
@@ -940,7 +942,7 @@ fn build_struct<'a, 'b>(
             },
         };
 
-        resolved_fields.insert(field.ident.inner().clone(), (pos as u32, ty));
+        resolved_fields.insert(*field.ident.inner(), (pos as u32, ty));
     }
 
     let id = builder
@@ -956,7 +958,7 @@ fn build_struct<'a, 'b>(
     );
 
     builder.structs.insert(
-        ident.inner().clone(),
+        *ident.inner(),
         SrcNode::new(
             PartialStruct {
                 fields: resolved_fields,
@@ -1186,7 +1188,7 @@ impl SrcNode<ast::Statement> {
                 }
 
                 builder.locals.push((local, expr.type_id()));
-                locals_lookup.insert(ident.inner().clone(), (local, expr.type_id()));
+                locals_lookup.insert(*ident.inner(), (local, expr.type_id()));
 
                 Statement::Assign(SrcNode::new(AssignTarget::Local(local), ident.span()), expr)
             },
@@ -1386,7 +1388,7 @@ impl SrcNode<ast::Expression> {
                 InferNode::new(
                     Expr::Access {
                         base,
-                        field: field.inner().clone(),
+                        field: *field.inner(),
                     },
                     (out, self.span()),
                 )

@@ -6,7 +6,9 @@ use crate::{
     AssignTarget,
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
-use rsh_common::{src::Span, BinaryOp, FunctionModifier, Ident, Literal, ScalarType, UnaryOp};
+use rsh_common::{
+    src::Span, BinaryOp, FunctionModifier, Ident, Literal, Rodeo, ScalarType, UnaryOp,
+};
 
 pub type TypedExpr = Node<Expr, Type>;
 
@@ -139,7 +141,7 @@ enum GlobalLookup {
 }
 
 impl hir::Module {
-    pub fn build_ir(self) -> Result<Module, Vec<Error>> {
+    pub fn build_ir(self, rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
         let mut errors = vec![];
 
         let mut global_lookups = FastHashMap::default();
@@ -154,7 +156,7 @@ impl hir::Module {
             match global.modifier {
                 crate::ast::GlobalModifier::Position => {
                     globals.insert(pos, Global {
-                        name: global.name.clone(),
+                        name: global.name,
                         ty: global.ty.clone(),
                         binding: Binding::BuiltIn(BuiltIn::Position),
                         storage: StorageClass::Output,
@@ -233,14 +235,16 @@ impl hir::Module {
         fn get_constant_inner(
             id: u32,
             constants: &FastHashMap<u32, SrcNode<hir::Constant>>,
+            rodeo: &Rodeo,
         ) -> Result<ConstantInner, Error> {
             constants.get(&id).unwrap().expr.solve(
-                &|id| get_constant_inner(id, constants),
+                &|id| get_constant_inner(id, constants, rodeo),
                 &mut FastHashMap::default(),
+                rodeo,
             )
         }
 
-        let get_constant = |id| get_constant_inner(id, constants);
+        let get_constant = |id| get_constant_inner(id, constants, rodeo);
 
         let constants = {
             let (constants, e): (Vec<_>, Vec<_>) = self
@@ -252,7 +256,7 @@ impl hir::Module {
                     let inner = get_constant(*id)?;
 
                     Ok((*id, Constant {
-                        name: c.name.clone(),
+                        name: c.name,
                         ty: c.ty.clone(),
                         inner,
                     }))
@@ -270,6 +274,7 @@ impl hir::Module {
             structs,
             functions: &mut functions,
             instances_map: &mut FastHashMap::default(),
+            rodeo,
         };
 
         let entry_points = {
@@ -424,6 +429,7 @@ struct FunctionBuilder<'a> {
     structs: &'a FastHashMap<u32, SrcNode<hir::Struct>>,
     functions: &'a mut FastHashMap<u32, Function>,
     instances_map: &'a mut FastHashMap<(u32, Vec<Type>), u32>,
+    rodeo: &'a Rodeo,
 }
 
 impl hir::Statement<(Type, Span)> {
@@ -608,11 +614,13 @@ impl hir::TypedNode {
                             .unwrap()
                             .0,
                     ],
-                    Type::Tuple(_) => vec![field.parse().unwrap()],
+                    Type::Tuple(_) => vec![builder.rodeo.resolve(&field).parse().unwrap()],
                     Type::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
-                        field
+                        builder
+                            .rodeo
+                            .resolve(&field)
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
                             .collect()

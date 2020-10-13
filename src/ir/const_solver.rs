@@ -7,18 +7,19 @@ use crate::{
     AssignTarget,
 };
 use naga::FastHashMap;
-use rsh_common::{src::Span, BinaryOp, Literal, UnaryOp};
+use rsh_common::{src::Span, BinaryOp, Literal, Rodeo, UnaryOp};
 
 impl TypedNode {
     pub(super) fn solve(
         &self,
         get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
         locals: &mut FastHashMap<u32, ConstantInner>,
+        rodeo: &Rodeo,
     ) -> Result<ConstantInner, Error> {
         match self.inner() {
             crate::hir::Expr::BinaryOp { left, op, right } => {
-                let left = left.solve(get_constant, locals)?;
-                let right = right.solve(get_constant, locals)?;
+                let left = left.solve(get_constant, locals, rodeo)?;
+                let right = right.solve(get_constant, locals, rodeo)?;
 
                 Ok(match (left, right) {
                     (ConstantInner::Scalar(a), ConstantInner::Scalar(b)) => {
@@ -54,7 +55,7 @@ impl TypedNode {
                 })
             },
             crate::hir::Expr::UnaryOp { tgt, op } => {
-                let tgt = tgt.solve(get_constant, locals)?;
+                let tgt = tgt.solve(get_constant, locals, rodeo)?;
 
                 Ok(match tgt {
                     ConstantInner::Scalar(a) => ConstantInner::Scalar(apply_unary_op(a, *op)),
@@ -79,14 +80,15 @@ impl TypedNode {
                     Type::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
-                        field
+                        rodeo
+                            .resolve(field)
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u64)
                             .collect()
                     },
                     _ => unreachable!(),
                 };
-                let base = base.solve(get_constant, locals)?;
+                let base = base.solve(get_constant, locals, rodeo)?;
 
                 Ok(if fields.len() == 1 {
                     base.index(&ConstantInner::Scalar(Literal::Uint(fields[0])))
@@ -109,7 +111,7 @@ impl TypedNode {
             crate::hir::Expr::Constructor { elements } => {
                 let elements: Vec<_> = elements
                     .iter()
-                    .map(|ele| Ok((ele.solve(get_constant, locals)?, ele.ty())))
+                    .map(|ele| Ok((ele.solve(get_constant, locals, rodeo)?, ele.ty())))
                     .collect::<Result<_, Error>>()?;
 
                 Ok(match self.ty() {
@@ -198,33 +200,33 @@ impl TypedNode {
                 else_ifs,
                 reject,
             } => {
-                let condition = condition.solve(get_constant, locals)?;
+                let condition = condition.solve(get_constant, locals, rodeo)?;
                 let condition = match condition {
                     ConstantInner::Scalar(Literal::Boolean(val)) => val,
                     _ => unreachable!(),
                 };
 
                 if condition {
-                    accept.solve(get_constant, locals)
+                    accept.solve(get_constant, locals, rodeo)
                 } else {
                     for (condition, block) in else_ifs {
-                        let condition = condition.solve(get_constant, locals)?;
+                        let condition = condition.solve(get_constant, locals, rodeo)?;
                         let condition = match condition {
                             ConstantInner::Scalar(Literal::Boolean(val)) => val,
                             _ => unreachable!(),
                         };
 
                         if condition {
-                            return block.solve(get_constant, locals);
+                            return block.solve(get_constant, locals, rodeo);
                         }
                     }
 
-                    reject.solve(get_constant, locals)
+                    reject.solve(get_constant, locals, rodeo)
                 }
             },
             crate::hir::Expr::Index { base, index } => {
-                let base = base.solve(get_constant, locals)?;
-                let index = index.solve(get_constant, locals)?;
+                let base = base.solve(get_constant, locals, rodeo)?;
+                let index = index.solve(get_constant, locals, rodeo)?;
 
                 Ok(base.index(&index))
             },
@@ -237,21 +239,22 @@ impl SrcNode<Vec<Statement<(Type, Span)>>> {
         &self,
         get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
         locals: &mut FastHashMap<u32, ConstantInner>,
+        rodeo: &Rodeo,
     ) -> Result<ConstantInner, Error> {
         for sta in self.inner() {
             match sta {
                 Statement::Expr(expr) => {
-                    return expr.solve(get_constant, locals);
+                    return expr.solve(get_constant, locals, rodeo);
                 },
                 Statement::ExprSemi(expr) => {
-                    expr.solve(get_constant, locals)?;
+                    expr.solve(get_constant, locals, rodeo)?;
                 },
                 Statement::Assign(tgt, expr) => {
                     let local = match tgt.inner() {
                         AssignTarget::Local(local) => local,
                         AssignTarget::Global(_) => unreachable!(),
                     };
-                    let val = expr.solve(get_constant, locals)?;
+                    let val = expr.solve(get_constant, locals, rodeo)?;
 
                     locals.insert(*local, val);
                 },
