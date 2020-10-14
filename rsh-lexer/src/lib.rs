@@ -1,22 +1,22 @@
 use logos::{Lexer as LogosLexer, Logos};
 use rsh_common::{
     src::{Loc, Span},
-    FunctionModifier, Ident, Rodeo, ScalarType,
+    EntryPointStage, Rodeo, ScalarType, Symbol,
 };
 use std::fmt;
 
-fn ident(lex: &mut LogosLexer<Token>) -> Option<Ident> {
+fn ident(lex: &mut LogosLexer<Token>) -> Option<Symbol> {
     let slice = lex.slice();
 
     Some(lex.extras.get_or_intern(&slice[..slice.len()]))
 }
 
-fn function_modifier(lex: &mut LogosLexer<Token>) -> Option<FunctionModifier> {
+fn function_modifier(lex: &mut LogosLexer<Token>) -> Option<EntryPointStage> {
     let slice = lex.slice();
 
     match &slice[..slice.len()] {
-        "vertex" => Some(FunctionModifier::Vertex),
-        "fragment" => Some(FunctionModifier::Fragment),
+        "vertex" => Some(EntryPointStage::Vertex),
+        "fragment" => Some(EntryPointStage::Fragment),
         _ => None,
     }
 }
@@ -54,9 +54,9 @@ pub struct LexerError {
 #[logos(extras = &'s Rodeo)]
 pub enum Token {
     #[regex(r"\p{XID_Start}\p{XID_Continue}*", ident)]
-    Identifier(Ident),
+    Identifier(Symbol),
     #[regex("(vertex|fragment)", function_modifier)]
-    FunctionModifier(FunctionModifier),
+    EntryPointStage(EntryPointStage),
 
     #[token("(")]
     OpenParentheses,
@@ -213,9 +213,9 @@ impl Token {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.tok {
                     Token::Identifier(ident) => write!(f, "{}", self.rodeo.resolve(ident)),
-                    Token::FunctionModifier(modifier) => write!(f, "{}", match modifier {
-                        FunctionModifier::Vertex => "vertex",
-                        FunctionModifier::Fragment => "fragment",
+                    Token::EntryPointStage(stage) => write!(f, "{}", match stage {
+                        EntryPointStage::Vertex => "vertex",
+                        EntryPointStage::Fragment => "fragment",
                     }),
 
                     Token::OpenParentheses => write!(f, "("),

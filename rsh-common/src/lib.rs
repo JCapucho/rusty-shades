@@ -1,24 +1,42 @@
 use lasso::{Spur, ThreadedRodeo};
 use std::fmt;
 
-#[cfg(feature = "naga")] mod naga;
+#[cfg(feature = "naga")]
+mod naga;
 pub mod src;
 
-pub type Ident = Spur;
-pub type Rodeo = ThreadedRodeo<Ident, fxhash::FxBuildHasher>;
+pub type Symbol = Spur;
+pub type Rodeo = ThreadedRodeo<Symbol, fxhash::FxBuildHasher>;
 pub type Hasher = fxhash::FxBuildHasher;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
-pub enum FunctionModifier {
+pub enum VectorSize {
+    Bi,
+    Tri,
+    Quad,
+}
+
+impl fmt::Display for VectorSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            VectorSize::Bi => write!(f, "2"),
+            VectorSize::Tri => write!(f, "3"),
+            VectorSize::Quad => write!(f, "4"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
+pub enum EntryPointStage {
     Vertex,
     Fragment,
 }
 
-impl fmt::Display for FunctionModifier {
+impl fmt::Display for EntryPointStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            FunctionModifier::Vertex => write!(f, "vertex"),
-            FunctionModifier::Fragment => write!(f, "fragment"),
+            EntryPointStage::Vertex => write!(f, "vertex"),
+            EntryPointStage::Fragment => write!(f, "fragment"),
         }
     }
 }

@@ -10,7 +10,7 @@ use naga::{
     MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
     StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
-use rsh_common::{FunctionModifier, Rodeo};
+use rsh_common::{EntryPointStage, Rodeo};
 
 #[derive(Debug)]
 pub enum GlobalLookup {
@@ -561,7 +561,7 @@ impl Statement {
         module: &Module,
         locals_lookup: &FastHashMap<u32, Handle<LocalVariable>>,
         expressions: &mut Arena<Expression>,
-        modifier: Option<FunctionModifier>,
+        modifier: Option<EntryPointStage>,
         builder: &mut FunctionBuilder<'a>,
         iter: usize,
     ) -> Result<NagaStatement, Error> {
@@ -576,11 +576,11 @@ impl Statement {
                             (GlobalLookup::ContextLess(handle), _) => *handle,
                             (
                                 GlobalLookup::ContextFull { vert, .. },
-                                Some(FunctionModifier::Vertex),
+                                Some(EntryPointStage::Vertex),
                             ) => *vert,
                             (
                                 GlobalLookup::ContextFull { frag, .. },
-                                Some(FunctionModifier::Fragment),
+                                Some(EntryPointStage::Fragment),
                             ) => *frag,
                             (GlobalLookup::ContextFull { .. }, None) => {
                                 return Err(Error::custom(String::from(
@@ -691,7 +691,7 @@ impl TypedExpr {
         module: &Module,
         locals_lookup: &FastHashMap<u32, Handle<LocalVariable>>,
         expressions: &mut Arena<Expression>,
-        modifier: Option<FunctionModifier>,
+        modifier: Option<EntryPointStage>,
         builder: &mut FunctionBuilder<'a>,
         iter: usize,
     ) -> Result<Expression, Error> {
@@ -848,10 +848,10 @@ impl TypedExpr {
             Expr::Global(var) => Expression::GlobalVariable(
                 match (builder.globals_lookup.get(var).unwrap(), modifier) {
                     (GlobalLookup::ContextLess(handle), _) => *handle,
-                    (GlobalLookup::ContextFull { vert, .. }, Some(FunctionModifier::Vertex)) => {
+                    (GlobalLookup::ContextFull { vert, .. }, Some(EntryPointStage::Vertex)) => {
                         *vert
                     },
-                    (GlobalLookup::ContextFull { frag, .. }, Some(FunctionModifier::Fragment)) => {
+                    (GlobalLookup::ContextFull { frag, .. }, Some(EntryPointStage::Fragment)) => {
                         *frag
                     },
                     (GlobalLookup::ContextFull { .. }, None) => {

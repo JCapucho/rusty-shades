@@ -326,13 +326,13 @@ impl<'a> fmt::Display for HirPrettyPrinter<'a> {
     }
 }
 
-impl fmt::Display for super::GlobalModifier {
+impl fmt::Display for super::GlobalBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            crate::ast::GlobalModifier::Position => write!(f, "position"),
-            crate::ast::GlobalModifier::Input(loc) => write!(f, "in={}", loc),
-            crate::ast::GlobalModifier::Output(loc) => write!(f, "out={}", loc),
-            crate::ast::GlobalModifier::Uniform { set, binding } => {
+            crate::ast::GlobalBinding::Position => write!(f, "position"),
+            crate::ast::GlobalBinding::Input(loc) => write!(f, "in={}", loc),
+            crate::ast::GlobalBinding::Output(loc) => write!(f, "out={}", loc),
+            crate::ast::GlobalBinding::Uniform { set, binding } => {
                 write!(f, "uniform {{ set={} binding={} }}", set, binding)
             },
         }

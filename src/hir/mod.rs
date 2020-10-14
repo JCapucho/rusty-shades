@@ -1,5 +1,5 @@
 use crate::{
-    ast::{self, Block, GlobalModifier, IdentTypePair, Item},
+    ast::{self, Block, GlobalBinding, IdentTypePair, Item},
     error::Error,
     node::{Node, SrcNode},
     ty::Type,
@@ -7,7 +7,7 @@ use crate::{
 };
 use naga::{FastHashMap, VectorSize};
 use rsh_common::{
-    src::Span, BinaryOp, FunctionModifier, Ident, Literal, Rodeo, ScalarType, UnaryOp,
+    src::Span, BinaryOp, EntryPointStage, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
 };
 
 mod infer;
@@ -44,8 +44,8 @@ pub struct Module {
 // TODO: Make this non clone
 #[derive(Debug, Clone)]
 pub struct Function {
-    pub name: Ident,
-    pub generics: Vec<Ident>,
+    pub name: Symbol,
+    pub generics: Vec<Symbol>,
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement<(Type, Span)>>,
@@ -54,28 +54,28 @@ pub struct Function {
 
 #[derive(Debug)]
 pub struct Global {
-    pub name: Ident,
-    pub modifier: GlobalModifier,
+    pub name: Symbol,
+    pub modifier: GlobalBinding,
     pub ty: Type,
 }
 
 #[derive(Debug)]
 pub struct Struct {
-    pub name: Ident,
-    pub fields: FastHashMap<Ident, (u32, SrcNode<Type>)>,
+    pub name: Symbol,
+    pub fields: FastHashMap<Symbol, (u32, SrcNode<Type>)>,
 }
 
 #[derive(Debug)]
 pub struct Constant {
-    pub name: Ident,
+    pub name: Symbol,
     pub expr: TypedNode,
     pub ty: Type,
 }
 
 #[derive(Debug)]
 pub struct EntryPoint {
-    pub name: Ident,
-    pub stage: FunctionModifier,
+    pub name: Symbol,
+    pub stage: EntryPointStage,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
 }
@@ -120,7 +120,7 @@ pub enum Expr<M> {
     Literal(Literal),
     Access {
         base: Node<Self, M>,
-        field: Ident,
+        field: Symbol,
     },
     Constructor {
         elements: Vec<Node<Self, M>>,
@@ -233,7 +233,7 @@ impl InferNode {
 
 #[derive(Debug)]
 struct PartialGlobal {
-    modifier: GlobalModifier,
+    modifier: GlobalBinding,
     ty: TypeId,
 }
 
@@ -247,16 +247,16 @@ struct PartialConstant {
 #[derive(Debug)]
 struct PartialFunction {
     id: u32,
-    args: FastHashMap<Ident, (u32, TypeId)>,
+    args: FastHashMap<Symbol, (u32, TypeId)>,
     ret: TypeId,
     body: SrcNode<Block>,
-    generics: Vec<(Ident, TraitBound)>,
+    generics: Vec<(Symbol, TraitBound)>,
 }
 
 #[derive(Debug)]
 struct PartialEntryPoint {
-    name: Ident,
-    stage: FunctionModifier,
+    name: Symbol,
+    stage: EntryPointStage,
     body: SrcNode<Block>,
 }
 
@@ -264,7 +264,7 @@ struct PartialEntryPoint {
 struct PartialStruct {
     id: u32,
     ty: TypeId,
-    fields: FastHashMap<Ident, (u32, TypeId)>,
+    fields: FastHashMap<Symbol, (u32, TypeId)>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -277,10 +277,10 @@ pub enum TraitBound {
 
 #[derive(Debug)]
 struct PartialModule {
-    structs: FastHashMap<Ident, SrcNode<PartialStruct>>,
-    globals: FastHashMap<Ident, SrcNode<PartialGlobal>>,
-    functions: FastHashMap<Ident, SrcNode<PartialFunction>>,
-    constants: FastHashMap<Ident, SrcNode<PartialConstant>>,
+    structs: FastHashMap<Symbol, SrcNode<PartialStruct>>,
+    globals: FastHashMap<Symbol, SrcNode<PartialGlobal>>,
+    functions: FastHashMap<Symbol, SrcNode<PartialFunction>>,
+    constants: FastHashMap<Symbol, SrcNode<PartialConstant>>,
     entry_points: Vec<SrcNode<PartialEntryPoint>>,
 }
 
@@ -681,9 +681,9 @@ impl Module {
                     };
 
                     let ty = match modifier.inner() {
-                        GlobalModifier::Input(_)
-                        | GlobalModifier::Output(_)
-                        | GlobalModifier::Uniform { .. } => match ty {
+                        GlobalBinding::Input(_)
+                        | GlobalBinding::Output(_)
+                        | GlobalBinding::Uniform { .. } => match ty {
                             Some(t) => t,
                             None => {
                                 errors.push(
@@ -693,7 +693,7 @@ impl Module {
                                 continue;
                             },
                         },
-                        GlobalModifier::Position => {
+                        GlobalBinding::Position => {
                             let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Quad));
                             let base =
                                 infer_ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Float));
@@ -913,7 +913,7 @@ impl Module {
 }
 
 fn build_struct<'a, 'b>(
-    ident: &SrcNode<Ident>,
+    ident: &SrcNode<Symbol>,
     fields: &[SrcNode<IdentTypePair>],
     span: Span,
     builder: &mut TypeBuilder<'a, 'b>,
@@ -981,7 +981,7 @@ fn build_struct<'a, 'b>(
 struct TypeBuilder<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     items: &'a [SrcNode<ast::Item>],
-    structs: &'a mut FastHashMap<Ident, SrcNode<PartialStruct>>,
+    structs: &'a mut FastHashMap<Symbol, SrcNode<PartialStruct>>,
     struct_id: &'a mut u32,
     generics: &'a [SrcNode<ast::Generic>],
 }
@@ -1086,7 +1086,7 @@ impl SrcNode<ast::Type> {
 
     fn build_hir_ty(
         &self,
-        structs: &FastHashMap<Ident, SrcNode<PartialStruct>>,
+        structs: &FastHashMap<Symbol, SrcNode<PartialStruct>>,
         infer_ctx: &mut InferContext,
     ) -> Result<TypeId, Vec<Error>> {
         let mut errors = vec![];
@@ -1138,19 +1138,19 @@ impl SrcNode<ast::Type> {
 struct StatementBuilder<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     locals: &'a mut Vec<(u32, TypeId)>,
-    args: &'a FastHashMap<Ident, (u32, TypeId)>,
-    globals_lookup: &'a FastHashMap<Ident, (u32, TypeId)>,
-    structs: &'a FastHashMap<Ident, SrcNode<PartialStruct>>,
+    args: &'a FastHashMap<Symbol, (u32, TypeId)>,
+    globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
+    structs: &'a FastHashMap<Symbol, SrcNode<PartialStruct>>,
     ret: TypeId,
-    functions: &'a FastHashMap<Ident, SrcNode<PartialFunction>>,
-    constants: &'a FastHashMap<Ident, SrcNode<PartialConstant>>,
+    functions: &'a FastHashMap<Symbol, SrcNode<PartialFunction>>,
+    constants: &'a FastHashMap<Symbol, SrcNode<PartialConstant>>,
 }
 
 impl SrcNode<ast::Statement> {
     fn build_hir<'a, 'b>(
         &self,
         builder: &mut StatementBuilder<'a, 'b>,
-        locals_lookup: &mut FastHashMap<Ident, (u32, TypeId)>,
+        locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
         out: TypeId,
     ) -> Result<Statement<(TypeId, Span)>, Vec<Error>> {
         Ok(match self.inner() {
@@ -1220,7 +1220,7 @@ impl SrcNode<ast::Expression> {
     fn build_hir<'a, 'b>(
         &self,
         builder: &mut StatementBuilder<'a, 'b>,
-        locals_lookup: &mut FastHashMap<Ident, (u32, TypeId)>,
+        locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
         out: TypeId,
     ) -> Result<InferNode, Vec<Error>> {
         let empty = builder.infer_ctx.insert(TypeInfo::Empty, self.span());

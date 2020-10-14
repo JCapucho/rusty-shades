@@ -9,6 +9,8 @@ edition = "2018"
 naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26" }
 rsh-common = { path = "./rsh-common", features = ["naga"] }
 rsh-lexer = { path = "./rsh-lexer" }
+rsh-ast = { path = "./rsh-ast" }
+rsh-parser = { path = "./rsh-parser" }
 lalrpop-util = "0.19"
 codespan-reporting = { version = "0.9", optional = true }
 
@@ -16,9 +18,6 @@ codespan-reporting = { version = "0.9", optional = true }
 default = ["spirv"]
 spirv = ["naga/spv-out"]
 
-[build-dependencies]
-lalrpop = "0.19"
-
 [workspace]
 default-members = ["rshc"]
-members = ["rsh-lexer", "rsh-common", "rshc"]
+members = ["rsh-lexer", "rsh-common", "rshc", "rsh-ast", "rsh-parser"]

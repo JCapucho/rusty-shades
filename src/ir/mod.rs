@@ -7,7 +7,7 @@ use crate::{
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 use rsh_common::{
-    src::Span, BinaryOp, FunctionModifier, Ident, Literal, Rodeo, ScalarType, UnaryOp,
+    src::Span, BinaryOp, EntryPointStage, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
 };
 
 pub type TypedExpr = Node<Expr, Type>;
@@ -17,7 +17,7 @@ mod monomorphize;
 
 #[derive(Debug)]
 pub struct Global {
-    pub name: Ident,
+    pub name: Symbol,
     pub storage: StorageClass,
     pub binding: Binding,
     pub ty: Type,
@@ -45,8 +45,8 @@ impl Global {
 
 #[derive(Debug)]
 pub struct Struct {
-    pub name: Ident,
-    pub fields: Vec<(Ident, Type)>,
+    pub name: Symbol,
+    pub fields: Vec<(Symbol, Type)>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,7 @@ pub enum Expr {
 
 #[derive(Debug)]
 pub struct Function {
-    pub name: Ident,
+    pub name: Symbol,
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement>,
@@ -105,15 +105,15 @@ pub struct Function {
 
 #[derive(Debug)]
 pub struct EntryPoint {
-    pub name: Ident,
-    pub stage: FunctionModifier,
+    pub name: Symbol,
+    pub stage: EntryPointStage,
     pub body: Vec<Statement>,
     pub locals: FastHashMap<u32, Type>,
 }
 
 #[derive(Debug)]
 pub struct Constant {
-    pub name: Ident,
+    pub name: Symbol,
     pub inner: ConstantInner,
     pub ty: Type,
 }
@@ -154,7 +154,7 @@ impl hir::Module {
             let global = global.into_inner();
 
             match global.modifier {
-                crate::ast::GlobalModifier::Position => {
+                crate::ast::GlobalBinding::Position => {
                     globals.insert(pos, Global {
                         name: global.name,
                         ty: global.ty.clone(),
@@ -174,7 +174,7 @@ impl hir::Module {
                         frag: pos + 1,
                     });
                 },
-                crate::ast::GlobalModifier::Input(location) => {
+                crate::ast::GlobalBinding::Input(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
                             Error::custom(String::from(
@@ -193,7 +193,7 @@ impl hir::Module {
 
                     global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
-                crate::ast::GlobalModifier::Output(location) => {
+                crate::ast::GlobalBinding::Output(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
                             Error::custom(String::from(
@@ -212,7 +212,7 @@ impl hir::Module {
 
                     global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
-                crate::ast::GlobalModifier::Uniform { set, binding } => {
+                crate::ast::GlobalBinding::Uniform { set, binding } => {
                     globals.insert(pos, Global {
                         name: global.name,
                         ty: global.ty,
@@ -417,7 +417,7 @@ impl SrcNode<hir::EntryPoint> {
 }
 
 struct StatementBuilder<'a> {
-    modifier: Option<FunctionModifier>,
+    modifier: Option<EntryPointStage>,
     locals: &'a mut FastHashMap<u32, Type>,
     generics: &'a [Type],
 }
@@ -464,8 +464,8 @@ impl hir::Statement<(Type, Span)> {
                             GlobalLookup::ContextLess(id) => *id,
                             GlobalLookup::ContextFull { vert, frag } => {
                                 match sta_builder.modifier {
-                                    Some(FunctionModifier::Vertex) => *vert,
-                                    Some(FunctionModifier::Fragment) => *frag,
+                                    Some(EntryPointStage::Vertex) => *vert,
+                                    Some(EntryPointStage::Fragment) => *frag,
                                     None => {
                                         errors.push(
                                             Error::custom(String::from(
@@ -776,8 +776,8 @@ impl hir::TypedNode {
                 let id = match builder.globals_lookup.get(&global).unwrap() {
                     GlobalLookup::ContextLess(id) => *id,
                     GlobalLookup::ContextFull { vert, frag } => match sta_builder.modifier {
-                        Some(FunctionModifier::Vertex) => *vert,
-                        Some(FunctionModifier::Fragment) => *frag,
+                        Some(EntryPointStage::Vertex) => *vert,
+                        Some(EntryPointStage::Fragment) => *frag,
                         None => {
                             errors.push(
                                 Error::custom(String::from(

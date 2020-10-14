@@ -2,10 +2,11 @@
 // we have no set msrv but if we ever set one this will be useful
 #![allow(clippy::match_like_matches_macro)]
 
+pub use rsh_ast as ast;
+pub use rsh_parser as parser;
 pub use rsh_common as common;
 pub use rsh_lexer as lexer;
 
-pub mod ast;
 pub mod backends;
 pub mod error;
 pub mod hir;
@@ -15,17 +16,14 @@ pub mod ty;
 
 use common::{Hasher, Rodeo};
 use error::Error;
-use lalrpop_util::lalrpop_mod;
 use naga::back::spv;
-
-lalrpop_mod!(#[allow(clippy::all)] pub grammar);
 
 #[cfg(feature = "spirv")]
 pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
     let rodeo = Rodeo::with_hasher(Hasher::default());
     let lexer = lexer::Lexer::new(code, &rodeo);
 
-    let ast = grammar::ProgramParser::new()
+    let ast = parser::ProgramParser::new()
         .parse(&rodeo, lexer)
         .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
 

@@ -1,5 +1,5 @@
 use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, hir::Ident, node::SrcNode};
+use crate::{error::Error, hir::Symbol, node::SrcNode};
 use naga::VectorSize;
 use rsh_common::src::Span;
 
@@ -8,7 +8,7 @@ impl<'a> InferContext<'a> {
         &mut self,
         out: TypeId,
         record: TypeId,
-        field: SrcNode<Ident>,
+        field: SrcNode<Symbol>,
     ) -> Result<bool, Error> {
         let field_str = self.rodeo.resolve(field.inner());
 

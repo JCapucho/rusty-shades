@@ -1,5 +1,8 @@
-use super::{BinaryOp, FunctionModifier, Literal, ScalarType, UnaryOp};
-use naga::{BinaryOperator, ConstantInner, ScalarKind, ShaderStage, TypeInner, UnaryOperator};
+use super::{BinaryOp, EntryPointStage, Literal, ScalarType, UnaryOp, VectorSize};
+use naga::{
+    BinaryOperator, ConstantInner, ScalarKind, ShaderStage, TypeInner, UnaryOperator,
+    VectorSize as NagaVectorSize,
+};
 
 impl Into<BinaryOperator> for BinaryOp {
     fn into(self) -> BinaryOperator {
@@ -44,11 +47,11 @@ impl Into<ConstantInner> for Literal {
     }
 }
 
-impl Into<ShaderStage> for FunctionModifier {
+impl Into<ShaderStage> for EntryPointStage {
     fn into(self) -> ShaderStage {
         match self {
-            FunctionModifier::Vertex => ShaderStage::Vertex,
-            FunctionModifier::Fragment => ShaderStage::Fragment,
+            EntryPointStage::Vertex => ShaderStage::Vertex,
+            EntryPointStage::Fragment => ShaderStage::Fragment,
         }
     }
 }
@@ -70,5 +73,15 @@ impl Into<TypeInner> for ScalarType {
         let (kind, width) = self.naga_kind_width();
 
         TypeInner::Scalar { kind, width }
+    }
+}
+
+impl Into<NagaVectorSize> for VectorSize {
+    fn into(self) -> NagaVectorSize {
+        match self {
+            VectorSize::Bi => NagaVectorSize::Bi,
+            VectorSize::Tri => NagaVectorSize::Tri,
+            VectorSize::Quad => NagaVectorSize::Quad,
+        }
     }
 }

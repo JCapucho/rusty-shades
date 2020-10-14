@@ -608,6 +608,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsh-ast"
+version = "0.1.0"
+dependencies = [
+ "rsh-common",
+]
+
+[[package]]
 name = "rsh-common"
 version = "0.1.0"
 dependencies = [
@@ -622,6 +629,17 @@ version = "0.1.0"
 dependencies = [
  "logos",
  "rsh-common",
+]
+
+[[package]]
+name = "rsh-parser"
+version = "0.1.0"
+dependencies = [
+ "lalrpop",
+ "lalrpop-util",
+ "rsh-ast",
+ "rsh-common",
+ "rsh-lexer",
 ]
 
 [[package]]
@@ -653,11 +671,12 @@ name = "rusty_shades"
 version = "0.1.0"
 dependencies = [
  "codespan-reporting",
- "lalrpop",
  "lalrpop-util",
  "naga",
+ "rsh-ast",
  "rsh-common",
  "rsh-lexer",
+ "rsh-parser",
 ]
 
 [[package]]

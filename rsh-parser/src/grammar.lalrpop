@@ -1,0 +1,512 @@
+use rsh_ast::*;
+use rsh_common::{
+    EntryPointStage,
+    Literal,
+    ScalarType,
+    BinaryOp,
+    UnaryOp,
+    src::{Span, Loc},
+    Symbol,
+    Rodeo,
+    VectorSize
+};
+use rsh_lexer::{Token, LexerError};
+
+// TODO: Error recovery
+
+#[LALR]
+grammar<'a>(rodeo: &'a Rodeo);
+
+extern {
+    type Location = Loc;
+    type Error = LexerError;
+    
+    enum Token {
+        "identifier" => Token::Identifier(<Symbol>),
+        "function modifier" => Token::EntryPointStage(<EntryPointStage>),
+
+        "(" => Token::OpenParentheses,
+        "{" => Token::OpenCurlyBraces,
+        "[" => Token::OpenSquareBrackets,
+
+        ")" => Token::CloseParentheses,
+        "}" => Token::CloseCurlyBraces,
+        "]" => Token::CloseSquareBrackets,
+
+        "uint" => Token::Uint(<u64>),
+        "int"=> Token::Int(<i64>),
+        "float"=> Token::Float(<f64>),
+        "bool"=> Token::Bool(<bool>),
+
+        "2" => Token::Two,
+        "3" => Token::Three,
+        "4" => Token::Four,
+
+        "scalar type" => Token::ScalarType(<ScalarType>),
+        
+        "global" => Token::Global,
+        "const" => Token::Const,
+        "fn" => Token::Fn,
+        "Fn" => Token::FnTrait,
+        "return" => Token::Return,
+        "if" => Token::If,
+        "else" => Token::Else,
+        "let" => Token::Let,
+        "struct" => Token::Struct,
+
+        "Vector" => Token::Vector,
+        "Matrix" => Token::Matrix,
+
+        ":" => Token::Colon,
+        "=" => Token::Equal,
+        "->" => Token::Arrow,
+        "," => Token::Comma,
+        ";" => Token::SemiColon,
+        "." => Token::Dot,
+        ".." => Token::Dot2,
+
+        "||" => Token::LogicalOr,
+        "&&" => Token::LogicalAnd,
+
+        "!=" => Token::Inequality,
+        "==" => Token::Equality,
+        ">" => Token::Greater,
+        ">=" => Token::GreaterEqual,
+        "<" => Token::Less,
+        "<=" => Token::LessEqual,
+
+        "|" => Token::BitWiseOr,
+        "^" => Token::BitWiseXor,
+        "&" => Token::BitWiseAnd,
+
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "/" => Token::Slash,
+        "*" => Token::Star,
+        "!" => Token::Bang,
+        "%" => Token::Percent,
+
+        "v2" => Token::V2,
+        "v3" => Token::V3,
+        "v4" => Token::V4,
+        "m2" => Token::M2,
+        "m3" => Token::M3,
+        "m4" => Token::M4,
+
+        "position" => Token::Position,
+        "in" => Token::In,
+        "out" => Token::Out,
+        "uniform" => Token::Uniform,
+        "set" => Token::Set,
+        "binding" => Token::Binding
+    }
+}
+
+Comma<T>: Vec<T> = {
+    <v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => {
+            let mut v = v;
+            v.push(e);
+            v
+        }
+    }
+};
+
+CommaAtLeastOne<T>: Vec<T> = {
+    <T> => vec![<>],
+    <a: T> "," <mut v: Comma<T>> => {
+        let mut tmp = vec![a];
+        tmp.append(&mut v);
+        tmp
+    }
+};
+
+CommaAtLeastTwo<T>: Vec<T> = {
+    <a: T> "," <b: T> => vec![a, b],
+    <a: T> "," <b: T> "," <mut v: Comma<T>> => {
+        let mut tmp = vec![a, b];
+        tmp.append(&mut v);
+        tmp
+    }
+}
+
+#[inline]
+Spanned<Rule>: Spanned<Rule> =
+    <l: @L> <rule: Rule> <r: @R> =>
+        Spanned {
+            node: rule,
+            span: Span::range(l,r)
+        };
+
+#[inline]
+Box<Rule>: Box<Rule> = <rule: Rule> => Box::new(rule);
+
+pub Program = Item;
+
+Item: Item = {
+    <l: @L> "struct" <ident: Ident> <kind: Struct> <r: @R> 
+        => Item {
+                ident,
+                kind: ItemKind::Struct(kind),
+                span: Span::range(l,r)
+            },
+
+    <l: @L> "global" <binding: GlobalBinding> <ident: Ident> <ty: Ty> ";" <r: @R>
+            => Item {
+                    ident,
+                    kind: ItemKind::Global(binding, ty),
+                    span: Span::range(l,r)
+                },
+
+    <l: @L> "fn" <stage: "function modifier"> <ident: Ident>
+        <sig_l: @L> "(" ")" <sig_r: @R> <body: Block> <r: @R>
+        => Item {
+                    ident,
+                    kind: ItemKind::EntryPoint(stage, Function {
+                        sig: FnSig {
+                            args: Vec::new(),
+                            ret: None,
+                            span: Span::range(sig_l, sig_r)
+                        },
+                        body
+                    }),
+                    span: Span::range(l,r)
+                },
+
+    <l: @L> "fn" <ident: Ident> <generics: Generics> <fun: Fn> <r: @R>
+        => Item {
+                ident,
+                kind: ItemKind::Fn(generics, fun),
+                span: Span::range(l,r)
+            },
+
+    <l: @L> "const" <ident: Ident> <constant: Constant> <r: @R>
+        => Item {
+                ident,
+                kind: ItemKind::Const(constant),
+                span: Span::range(l,r)
+            },
+}
+
+Fn: Function = <sig: FnSig> <body: Block> => Function { <> };
+
+FnSig: FnSig = <l: @L> "(" <args: Comma<IdentTypePair>> ")" <ret: Return?> <r: @R> 
+    =>  FnSig {
+        args,
+        ret,
+        span: Span::range(l,r)
+    };
+
+Struct: StructKind = {
+    "{" <CommaAtLeastOne<StructField>> "}" => StructKind::Struct(<>),
+    "(" <CommaAtLeastOne<Ty>> ")" ";" => StructKind::Tuple (<>),
+    ";" => StructKind::Unit
+}
+
+StructField: StructField = <l: @L> <ident: Ident> <ty: Ty> <r: @R>
+    => StructField {
+        ident,
+        ty,
+        span: Span::range(l,r)
+    };
+
+Constant: Constant = ":" <ty: Ty> "=" <init: Expr> ";" => Constant { <> };
+
+Generics: Generics = {
+    <l: @L> "<" <params: CommaAtLeastOne<GenericParam>> ">" <r: @R> => Generics {
+            params,
+            span: Span::range(l,r)
+        },
+
+    () => Generics {
+            params: Vec::new(),
+            span: Span::none()
+        }
+};
+
+GenericParam: GenericParam = <l: @L> <ident: Ident> <bound: (":" <GenericBound>)?> <r: @R> 
+    => GenericParam { 
+            ident,
+            bound,
+            span: Span::range(l,r)
+        };
+
+IdentTypePair: IdentTypePair = <l: @L> <ident: Ident> ":" <ty: Ty> <r: @R>
+    => IdentTypePair { 
+        ident,
+        ty,
+        span: Span::range(l,r)
+    };
+
+Return = "->" <Ty>;
+
+GenericBound: GenericBound = <l: @L> <kind: GenericBoundKind> <r: @R> 
+    => GenericBound { 
+        kind,
+        span: Span::range(l,r)
+    };
+
+GenericBoundKind: GenericBoundKind = {
+    "Fn" "(" <args: Comma<Ty>> ")" <ret: Return?>
+        => GenericBoundKind::Fn { <> }
+}
+
+Ty: Ty = <l: @L> <kind: TypeKind> <r: @R>
+    => Ty { kind, span: Span::range(l,r) };
+
+TypeKind: TypeKind = {
+    <AtomType> => <>,
+    "(" <AtomType> ")" => <>,
+    TupleParser => <>
+}
+
+TupleParser: TypeKind = "(" <CommaAtLeastTwo<Ty>> ")" => TypeKind::Tuple(<>);
+
+AtomType: TypeKind = {
+    Ident => TypeKind::Named(<>),
+    "scalar type" => TypeKind::ScalarType(<>),
+    "Vector" "<" <VectorSize> "," <"scalar type"> ">"  => TypeKind::Vector(<>),
+    "Matrix" "<" <columns: VectorSize> "," <rows: VectorSize> ">" => TypeKind::Matrix { <> },
+}
+
+VectorSize: VectorSize = {
+    "2" => VectorSize::Bi,
+    "3" => VectorSize::Tri,
+    "4" => VectorSize::Quad,
+}
+
+Ident: Ident = <l: @L> <symbol: Symbol> <r: @R> => Ident {
+        symbol,
+        span: Span::range(l,r)
+    };
+
+Symbol: Symbol = {
+    "identifier" => <>,
+    "position" => rodeo.get_or_intern_static("position")
+}
+
+GlobalBinding: GlobalBinding = {
+    "position" => GlobalBinding::Position,
+    "in" "=" <Location> => GlobalBinding::Input(<>),
+    "out" "=" <Location> => GlobalBinding::Output(<>),
+    "uniform" "{" 
+        "set" "=" <set: Location>
+        "binding" "=" <binding: Location>
+    "}" => GlobalBinding::Uniform { <> }
+}
+
+Location: u32 = Uint => <> as u32;
+
+Literal: Literal = {
+    Uint => Literal::Uint(<>),
+    "int" => Literal::Int(<>),
+    "float" => Literal::Float(<>),
+    "bool" => Literal::Boolean(<>),
+}
+
+Uint: u64 = {
+    "2" => 2,
+    "3" => 3,
+    "4" => 4,
+    "uint" => <>
+}
+
+Block: Block = {
+    <l: @L> "{" 
+        <mut stmts: (<Stmt> ";")*> <f: FinalStmt?> 
+    "}" <r: @R> => {
+        if let Some(f) = f {
+            stmts.push(f)
+        }
+
+        Block {
+            stmts,
+            span: Span::range(l,r)
+        }
+    },
+}
+
+Stmt: Stmt = <l: @L> <kind: StmtKind> <r: @R> 
+    => Stmt {
+        kind,
+        span: Span::range(l,r)
+    };
+
+StmtKind: StmtKind = {
+    Expr => StmtKind::ExprSemi(<>),
+
+    "let" <Local> => StmtKind::Local(<>),
+
+    <ident: Ident> "=" <expr: Expr> => StmtKind::Assignment { <> },
+}
+
+Local: Local = <ident: Ident> <ty: (":" <Ty>)?> "=" <init: Expr> => Local { <> };
+
+FinalStmt: Stmt = <l: @L> <expr: Expr> <r: @R> 
+    => Stmt {
+        kind: StmtKind::Expr(expr),
+        span: Span::range(l,r)
+    };
+
+Tier<Op,NextTier>: Expr = {
+    <l: @L> <left: Box<Tier<Op,NextTier>>> 
+        <op: Spanned<Op>>
+        <right: Box<NextTier>> <r: @R>
+            => Expr { 
+                kind: ExprKind::BinaryOp {
+                    left, op, right
+                },
+                span: Span::range(l,r)
+            },
+
+    NextTier
+};
+
+Expr: Expr = {
+    <l: @L> "return" <expr: Box<Expr>?> <r: @R>
+        =>  Expr {
+                kind: ExprKind::Return(expr),
+                span: Span::range(l,r)
+            },
+
+    LogicalOr => <>
+}
+
+LogicalOr = Tier<LogicalOrOP, LogicalAnd>;
+LogicalOrOP: BinaryOp = "||" => BinaryOp::LogicalOr;
+
+LogicalAnd = Tier<LogicalAndOP, Equality>;
+LogicalAndOP: BinaryOp = "&&" => BinaryOp::LogicalAnd;
+
+Equality = Tier<EqualityOp, Comparison>;
+EqualityOp: BinaryOp = {
+    "==" => BinaryOp::Equality,
+    "!=" => BinaryOp::Inequality,
+}
+
+Comparison = Tier<ComparisonOp, BitWiseOr>;
+ComparisonOp: BinaryOp = {
+    ">" => BinaryOp::Greater,
+    ">=" => BinaryOp::GreaterEqual,
+    "<" => BinaryOp::Less,
+    "<=" => BinaryOp::LessEqual,
+}
+
+BitWiseOr = Tier<BitWiseOrOP, BitWiseXor>;
+BitWiseOrOP: BinaryOp = "|" => BinaryOp::BitWiseOr;
+
+BitWiseXor = Tier<BitWiseXorOP, BitWiseAnd>;
+BitWiseXorOP: BinaryOp = "^" => BinaryOp::BitWiseXor;
+
+BitWiseAnd = Tier<BitWiseAndOP, Additive>;
+BitWiseAndOP: BinaryOp = "&" => BinaryOp::BitWiseAnd;
+
+Additive = Tier<AdditiveOp, Multiplicative>;
+AdditiveOp: BinaryOp = {
+    "+" => BinaryOp::Addition,
+    "-" => BinaryOp::Subtraction,
+}
+
+Multiplicative = Tier<MultiplicativeOp, Unary>;
+MultiplicativeOp: BinaryOp = {
+    "/" => BinaryOp::Division,
+    "*" => BinaryOp::Multiplication,
+    "%" => BinaryOp::Remainder,
+}
+
+Unary: Expr = {
+    <l: @L> <op: Spanned<UnaryOp>> <tgt: Box<Unary>> <r: @R>
+        => Expr { 
+            kind: ExprKind::UnaryOp { op, tgt },
+            span: Span::range(l,r)
+        },
+
+    Index => <>
+}
+
+UnaryOp: UnaryOp = {
+    "!" => UnaryOp::BitWiseNot,
+    "-" => UnaryOp::Negation
+}
+
+// TODO: Add range support
+Index: Expr = {
+    <l: @L> <base: Box<Index>> "[" <index: Box<Expr>> "]" <r: @R>
+        => Expr {
+            kind: ExprKind::Index { base, index },
+            span: Span::range(l,r)
+        },
+    Access => <>
+}
+
+Access: Expr = {
+    <l: @L> <base: Box<Access>> "." <field: Field> <r: @R>
+        => Expr {
+            kind: ExprKind::Access { base, field },
+            span: Span::range(l,r)
+        },
+    Call => <>
+}
+
+Field: Field = <l: @L> <kind: FieldKind> <r: @R>
+    => Field {
+        kind,
+        span: Span::range(l,r)
+    };
+
+FieldKind: FieldKind = {
+    Symbol => FieldKind::Symbol(<>),
+    Uint => FieldKind::Uint(<>),
+}
+
+Call: Expr = {
+    <l: @L> <fun: Box<Call>> "(" <args: Comma<Expr>> ")" <r: @R>
+        => Expr {
+            kind: ExprKind::Call { fun, args },
+            span: Span::range(l,r)
+        },
+    Atom => <>
+}
+
+Atom: Expr = {
+    "(" <Expr> ")" => <>,
+    <l: @L> <kind: AtomKind> <r: @R>
+        => Expr {
+            kind,
+            span: Span::range(l,r)
+        }
+};
+
+AtomKind: ExprKind = {
+    Literal => ExprKind::Literal(<>),
+    "(" <CommaAtLeastTwo<Expr>> ")" => ExprKind::TupleConstructor(<>),
+    <ty: Constructor> "(" <elements: CommaAtLeastOne<Expr>> ")" 
+        => ExprKind::Constructor {
+            ty: ty.0,
+            size: ty.1,
+            elements
+        },
+    Ident => ExprKind::Variable(<>),
+    If => <>
+}
+
+If: ExprKind = 
+    "if" <condition: Box<Expr>> <accept: Block> <else_ifs: ElseIf*> <reject: ("else" <Block>)?>
+        => ExprKind::If { <> };
+
+ElseIf: ElseIf = <l: @L> "else" "if" <expr: Expr> <block: Block> <r: @R>
+    => ElseIf {
+        expr,
+        block,
+        span: Span::range(l,r)
+    };
+
+Constructor: (ConstructorType, VectorSize) = {
+    "v2" => (ConstructorType::Vector, VectorSize::Bi),
+    "v3" => (ConstructorType::Vector, VectorSize::Tri),
+    "v4" => (ConstructorType::Vector, VectorSize::Quad),
+    "m2" => (ConstructorType::Matrix, VectorSize::Bi),
+    "m3" => (ConstructorType::Matrix, VectorSize::Tri),
+    "m4" => (ConstructorType::Matrix, VectorSize::Quad),
+}

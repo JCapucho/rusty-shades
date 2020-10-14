@@ -1,4 +1,4 @@
-use super::{Ident, TraitBound};
+use super::{Symbol, TraitBound};
 use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::{FastHashMap, VectorSize};
 use rsh_common::{src::Span, BinaryOp, Literal, Rodeo, ScalarType, UnaryOp};
@@ -89,7 +89,7 @@ pub enum Constraint {
     Access {
         out: TypeId,
         record: TypeId,
-        field: SrcNode<Ident>,
+        field: SrcNode<Symbol>,
     },
     Index {
         out: TypeId,
@@ -125,8 +125,8 @@ pub struct InferContext<'a> {
     constraint_id_counter: ConstraintIdCounter,
     constraints: FastHashMap<ConstraintId, Constraint>,
 
-    structs: FastHashMap<u32, Vec<(Ident, TypeId)>>,
-    functions: FastHashMap<u32, (Ident, Vec<TypeId>, TypeId)>,
+    structs: FastHashMap<u32, Vec<(Symbol, TypeId)>>,
+    functions: FastHashMap<u32, (Symbol, Vec<TypeId>, TypeId)>,
 }
 
 impl<'a> InferContext<'a> {
@@ -201,22 +201,22 @@ impl<'a> InferContext<'a> {
         id
     }
 
-    pub fn add_struct(&mut self, id: u32, fields: Vec<(Ident, TypeId)>) {
+    pub fn add_struct(&mut self, id: u32, fields: Vec<(Symbol, TypeId)>) {
         self.structs.insert(id, fields);
     }
 
-    pub fn get_struct(&self, id: u32) -> &Vec<(Ident, TypeId)> {
+    pub fn get_struct(&self, id: u32) -> &Vec<(Symbol, TypeId)> {
         self.structs
             .get(&id)
             .or_else(|| self.parent.map(|p| p.get_struct(id)))
             .unwrap()
     }
 
-    pub fn add_function(&mut self, id: u32, name: Ident, args: Vec<TypeId>, ret: TypeId) {
+    pub fn add_function(&mut self, id: u32, name: Symbol, args: Vec<TypeId>, ret: TypeId) {
         self.functions.insert(id, (name, args, ret));
     }
 
-    pub fn get_function(&self, id: u32) -> &(Ident, Vec<TypeId>, TypeId) {
+    pub fn get_function(&self, id: u32) -> &(Symbol, Vec<TypeId>, TypeId) {
         self.functions
             .get(&id)
             .or_else(|| self.parent.map(|p| p.get_function(id)))
