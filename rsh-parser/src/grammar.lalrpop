@@ -146,7 +146,7 @@ Item: Item = {
                 span: Span::range(l,r)
             },
 
-    <l: @L> "global" <binding: GlobalBinding> <ident: Ident> <ty: Ty> ";" <r: @R>
+    <l: @L> "global" <binding: GlobalBinding> <ident: Ident> ":" <ty: Ty> ";" <r: @R>
             => Item {
                     ident,
                     kind: ItemKind::Global(binding, ty),
@@ -198,7 +198,7 @@ Struct: StructKind = {
     ";" => StructKind::Unit
 }
 
-StructField: StructField = <l: @L> <ident: Ident> <ty: Ty> <r: @R>
+StructField: StructField = <l: @L> <ident: Ident> ":" <ty: Ty> <r: @R>
     => StructField {
         ident,
         ty,

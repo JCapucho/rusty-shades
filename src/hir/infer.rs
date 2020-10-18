@@ -1,9 +1,8 @@
-use super::{Symbol, TraitBound};
 use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::FastHashMap;
 use rsh_common::{
     src::{Span, Spanned},
-    BinaryOp, Ident, Literal, Rodeo, ScalarType, UnaryOp, VectorSize,
+    BinaryOp, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp, VectorSize,
 };
 use std::fmt;
 
@@ -120,6 +119,12 @@ pub enum Constraint {
         args: Vec<TypeId>,
         ret: TypeId,
     },
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TraitBound {
+    None,
+    Fn { args: Vec<TypeId>, ret: TypeId },
 }
 
 #[derive(Debug)]
@@ -497,7 +502,7 @@ impl<'a> InferContext<'a> {
                 match self.ctx.get_size(self.id) {
                     SizeInfo::Unknown => write!(f, "?"),
                     SizeInfo::Ref(id) => self.with_id(id).fmt(f),
-                    SizeInfo::Concrete(size) => write!(f, "{}", size as u8),
+                    SizeInfo::Concrete(size) => write!(f, "{}", size),
                 }
             }
         }
@@ -687,7 +692,6 @@ impl<'a> InferContext<'a> {
                 },
                 _ => Some(false),
             },
-            TraitBound::Error => Some(true),
         }
     }
 

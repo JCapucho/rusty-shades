@@ -1,3 +1,3 @@
 pub use grammar::*;
 
-mod grammar;
+#[allow(clippy::all)] mod grammar;

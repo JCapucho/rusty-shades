@@ -4,7 +4,7 @@ global in=1 color: Vector<4, Float>;
 global out=0 f_position: Vector<4, Float>;
 global out=1 f_color: Vector<4, Float>;
 
-global position gl_position;
+global position gl_position: Vector<4, Float>;
 
 const TRUE_HELP: Vector<3,Uint> = v3(1);
 const FALSE_HELP: Vector<3,Uint> = v3(2);

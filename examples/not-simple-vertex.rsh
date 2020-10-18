@@ -6,7 +6,7 @@ global out=0 v_position: Vector<3, Float>;
 global out=1 v_color: Vector<3, Float>;
 global out=2 v_normal: Vector<3, Float>;
 
-global position gl_position;
+global position gl_position: Vector<4, Float>;
 
 global uniform { 
     set=0

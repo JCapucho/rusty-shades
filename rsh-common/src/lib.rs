@@ -34,9 +34,9 @@ impl Hash for Ident {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum VectorSize {
-    Bi,
-    Tri,
-    Quad,
+    Bi = 2,
+    Tri = 3,
+    Quad = 4,
 }
 
 impl fmt::Display for VectorSize {

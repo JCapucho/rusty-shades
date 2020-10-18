@@ -417,7 +417,7 @@ impl<'a> InferContext<'a> {
                     .iter()
                     .map(|t| self.display_type_info(*t).to_string())
                     .collect::<Vec<_>>()
-                    .join(","),
+                    .join(", "),
                 self.display_type_info(out)
             ))
             .with_span(self.span(out)))
