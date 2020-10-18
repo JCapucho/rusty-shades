@@ -42,18 +42,11 @@ impl TypedNode {
             Expr::If {
                 condition,
                 accept,
-                else_ifs,
                 reject,
             } => {
                 condition.visit(f);
                 for stmt in accept.iter() {
                     stmt.visit(f);
-                }
-                for (condition, body) in else_ifs {
-                    condition.visit(f);
-                    for stmt in body.iter() {
-                        stmt.visit(f);
-                    }
                 }
                 for stmt in reject.iter() {
                     stmt.visit(f);
@@ -69,6 +62,11 @@ impl TypedNode {
             | Expr::Global(_)
             | Expr::Constant(_)
             | Expr::Function(_) => {},
+            Expr::Block(block) => {
+                for stmt in block.iter() {
+                    stmt.visit(f);
+                }
+            },
         }
     }
 }

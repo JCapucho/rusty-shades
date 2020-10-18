@@ -1,7 +1,6 @@
 use super::{InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
 use crate::error::Error;
-use naga::VectorSize;
-use rsh_common::src::Span;
+use rsh_common::{src::Span, VectorSize};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_constructor(
@@ -9,13 +8,13 @@ impl<'a> InferContext<'a> {
         out: TypeId,
         elements: Vec<TypeId>,
     ) -> Result<bool, Error> {
-        let bi_size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
-        let tri_size = self.add_size(SizeInfo::Concrete(VectorSize::Tri));
+        let bi_size = self.add_size(VectorSize::Bi);
+        let tri_size = self.add_size(VectorSize::Tri);
 
         let (base_ty, bi_ty, tri_ty, size) = match self.get(self.get_base(out)) {
             TypeInfo::Unknown => return Ok(false), // Can't infer yet
             TypeInfo::Vector(scalar, size) => {
-                let base_ty = self.insert(TypeInfo::Scalar(scalar), Span::None);
+                let base_ty = self.insert(scalar, Span::None);
                 let vec2 = self.insert(TypeInfo::Vector(scalar, bi_size), Span::None);
                 let vec3 = self.insert(TypeInfo::Vector(scalar, tri_size), Span::None);
 

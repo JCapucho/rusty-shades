@@ -1,23 +1,13 @@
 use rsh_common::{
-    src::Span, BinaryOp, EntryPointStage, Literal, ScalarType, Symbol, UnaryOp, VectorSize,
+    src::{Span, Spanned},
+    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
+    VectorSize,
 };
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Spanned<T> {
-    pub node: T,
-    pub span: Span,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     pub ident: Ident,
     pub kind: ItemKind,
-    pub span: Span,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Ident {
-    pub symbol: Symbol,
     pub span: Span,
 }
 
@@ -145,8 +135,7 @@ pub enum ExprKind {
     If {
         condition: Box<Expr>,
         accept: Block,
-        else_ifs: Vec<ElseIf>,
-        reject: Option<Block>,
+        reject: Block,
     },
     Return(Option<Box<Expr>>),
     Index {
@@ -161,13 +150,13 @@ pub enum ExprKind {
     TupleConstructor(Vec<Expr>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Field {
     pub kind: FieldKind,
     pub span: Span,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum FieldKind {
     Symbol(Symbol),
     Uint(u64),
@@ -205,16 +194,8 @@ pub enum TypeKind {
     },
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum ConstructorType {
     Vector,
     Matrix,
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub enum GlobalBinding {
-    Position,
-    Input(u32 /* location */),
-    Output(u32 /* location */),
-    Uniform { set: u32, binding: u32 },
 }

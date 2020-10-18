@@ -23,31 +23,33 @@ impl TypedNode {
 
                 Ok(match (left, right) {
                     (ConstantInner::Scalar(a), ConstantInner::Scalar(b)) => {
-                        ConstantInner::Scalar(apply_binary_op(a, *op, b))
+                        ConstantInner::Scalar(apply_binary_op(a, op.node, b))
                     },
                     (ConstantInner::Vector(mut a), ConstantInner::Vector(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
-                            .for_each(|(a, b)| *a = apply_binary_op(*a, *op, *b));
+                            .for_each(|(a, b)| *a = apply_binary_op(*a, op.node, *b));
 
                         ConstantInner::Vector(a)
                     },
                     (ConstantInner::Matrix(mut a), ConstantInner::Matrix(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
-                            .for_each(|(a, b)| *a = apply_binary_op(*a, *op, *b));
+                            .for_each(|(a, b)| *a = apply_binary_op(*a, op.node, *b));
 
                         ConstantInner::Matrix(a)
                     },
                     (ConstantInner::Scalar(a), ConstantInner::Vector(mut b))
                     | (ConstantInner::Vector(mut b), ConstantInner::Scalar(a)) => {
-                        b.iter_mut().for_each(|b| *b = apply_binary_op(*b, *op, a));
+                        b.iter_mut()
+                            .for_each(|b| *b = apply_binary_op(*b, op.node, a));
 
                         ConstantInner::Vector(b)
                     },
                     (ConstantInner::Scalar(a), ConstantInner::Matrix(mut b))
                     | (ConstantInner::Matrix(mut b), ConstantInner::Scalar(a)) => {
-                        b.iter_mut().for_each(|b| *b = apply_binary_op(*b, *op, a));
+                        b.iter_mut()
+                            .for_each(|b| *b = apply_binary_op(*b, op.node, a));
 
                         ConstantInner::Matrix(b)
                     },
@@ -58,14 +60,14 @@ impl TypedNode {
                 let tgt = tgt.solve(get_constant, locals, rodeo)?;
 
                 Ok(match tgt {
-                    ConstantInner::Scalar(a) => ConstantInner::Scalar(apply_unary_op(a, *op)),
+                    ConstantInner::Scalar(a) => ConstantInner::Scalar(apply_unary_op(a, op.node)),
                     ConstantInner::Vector(mut a) => {
-                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, *op));
+                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, op.node));
 
                         ConstantInner::Vector(a)
                     },
                     ConstantInner::Matrix(mut a) => {
-                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, *op));
+                        a.iter_mut().for_each(|a| *a = apply_unary_op(*a, op.node));
 
                         ConstantInner::Matrix(a)
                     },
@@ -197,7 +199,6 @@ impl TypedNode {
             crate::hir::Expr::If {
                 condition,
                 accept,
-                else_ifs,
                 reject,
             } => {
                 let condition = condition.solve(get_constant, locals, rodeo)?;
@@ -209,18 +210,6 @@ impl TypedNode {
                 if condition {
                     accept.solve(get_constant, locals, rodeo)
                 } else {
-                    for (condition, block) in else_ifs {
-                        let condition = condition.solve(get_constant, locals, rodeo)?;
-                        let condition = match condition {
-                            ConstantInner::Scalar(Literal::Boolean(val)) => val,
-                            _ => unreachable!(),
-                        };
-
-                        if condition {
-                            return block.solve(get_constant, locals, rodeo);
-                        }
-                    }
-
                     reject.solve(get_constant, locals, rodeo)
                 }
             },
@@ -230,6 +219,7 @@ impl TypedNode {
 
                 Ok(base.index(&index))
             },
+            crate::hir::Expr::Block(block) => block.solve(get_constant, locals, rodeo),
         }
     }
 }

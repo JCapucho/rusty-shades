@@ -1,16 +1,15 @@
 use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, hir::Symbol, node::SrcNode};
-use naga::VectorSize;
-use rsh_common::src::Span;
+use crate::error::Error;
+use rsh_common::{src::Span, Ident, VectorSize};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_access(
         &mut self,
         out: TypeId,
         record: TypeId,
-        field: SrcNode<Symbol>,
+        field: Ident,
     ) -> Result<bool, Error> {
-        let field_str = self.rodeo.resolve(field.inner());
+        let field_str = self.rodeo.resolve(&field);
 
         match self.get(self.get_base(record)) {
             TypeInfo::Unknown => Ok(false), // Can't infer yet
@@ -27,7 +26,7 @@ impl<'a> InferContext<'a> {
                         field_str,
                         self.display_type_info(record),
                     ))
-                    .with_span(field.span())
+                    .with_span(field.span)
                     .with_span(self.span(record)))
                 }
             },
@@ -38,7 +37,7 @@ impl<'a> InferContext<'a> {
                         field_str,
                         self.display_type_info(record),
                     ))
-                    .with_span(field.span())
+                    .with_span(field.span)
                     .with_span(self.span(record))
                 })?;
 
@@ -48,7 +47,7 @@ impl<'a> InferContext<'a> {
                         idx,
                         self.display_type_info(record),
                     ))
-                    .with_span(field.span())
+                    .with_span(field.span)
                     .with_span(self.span(record))
                 })?;
 
@@ -64,7 +63,7 @@ impl<'a> InferContext<'a> {
                             "Cannot build vector with {} components",
                             field_str.len(),
                         ))
-                        .with_span(field.span())
+                        .with_span(field.span)
                         .with_span(self.span(record)));
                     }
 
@@ -80,25 +79,25 @@ impl<'a> InferContext<'a> {
                                 "No such component {} in vector",
                                 c,
                             ))
-                            .with_span(field.span())
+                            .with_span(field.span)
                             .with_span(self.span(record)));
                         }
                     }
 
                     let ty = match field_str.len() {
-                        1 => self.insert(TypeInfo::Scalar(scalar), Span::None),
+                        1 => self.insert(scalar, Span::None),
                         2 => {
-                            let size = self.add_size(SizeInfo::Concrete(VectorSize::Bi));
+                            let size = self.add_size(VectorSize::Bi);
 
                             self.insert(TypeInfo::Vector(scalar, size), Span::None)
                         },
                         3 => {
-                            let size = self.add_size(SizeInfo::Concrete(VectorSize::Tri));
+                            let size = self.add_size(VectorSize::Tri);
 
                             self.insert(TypeInfo::Vector(scalar, size), Span::None)
                         },
                         4 => {
-                            let size = self.add_size(SizeInfo::Concrete(VectorSize::Quad));
+                            let size = self.add_size(VectorSize::Quad);
 
                             self.insert(TypeInfo::Vector(scalar, size), Span::None)
                         },
@@ -114,7 +113,7 @@ impl<'a> InferContext<'a> {
                 "Type '{}' does not support field access",
                 self.display_type_info(record),
             ))
-            .with_span(field.span())
+            .with_span(field.span)
             .with_span(self.span(record))),
         }
     }

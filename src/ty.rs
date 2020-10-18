@@ -1,6 +1,5 @@
 use crate::node::SrcNode;
-use naga::VectorSize;
-use rsh_common::ScalarType;
+use rsh_common::{ScalarType, VectorSize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

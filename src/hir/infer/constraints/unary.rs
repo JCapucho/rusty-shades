@@ -1,12 +1,15 @@
 use super::{InferContext, ScalarInfo, TypeId, TypeInfo};
-use crate::{error::Error, node::SrcNode};
-use rsh_common::{src::Span, ScalarType, UnaryOp};
+use crate::error::Error;
+use rsh_common::{
+    src::{Span, Spanned},
+    ScalarType, UnaryOp,
+};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_unary(
         &mut self,
         out: TypeId,
-        op: SrcNode<UnaryOp>,
+        op: Spanned<UnaryOp>,
         a: TypeId,
     ) -> Result<bool, Error> {
         #[allow(clippy::type_complexity)]
@@ -75,17 +78,17 @@ impl<'a> InferContext<'a> {
 
         let mut matches = matchers
             .iter()
-            .filter_map(|matcher| matcher(self, out, *op, a))
+            .filter_map(|matcher| matcher(self, out, op.node, a))
             .collect::<Vec<_>>();
 
         if matches.is_empty() {
             Err(Error::custom(format!(
                 "Cannot resolve {} '{}' as '{}'",
-                *op,
+                op,
                 self.display_type_info(a),
                 self.display_type_info(out),
             ))
-            .with_span(op.span())
+            .with_span(op.span)
             .with_span(self.span(a)))
         } else if matches.len() > 1 {
             // Still ambiguous, so we can't infer anything

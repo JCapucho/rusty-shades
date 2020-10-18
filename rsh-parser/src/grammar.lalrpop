@@ -1,14 +1,8 @@
 use rsh_ast::*;
 use rsh_common::{
-    EntryPointStage,
-    Literal,
-    ScalarType,
-    BinaryOp,
-    UnaryOp,
-    src::{Span, Loc},
-    Symbol,
-    Rodeo,
-    VectorSize
+    src::{Loc, Span, Spanned},
+    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
+    VectorSize,
 };
 use rsh_lexer::{Token, LexerError};
 
@@ -142,7 +136,7 @@ Spanned<Rule>: Spanned<Rule> =
 #[inline]
 Box<Rule>: Box<Rule> = <rule: Rule> => Box::new(rule);
 
-pub Program = Item;
+pub Program = Item*;
 
 Item: Item = {
     <l: @L> "struct" <ident: Ident> <kind: Struct> <r: @R> 
@@ -492,8 +486,28 @@ AtomKind: ExprKind = {
 }
 
 If: ExprKind = 
-    "if" <condition: Box<Expr>> <accept: Block> <else_ifs: ElseIf*> <reject: ("else" <Block>)?>
+    "if" <condition: Box<Expr>> <accept: Block> <reject: Else>
         => ExprKind::If { <> };
+
+Else: Block = {
+    "else" <Block> => <>,
+    "else" <l: @L> <kind: If> <r: @R> => Block {
+        stmts: vec![
+            Stmt {
+                kind: StmtKind::Expr(Expr {
+                    kind,
+                    span: Span::range(l,r)
+                }),
+                span: Span::range(l,r)
+            },
+        ],
+        span: Span::range(l,r)
+    },
+    () => Block {
+        stmts: Vec::new(),
+        span: Span::None
+    }
+}
 
 ElseIf: ElseIf = <l: @L> "else" "if" <expr: Expr> <block: Block> <r: @R>
     => ElseIf {

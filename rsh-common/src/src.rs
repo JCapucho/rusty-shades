@@ -140,3 +140,19 @@ impl From<(usize, usize)> for Span {
 impl<T: Into<Loc>> From<Range<T>> for Span {
     fn from(range: Range<T>) -> Self { Self::range(range.start.into(), range.end.into()) }
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub span: Span,
+}
+
+impl<T: PartialEq> PartialEq for Spanned<T> {
+    fn eq(&self, other: &Self) -> bool { self.node == other.node }
+}
+
+impl<T: Eq> Eq for Spanned<T> {}
+
+impl<T: fmt::Display> fmt::Display for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.node.fmt(f) }
+}

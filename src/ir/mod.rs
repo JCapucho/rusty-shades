@@ -7,7 +7,8 @@ use crate::{
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 use rsh_common::{
-    src::Span, BinaryOp, EntryPointStage, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
+    src::Span, BinaryOp, EntryPointStage, GlobalBinding, Literal, Rodeo, ScalarType, Symbol,
+    UnaryOp,
 };
 
 pub type TypedExpr = Node<Expr, Type>;
@@ -56,9 +57,9 @@ pub enum Statement {
     If {
         condition: TypedExpr,
         accept: Vec<Statement>,
-        else_ifs: Vec<(TypedExpr, Vec<Statement>)>,
         reject: Vec<Statement>,
     },
+    Block(Vec<Statement>),
 }
 
 #[derive(Debug, Clone)]
@@ -154,7 +155,7 @@ impl hir::Module {
             let global = global.into_inner();
 
             match global.modifier {
-                crate::ast::GlobalBinding::Position => {
+                GlobalBinding::Position => {
                     globals.insert(pos, Global {
                         name: global.name,
                         ty: global.ty.clone(),
@@ -174,7 +175,7 @@ impl hir::Module {
                         frag: pos + 1,
                     });
                 },
-                crate::ast::GlobalBinding::Input(location) => {
+                GlobalBinding::Input(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
                             Error::custom(String::from(
@@ -193,7 +194,7 @@ impl hir::Module {
 
                     global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
-                crate::ast::GlobalBinding::Output(location) => {
+                GlobalBinding::Output(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
                             Error::custom(String::from(
@@ -212,7 +213,7 @@ impl hir::Module {
 
                     global_lookups.insert(id, GlobalLookup::ContextLess(pos));
                 },
-                crate::ast::GlobalBinding::Uniform { set, binding } => {
+                GlobalBinding::Uniform { set, binding } => {
                     globals.insert(pos, Global {
                         name: global.name,
                         ty: global.ty,
@@ -405,7 +406,7 @@ impl SrcNode<hir::EntryPoint> {
 
         if errors.is_empty() {
             Ok(EntryPoint {
-                name: func.name,
+                name: func.name.symbol,
                 stage: func.stage,
                 body,
                 locals: func.locals,
@@ -531,12 +532,16 @@ impl hir::TypedNode {
                 let left = fallthrough!(left.build_ir(builder, sta_builder, body, nested))?;
                 let right = fallthrough!(right.build_ir(builder, sta_builder, body, nested))?;
 
-                Expr::BinaryOp { left, right, op }
+                Expr::BinaryOp {
+                    left,
+                    right,
+                    op: op.node,
+                }
             },
             hir::Expr::UnaryOp { tgt, op } => {
                 let tgt = fallthrough!(tgt.build_ir(builder, sta_builder, body, nested))?;
 
-                Expr::UnaryOp { tgt, op }
+                Expr::UnaryOp { tgt, op: op.node }
             },
             hir::Expr::Call { fun, args } => {
                 let generics = monomorphize::collect(
@@ -810,7 +815,6 @@ impl hir::TypedNode {
             hir::Expr::If {
                 condition,
                 accept,
-                else_ifs,
                 reject,
             } => {
                 let local = sta_builder.locals.len() as u32;
@@ -838,36 +842,6 @@ impl hir::TypedNode {
                         }
 
                         body
-                    },
-                    else_ifs: {
-                        let mut blocks = Vec::with_capacity(else_ifs.len());
-
-                        for (condition, block) in else_ifs {
-                            let condition =
-                                fallthrough!(condition.build_ir(builder, sta_builder, body, None))?;
-
-                            let mut nested_body = vec![];
-
-                            if !block_returns(&block, &ty) {
-                                errors.push(
-                                    Error::custom(String::from("Block doesn't return"))
-                                        .with_span(block.span()),
-                                )
-                            }
-
-                            for sta in block.into_inner() {
-                                errors.append(&mut sta.build_ir(
-                                    builder,
-                                    sta_builder,
-                                    &mut nested_body,
-                                    Some(local),
-                                ));
-                            }
-
-                            blocks.push((condition, nested_body));
-                        }
-
-                        blocks
                     },
                     reject: {
                         let mut body = vec![];
@@ -905,6 +879,36 @@ impl hir::TypedNode {
             },
             hir::Expr::Constant(id) => Expr::Constant(id),
             hir::Expr::Function(_) => unreachable!(),
+            hir::Expr::Block(block) => {
+                let local = sta_builder.locals.len() as u32;
+                sta_builder.locals.insert(local, ty.clone());
+
+                let sta = Statement::Block({
+                    let mut body = vec![];
+
+                    if !block_returns(&block, &ty) {
+                        errors.push(
+                            Error::custom(String::from("Block doesn't return"))
+                                .with_span(block.span()),
+                        )
+                    }
+
+                    for sta in block.into_inner() {
+                        errors.append(&mut sta.build_ir(
+                            builder,
+                            sta_builder,
+                            &mut body,
+                            Some(local),
+                        ));
+                    }
+
+                    body
+                });
+
+                body.push(sta);
+
+                Expr::Local(local)
+            },
         };
 
         if errors.is_empty() {

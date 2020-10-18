@@ -1,13 +1,15 @@
 use crate::{
-    ast::{self, Block, GlobalBinding, IdentTypePair, Item},
+    ast::{self, Block},
     error::Error,
     node::{Node, SrcNode},
     ty::Type,
     AssignTarget,
 };
-use naga::{FastHashMap, VectorSize};
+use naga::FastHashMap;
 use rsh_common::{
-    src::Span, BinaryOp, EntryPointStage, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
+    src::{Span, Spanned},
+    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
+    VectorSize,
 };
 
 mod infer;
@@ -74,7 +76,7 @@ pub struct Constant {
 
 #[derive(Debug)]
 pub struct EntryPoint {
-    pub name: Symbol,
+    pub name: Ident,
     pub stage: EntryPointStage,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
@@ -100,18 +102,17 @@ impl Statement<(TypeId, Span)> {
     }
 }
 
-type ElseIf<M> = (Node<Expr<M>, M>, SrcNode<Vec<Statement<M>>>);
-
 #[derive(Debug, Clone)]
 pub enum Expr<M> {
+    Block(SrcNode<Vec<Statement<M>>>),
     BinaryOp {
         left: Node<Self, M>,
-        op: BinaryOp,
+        op: Spanned<BinaryOp>,
         right: Node<Self, M>,
     },
     UnaryOp {
         tgt: Node<Self, M>,
-        op: UnaryOp,
+        op: Spanned<UnaryOp>,
     },
     Call {
         fun: Node<Self, M>,
@@ -120,7 +121,7 @@ pub enum Expr<M> {
     Literal(Literal),
     Access {
         base: Node<Self, M>,
-        field: Symbol,
+        field: Ident,
     },
     Constructor {
         elements: Vec<Node<Self, M>>,
@@ -134,7 +135,6 @@ pub enum Expr<M> {
     If {
         condition: Node<Self, M>,
         accept: SrcNode<Vec<Statement<M>>>,
-        else_ifs: Vec<ElseIf<M>>,
         reject: SrcNode<Vec<Statement<M>>>,
     },
     Index {
@@ -188,7 +188,6 @@ impl InferNode {
                 Expr::If {
                     condition,
                     accept,
-                    else_ifs,
                     reject,
                 } => Expr::If {
                     condition: condition.into_expr(infer_ctx)?,
@@ -199,20 +198,6 @@ impl InferNode {
                             .collect::<Result<_, _>>()?,
                         accept.span(),
                     ),
-                    else_ifs: else_ifs
-                        .into_iter()
-                        .map(|(expr, a)| {
-                            Ok((
-                                expr.into_expr(infer_ctx)?,
-                                SrcNode::new(
-                                    a.iter()
-                                        .map(|s| s.clone().into_statement(infer_ctx))
-                                        .collect::<Result<_, _>>()?,
-                                    a.span(),
-                                ),
-                            ))
-                        })
-                        .collect::<Result<_, Error>>()?,
                     reject: SrcNode::new(
                         reject
                             .iter()
@@ -225,6 +210,13 @@ impl InferNode {
                     base: base.into_expr(infer_ctx)?,
                     index: index.into_expr(infer_ctx)?,
                 },
+                Expr::Block(block) => Expr::Block(SrcNode::new(
+                    block
+                        .iter()
+                        .map(|a| a.clone().into_statement(infer_ctx))
+                        .collect::<Result<_, _>>()?,
+                    block.span(),
+                )),
             },
             (infer_ctx.reconstruct(ty, span)?.into_inner(), span),
         ))
@@ -240,7 +232,7 @@ struct PartialGlobal {
 #[derive(Debug)]
 struct PartialConstant {
     id: u32,
-    init: SrcNode<ast::Expression>,
+    init: ast::Expr,
     ty: TypeId,
 }
 
@@ -249,15 +241,15 @@ struct PartialFunction {
     id: u32,
     args: FastHashMap<Symbol, (u32, TypeId)>,
     ret: TypeId,
-    body: SrcNode<Block>,
+    body: Block,
     generics: Vec<(Symbol, TraitBound)>,
 }
 
 #[derive(Debug)]
 struct PartialEntryPoint {
-    name: Symbol,
+    name: Ident,
     stage: EntryPointStage,
-    body: SrcNode<Block>,
+    body: Block,
 }
 
 #[derive(Debug)]
@@ -285,9 +277,9 @@ struct PartialModule {
 }
 
 impl Module {
-    pub fn build(statements: &[SrcNode<ast::Item>], rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
+    pub fn build(items: &[ast::Item], rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
         let mut infer_ctx = InferContext::new(rodeo);
-        let partial = Self::first_pass(statements, &mut infer_ctx)?;
+        let partial = Self::first_pass(items, rodeo, &mut infer_ctx)?;
 
         let mut errors = vec![];
         let mut functions = FastHashMap::default();
@@ -333,12 +325,13 @@ impl Module {
         for (name, func) in partial.functions.iter() {
             let mut scoped = infer_ctx.scoped();
 
-            let mut body = vec![];
             let mut locals = vec![];
             let mut locals_lookup = FastHashMap::default();
 
             let mut builder = StatementBuilder {
                 infer_ctx: &mut scoped,
+                rodeo,
+
                 locals: &mut locals,
                 args: &func.args,
                 globals_lookup: &globals_lookup,
@@ -348,12 +341,7 @@ impl Module {
                 constants: &partial.constants,
             };
 
-            for sta in func.body.inner() {
-                match sta.build_hir(&mut builder, &mut locals_lookup, func.ret) {
-                    Ok(s) => body.push(s),
-                    Err(mut e) => errors.append(&mut e),
-                }
-            }
+            let body = build_block(&func.body, &mut builder, &mut locals_lookup, func.ret)?;
 
             match scoped.solve_all() {
                 Ok(_) => {},
@@ -429,7 +417,6 @@ impl Module {
             .map(|func| {
                 let mut scoped = infer_ctx.scoped();
 
-                let mut body = vec![];
                 let mut locals = vec![];
                 let mut locals_lookup = FastHashMap::default();
 
@@ -437,6 +424,8 @@ impl Module {
 
                 let mut builder = StatementBuilder {
                     infer_ctx: &mut scoped,
+                    rodeo,
+
                     locals: &mut locals,
                     args: &FastHashMap::default(),
                     globals_lookup: &globals_lookup,
@@ -446,12 +435,7 @@ impl Module {
                     constants: &partial.constants,
                 };
 
-                for sta in func.body.inner() {
-                    match sta.build_hir(&mut builder, &mut locals_lookup, ret) {
-                        Ok(s) => body.push(s),
-                        Err(mut e) => errors.append(&mut e),
-                    }
-                }
+                let body = build_block(&func.body, &mut builder, &mut locals_lookup, ret).unwrap();
 
                 match scoped.solve_all() {
                     Ok(_) => {},
@@ -534,6 +518,8 @@ impl Module {
 
                     let mut const_builder = StatementBuilder {
                         infer_ctx: &mut scoped,
+                        rodeo,
+
                         locals: &mut locals,
                         args: &FastHashMap::default(),
                         globals_lookup: &FastHashMap::default(),
@@ -543,7 +529,8 @@ impl Module {
                         constants: &partial.constants,
                     };
 
-                    let expr = partial_const.init.build_hir(
+                    let expr = build_expr(
+                        &partial_const.init,
                         &mut const_builder,
                         &mut FastHashMap::default(),
                         partial_const.ty,
@@ -602,7 +589,8 @@ impl Module {
     }
 
     fn first_pass(
-        items: &[SrcNode<ast::Item>],
+        items: &[ast::Item],
+        rodeo: &Rodeo,
         infer_ctx: &mut InferContext,
     ) -> Result<PartialModule, Vec<Error>> {
         let mut errors = Vec::new();
@@ -617,62 +605,46 @@ impl Module {
         let mut struct_id = 0;
         let mut func_id = 0;
 
-        for statement in items {
-            match statement.inner() {
-                Item::StructDef { ident, fields } => {
-                    if let Some(span) = names.get(ident.inner()) {
-                        errors.push(
-                            Error::custom(String::from("Name already defined"))
-                                .with_span(ident.span())
-                                .with_span(*span),
-                        );
-                        continue;
-                    }
+        for item in items {
+            if let Some(span) = names.get(&item.ident.symbol) {
+                errors.push(
+                    Error::custom(String::from("Name already defined"))
+                        .with_span(item.ident.span)
+                        .with_span(*span),
+                );
+                continue;
+            }
+            names.insert(item.ident.symbol, item.ident.span);
 
-                    names.insert(*ident.inner(), ident.span());
-
+            match item.kind {
+                ast::ItemKind::Struct(ref kind) => {
                     let mut builder = TypeBuilder {
                         infer_ctx,
+                        rodeo,
+
                         struct_id: &mut struct_id,
                         generics: &[],
                         items,
                         structs: &mut structs,
                     };
 
-                    match build_struct(ident, fields, statement.span(), &mut builder, 0) {
+                    match build_struct(kind, item.ident, item.span, &mut builder, 0) {
                         Ok(_) => {},
                         Err(mut e) => errors.append(&mut e),
                     }
                 },
-                Item::Global {
-                    modifier,
-                    ident,
-                    ty,
-                } => {
-                    if let Some(span) = names.get(ident.inner()) {
-                        errors.push(
-                            Error::custom(String::from("Name already defined"))
-                                .with_span(ident.span())
-                                .with_span(*span),
-                        );
-                        continue;
-                    }
-
-                    names.insert(*ident.inner(), ident.span());
-
+                ast::ItemKind::Global(binding, ref ty) => {
                     let mut builder = TypeBuilder {
                         infer_ctx,
+                        rodeo,
+
                         struct_id: &mut struct_id,
                         generics: &[],
                         items,
                         structs: &mut structs,
                     };
 
-                    let ty = match ty
-                        .as_ref()
-                        .map(|ty| ty.build_ast_ty(&mut builder, 0))
-                        .transpose()
-                    {
+                    let ty = match build_ast_ty(ty, &mut builder, 0) {
                         Ok(t) => t,
                         Err(mut e) => {
                             errors.append(&mut e);
@@ -680,200 +652,134 @@ impl Module {
                         },
                     };
 
-                    let ty = match modifier.inner() {
-                        GlobalBinding::Input(_)
-                        | GlobalBinding::Output(_)
-                        | GlobalBinding::Uniform { .. } => match ty {
-                            Some(t) => t,
-                            None => {
-                                errors.push(
-                                    Error::custom(String::from("Type annotation required"))
-                                        .with_span(statement.span()),
-                                );
+                    if GlobalBinding::Position == binding {
+                        let size = infer_ctx.add_size(VectorSize::Quad);
+                        let base = infer_ctx.add_scalar(ScalarType::Float);
+
+                        let vec4 = infer_ctx.insert(TypeInfo::Vector(base, size), Span::None);
+
+                        match infer_ctx.unify(ty, vec4) {
+                            Ok(_) => {},
+                            Err(e) => {
+                                errors.push(e);
                                 continue;
                             },
-                        },
-                        GlobalBinding::Position => {
-                            let size = infer_ctx.add_size(SizeInfo::Concrete(VectorSize::Quad));
-                            let base =
-                                infer_ctx.add_scalar(ScalarInfo::Concrete(ScalarType::Float));
-
-                            let vec4 = infer_ctx.insert(TypeInfo::Vector(base, size), Span::None);
-
-                            if let Some(ty) = ty {
-                                match infer_ctx.unify(ty, vec4) {
-                                    Ok(_) => {},
-                                    Err(e) => {
-                                        errors.push(e);
-                                        continue;
-                                    },
-                                }
-                            }
-
-                            vec4
-                        },
-                    };
+                        }
+                    }
 
                     globals.insert(
-                        *ident.inner(),
+                        item.ident.symbol,
                         SrcNode::new(
                             PartialGlobal {
-                                modifier: *modifier.inner(),
+                                modifier: binding,
                                 ty,
                             },
-                            statement.span(),
+                            item.span,
                         ),
                     );
                 },
-                Item::Function {
-                    modifier,
-                    ident,
-                    generics,
-                    ret,
-                    args,
-                    body,
-                } => {
+                ast::ItemKind::Fn(ref generics, ref fun) => {
                     let mut builder = TypeBuilder {
                         infer_ctx,
+                        rodeo,
+
                         struct_id: &mut struct_id,
-                        generics: &generics,
+                        generics: &generics.params,
                         items,
                         structs: &mut structs,
                     };
 
-                    if let Some(span) = names.get(ident.inner()) {
-                        errors.push(
-                            Error::custom(String::from("Name already defined"))
-                                .with_span(ident.span())
-                                .with_span(*span),
-                        );
-                    }
+                    let ret = match fun
+                        .sig
+                        .ret
+                        .as_ref()
+                        .map(|r| build_ast_ty(r, &mut builder, 0))
+                        .transpose()
+                    {
+                        Ok(t) => t.unwrap_or_else(|| {
+                            builder.infer_ctx.insert(TypeInfo::Empty, Span::None)
+                        }),
+                        Err(mut e) => {
+                            errors.append(&mut e);
+                            builder.infer_ctx.insert(
+                                TypeInfo::Empty,
+                                fun.sig.ret.as_ref().map(|r| r.span).unwrap_or(Span::None),
+                            )
+                        },
+                    };
 
-                    names.insert(*ident.inner(), ident.span());
+                    let constructed_args: FastHashMap<_, _> = fun
+                        .sig
+                        .args
+                        .iter()
+                        .enumerate()
+                        .map(|(pos, arg)| {
+                            (
+                                arg.ident.symbol,
+                                (pos as u32, match build_ast_ty(&arg.ty, &mut builder, 0) {
+                                    Ok(t) => t,
+                                    Err(mut e) => {
+                                        errors.append(&mut e);
+                                        builder.infer_ctx.insert(TypeInfo::Empty, arg.span)
+                                    },
+                                }),
+                            )
+                        })
+                        .collect();
 
-                    if let Some(stage) = modifier {
-                        if let Some(ret) = ret {
-                            errors.push(
-                                Error::custom(String::from("Entry point function can't return"))
-                                    .with_span(stage.span())
-                                    .with_span(ret.span()),
-                            );
-                        }
-
-                        if !args.is_empty() {
-                            errors.push(
-                                Error::custom(String::from(
-                                    "Entry point function can't have arguments",
-                                ))
-                                .with_span(stage.span())
-                                .with_span(args.span()),
-                            );
-                        }
-
-                        entry_points.push(SrcNode::new(
-                            PartialEntryPoint {
-                                name: *ident.inner(),
-                                stage: *stage.inner(),
-                                body: body.clone(),
-                            },
-                            statement.span(),
-                        ));
-                    } else {
-                        let ret = match ret
-                            .as_ref()
-                            .map(|r| r.build_ast_ty(&mut builder, 0))
-                            .transpose()
-                        {
-                            Ok(t) => t.unwrap_or_else(|| {
-                                builder.infer_ctx.insert(TypeInfo::Empty, Span::None)
-                            }),
-                            Err(mut e) => {
-                                errors.append(&mut e);
-                                builder.infer_ctx.insert(
-                                    TypeInfo::Empty,
-                                    ret.as_ref().map(|r| r.span()).unwrap_or(Span::None),
-                                )
-                            },
-                        };
-
-                        let constructed_args: FastHashMap<_, _> = args
-                            .iter()
-                            .enumerate()
-                            .map(|(pos, arg)| {
-                                (
-                                    *arg.ident.inner(),
-                                    (pos as u32, match arg.ty.build_ast_ty(&mut builder, 0) {
-                                        Ok(t) => t,
+                    let generics = generics
+                        .params
+                        .iter()
+                        .map(|generic| {
+                            (
+                                generic.ident.symbol,
+                                generic
+                                    .bound
+                                    .as_ref()
+                                    .map(|b| match build_trait_bound(b, &mut builder) {
+                                        Ok(bound) => bound,
                                         Err(mut e) => {
                                             errors.append(&mut e);
-                                            builder.infer_ctx.insert(TypeInfo::Empty, arg.span())
+                                            TraitBound::Error
                                         },
-                                    }),
-                                )
-                            })
-                            .collect();
+                                    })
+                                    .unwrap_or(TraitBound::None),
+                            )
+                        })
+                        .collect();
 
-                        let generics = generics
-                            .iter()
-                            .map(|generic| {
-                                (
-                                    *generic.ident.inner(),
-                                    generic
-                                        .bound
-                                        .as_ref()
-                                        .map(|b| match b.build_hir(&mut builder) {
-                                            Ok(bound) => bound,
-                                            Err(mut e) => {
-                                                errors.append(&mut e);
-                                                TraitBound::Error
-                                            },
-                                        })
-                                        .unwrap_or(TraitBound::None),
-                                )
-                            })
-                            .collect();
+                    func_id += 1;
 
-                        func_id += 1;
+                    infer_ctx.add_function(
+                        func_id,
+                        item.ident.symbol,
+                        {
+                            let mut args = constructed_args.values().collect::<Vec<_>>();
+                            args.sort_by(|a, b| a.0.cmp(&b.0));
+                            args.into_iter().map(|(_, ty)| *ty).collect()
+                        },
+                        ret,
+                    );
 
-                        infer_ctx.add_function(
-                            func_id,
-                            *ident.inner(),
-                            {
-                                let mut args = constructed_args.values().collect::<Vec<_>>();
-                                args.sort_by(|a, b| a.0.cmp(&b.0));
-                                args.into_iter().map(|(_, ty)| *ty).collect()
+                    functions.insert(
+                        item.ident.symbol,
+                        SrcNode::new(
+                            PartialFunction {
+                                id: func_id,
+                                body: fun.body.clone(),
+                                args: constructed_args,
+                                generics,
+                                ret,
                             },
-                            ret,
-                        );
-
-                        functions.insert(
-                            *ident.inner(),
-                            SrcNode::new(
-                                PartialFunction {
-                                    id: func_id,
-                                    body: body.clone(),
-                                    args: constructed_args,
-                                    generics,
-                                    ret,
-                                },
-                                statement.span(),
-                            ),
-                        );
-                    }
+                            item.span,
+                        ),
+                    );
                 },
-                Item::Const { ident, ty, init } => {
-                    if let Some(span) = names.get(ident.inner()) {
-                        errors.push(
-                            Error::custom(String::from("Name already defined"))
-                                .with_span(ident.span())
-                                .with_span(*span),
-                        );
-                    }
-
-                    names.insert(*ident.inner(), ident.span());
-
+                ast::ItemKind::Const(ref constant) => {
                     let mut builder = TypeBuilder {
                         infer_ctx,
+                        rodeo,
+
                         struct_id: &mut struct_id,
                         generics: &[],
                         items,
@@ -881,20 +787,28 @@ impl Module {
                     };
 
                     let id = constants.len() as u32;
-                    let ty = ty.build_ast_ty(&mut builder, 0)?;
+                    let ty = build_ast_ty(&constant.ty, &mut builder, 0)?;
 
                     constants.insert(
-                        *ident.inner(),
+                        item.ident.symbol,
                         SrcNode::new(
                             PartialConstant {
                                 id,
                                 ty,
-                                init: init.clone(),
+                                init: constant.init.clone(),
                             },
-                            statement.span(),
+                            item.span,
                         ),
                     );
                 },
+                ast::ItemKind::EntryPoint(stage, ref function) => entry_points.push(SrcNode::new(
+                    PartialEntryPoint {
+                        name: item.ident,
+                        stage,
+                        body: function.body.clone(),
+                    },
+                    item.span,
+                )),
             }
         }
 
@@ -913,8 +827,8 @@ impl Module {
 }
 
 fn build_struct<'a, 'b>(
-    ident: &SrcNode<Symbol>,
-    fields: &[SrcNode<IdentTypePair>],
+    kind: &ast::StructKind,
+    ident: Ident,
     span: Span,
     builder: &mut TypeBuilder<'a, 'b>,
     iter: usize,
@@ -927,22 +841,41 @@ fn build_struct<'a, 'b>(
         return Err(errors);
     }
 
-    if let Some(ty) = builder.structs.get(ident.inner()) {
+    if let Some(ty) = builder.structs.get(&ident) {
         return Ok(ty.ty);
     }
 
     let mut resolved_fields = FastHashMap::default();
 
-    for (pos, field) in fields.iter().enumerate() {
-        let ty = match field.ty.build_ast_ty(builder, iter + 1) {
-            Ok(ty) => ty,
-            Err(mut e) => {
-                errors.append(&mut e);
-                continue;
-            },
-        };
+    match kind {
+        ast::StructKind::Struct(fields) => {
+            for (pos, field) in fields.iter().enumerate() {
+                let ty = match build_ast_ty(&field.ty, builder, iter + 1) {
+                    Ok(ty) => ty,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        continue;
+                    },
+                };
 
-        resolved_fields.insert(*field.ident.inner(), (pos as u32, ty));
+                resolved_fields.insert(field.ident.symbol, (pos as u32, ty));
+            }
+        },
+        ast::StructKind::Tuple(fields) => {
+            for (pos, ty) in fields.iter().enumerate() {
+                let ty = match build_ast_ty(&ty, builder, iter + 1) {
+                    Ok(ty) => ty,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        continue;
+                    },
+                };
+
+                let symbol = builder.rodeo.get_or_intern(&pos.to_string());
+                resolved_fields.insert(symbol, (pos as u32, ty));
+            }
+        },
+        ast::StructKind::Unit => {},
     }
 
     let id = builder
@@ -958,7 +891,7 @@ fn build_struct<'a, 'b>(
     );
 
     builder.structs.insert(
-        *ident.inner(),
+        ident.symbol,
         SrcNode::new(
             PartialStruct {
                 fields: resolved_fields,
@@ -979,164 +912,158 @@ fn build_struct<'a, 'b>(
 }
 
 struct TypeBuilder<'a, 'b> {
+    rodeo: &'a Rodeo,
     infer_ctx: &'a mut InferContext<'b>,
-    items: &'a [SrcNode<ast::Item>],
+    items: &'a [ast::Item],
     structs: &'a mut FastHashMap<Symbol, SrcNode<PartialStruct>>,
     struct_id: &'a mut u32,
-    generics: &'a [SrcNode<ast::Generic>],
+    generics: &'a [ast::GenericParam],
 }
 
-impl SrcNode<ast::Type> {
-    fn build_ast_ty<'a, 'b>(
-        &self,
-        builder: &mut TypeBuilder<'a, 'b>,
-        iter: usize,
-    ) -> Result<TypeId, Vec<Error>> {
-        let mut errors = vec![];
+fn build_ast_ty<'a, 'b>(
+    ty: &ast::Ty,
+    builder: &mut TypeBuilder<'a, 'b>,
+    iter: usize,
+) -> Result<TypeId, Vec<Error>> {
+    let mut errors = vec![];
 
-        let ty = match self.inner() {
-            ast::Type::ScalarType(scalar) => {
-                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
-                builder
-                    .infer_ctx
-                    .insert(TypeInfo::Scalar(base), self.span())
-            },
-            ast::Type::Named(name) => {
-                if let Some((pos, gen)) = builder
-                    .generics
-                    .iter()
-                    .enumerate()
-                    .find(|(_, gen)| &gen.ident == name)
-                {
-                    let bound = gen
-                        .bound
-                        .as_ref()
-                        .map(|b| match b.build_hir(builder) {
-                            Ok(bound) => bound,
-                            Err(mut e) => {
-                                errors.append(&mut e);
-                                TraitBound::Error
-                            },
-                        })
-                        .unwrap_or(TraitBound::None);
-
-                    builder
-                        .infer_ctx
-                        .insert(TypeInfo::Generic(pos as u32, bound), gen.span())
-                } else if let Some(ty) = builder.structs.get(name.inner()) {
-                    ty.ty
-                } else if let Some((ident, fields, span)) =
-                    builder
-                        .items
-                        .iter()
-                        .find_map(|statement| match statement.inner() {
-                            Item::StructDef { ident, fields } if ident == name => {
-                                Some((ident, fields, statement.span()))
-                            },
-                            _ => None,
-                        })
-                {
-                    match build_struct(ident, fields, span, builder, iter + 1) {
-                        Ok(t) => t,
+    let ty = match ty.kind {
+        ast::TypeKind::ScalarType(scalar) => {
+            let base = builder.infer_ctx.add_scalar(scalar);
+            builder.infer_ctx.insert(base, ty.span)
+        },
+        ast::TypeKind::Named(name) => {
+            if let Some((pos, gen)) = builder
+                .generics
+                .iter()
+                .enumerate()
+                .find(|(_, gen)| gen.ident == name)
+            {
+                let bound = gen
+                    .bound
+                    .as_ref()
+                    .map(|b| match build_trait_bound(b, builder) {
+                        Ok(bound) => bound,
                         Err(mut e) => {
                             errors.append(&mut e);
-                            return Err(errors);
+                            TraitBound::Error
                         },
-                    }
-                } else {
-                    errors.push(Error::custom(String::from("Not defined")).with_span(self.span()));
+                    })
+                    .unwrap_or(TraitBound::None);
 
-                    return Err(errors);
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Generic(pos as u32, bound), gen.span)
+            } else if let Some(ty) = builder.structs.get(&name) {
+                ty.ty
+            } else if let Some((kind, ident, span)) =
+                builder.items.iter().find_map(|item| match item.kind {
+                    ast::ItemKind::Struct(ref kind) if item.ident == name => {
+                        Some((kind, item.ident, item.span))
+                    },
+                    _ => None,
+                })
+            {
+                match build_struct(kind, ident, span, builder, iter + 1) {
+                    Ok(t) => t,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        return Err(errors);
+                    },
                 }
-            },
-            ast::Type::Tuple(types) => {
-                let types = types
-                    .iter()
-                    .map(|ty| ty.build_ast_ty(builder, iter + 1))
-                    .collect::<Result<_, _>>()?;
+            } else {
+                errors.push(Error::custom(String::from("Not defined")).with_span(ty.span));
 
-                builder
-                    .infer_ctx
-                    .insert(TypeInfo::Tuple(types), self.span())
-            },
-            ast::Type::Vector(size, ty) => {
-                let base = builder.infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
-                let size = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
+                return Err(errors);
+            }
+        },
+        ast::TypeKind::Tuple(ref types) => {
+            let types = types
+                .iter()
+                .map(|ty| build_ast_ty(ty, builder, iter + 1))
+                .collect::<Result<_, _>>()?;
 
-                builder
-                    .infer_ctx
-                    .insert(TypeInfo::Vector(base, size), self.span())
-            },
-            ast::Type::Matrix { columns, rows } => {
-                let columns = builder.infer_ctx.add_size(SizeInfo::Concrete(*columns));
-                let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*rows));
+            builder.infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
+        },
+        ast::TypeKind::Vector(size, base) => {
+            let base = builder.infer_ctx.add_scalar(base);
+            let size = builder.infer_ctx.add_size(size);
 
-                builder
-                    .infer_ctx
-                    .insert(TypeInfo::Matrix { columns, rows }, self.span())
-            },
-        };
+            builder
+                .infer_ctx
+                .insert(TypeInfo::Vector(base, size), ty.span)
+        },
+        ast::TypeKind::Matrix { columns, rows } => {
+            let columns = builder.infer_ctx.add_size(columns);
+            let rows = builder.infer_ctx.add_size(rows);
 
-        if errors.is_empty() {
-            Ok(ty)
-        } else {
-            Err(errors)
-        }
+            builder
+                .infer_ctx
+                .insert(TypeInfo::Matrix { columns, rows }, ty.span)
+        },
+    };
+
+    if errors.is_empty() {
+        Ok(ty)
+    } else {
+        Err(errors)
     }
+}
 
-    fn build_hir_ty(
-        &self,
-        structs: &FastHashMap<Symbol, SrcNode<PartialStruct>>,
-        infer_ctx: &mut InferContext,
-    ) -> Result<TypeId, Vec<Error>> {
-        let mut errors = vec![];
+fn build_hir_ty(
+    ty: &ast::Ty,
+    structs: &FastHashMap<Symbol, SrcNode<PartialStruct>>,
+    infer_ctx: &mut InferContext,
+) -> Result<TypeId, Vec<Error>> {
+    let mut errors = vec![];
 
-        let ty = match self.inner() {
-            ast::Type::ScalarType(scalar) => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*scalar));
-                infer_ctx.insert(TypeInfo::Scalar(base), self.span())
-            },
-            ast::Type::Named(name) => {
-                if let Some(ty) = structs.get(name.inner()) {
-                    ty.ty
-                } else {
-                    errors.push(Error::custom(String::from("Not defined")).with_span(self.span()));
+    let ty = match ty.kind {
+        ast::TypeKind::ScalarType(scalar) => {
+            let base = infer_ctx.add_scalar(scalar);
+            infer_ctx.insert(base, ty.span)
+        },
+        ast::TypeKind::Named(name) => {
+            if let Some(ty) = structs.get(&name) {
+                ty.ty
+            } else {
+                errors.push(Error::custom(String::from("Not defined")).with_span(ty.span));
 
-                    return Err(errors);
-                }
-            },
-            ast::Type::Tuple(types) => {
-                let types = types
-                    .iter()
-                    .map(|ty| ty.build_hir_ty(structs, infer_ctx))
-                    .collect::<Result<_, _>>()?;
+                return Err(errors);
+            }
+        },
+        ast::TypeKind::Tuple(ref types) => {
+            let types = types
+                .iter()
+                .map(|ty| build_hir_ty(ty, structs, infer_ctx))
+                .collect::<Result<_, _>>()?;
 
-                infer_ctx.insert(TypeInfo::Tuple(types), self.span())
-            },
-            ast::Type::Vector(size, ty) => {
-                let base = infer_ctx.add_scalar(ScalarInfo::Concrete(*ty));
-                let size = infer_ctx.add_size(SizeInfo::Concrete(*size));
+            infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
+        },
+        ast::TypeKind::Vector(size, base) => {
+            let base = infer_ctx.add_scalar(base);
+            let size = infer_ctx.add_size(size);
 
-                infer_ctx.insert(TypeInfo::Vector(base, size), self.span())
-            },
-            ast::Type::Matrix { columns, rows } => {
-                let columns = infer_ctx.add_size(SizeInfo::Concrete(*columns));
-                let rows = infer_ctx.add_size(SizeInfo::Concrete(*rows));
+            infer_ctx.insert(TypeInfo::Vector(base, size), ty.span)
+        },
+        ast::TypeKind::Matrix { columns, rows } => {
+            let columns = infer_ctx.add_size(columns);
+            let rows = infer_ctx.add_size(rows);
 
-                infer_ctx.insert(TypeInfo::Matrix { columns, rows }, self.span())
-            },
-        };
+            infer_ctx.insert(TypeInfo::Matrix { columns, rows }, ty.span)
+        },
+    };
 
-        if errors.is_empty() {
-            Ok(ty)
-        } else {
-            Err(errors)
-        }
+    if errors.is_empty() {
+        Ok(ty)
+    } else {
+        Err(errors)
     }
 }
 
 struct StatementBuilder<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
+    rodeo: &'a Rodeo,
+
     locals: &'a mut Vec<(u32, TypeId)>,
     args: &'a FastHashMap<Symbol, (u32, TypeId)>,
     globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
@@ -1146,471 +1073,429 @@ struct StatementBuilder<'a, 'b> {
     constants: &'a FastHashMap<Symbol, SrcNode<PartialConstant>>,
 }
 
-impl SrcNode<ast::Statement> {
-    fn build_hir<'a, 'b>(
-        &self,
-        builder: &mut StatementBuilder<'a, 'b>,
-        locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
-        out: TypeId,
-    ) -> Result<Statement<(TypeId, Span)>, Vec<Error>> {
-        Ok(match self.inner() {
-            ast::Statement::Expr(expr) => {
-                use std::mem::discriminant;
+fn build_block<'a, 'b>(
+    block: &ast::Block,
+    builder: &mut StatementBuilder<'a, 'b>,
+    locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
+    out: TypeId,
+) -> Result<Vec<Statement<(TypeId, Span)>>, Vec<Error>> {
+    let mut locals_lookup = locals_lookup.clone();
 
-                let expr = expr.build_hir(builder, locals_lookup, out)?;
-
-                if discriminant(&Expr::Return(None)) != discriminant(expr.inner()) {
-                    match builder.infer_ctx.unify(expr.type_id(), out) {
-                        Ok(_) => builder.infer_ctx.link(expr.type_id(), out),
-                        Err(e) => return Err(vec![e]),
-                    }
-                }
-
-                Statement::Expr(expr)
-            },
-            ast::Statement::ExprSemi(expr) => {
-                let expr = expr.build_hir(builder, locals_lookup, out)?;
-
-                Statement::ExprSemi(expr)
-            },
-            ast::Statement::Local { ident, ty, init } => {
-                let expr = init.build_hir(builder, locals_lookup, out)?;
-
-                let local = builder.locals.len() as u32;
-
-                if let Some(ty) = ty {
-                    let id = ty.build_hir_ty(builder.structs, builder.infer_ctx)?;
-
-                    match builder.infer_ctx.unify(expr.type_id(), id) {
-                        Ok(_) => {},
-                        Err(e) => return Err(vec![e]),
-                    }
-                }
-
-                builder.locals.push((local, expr.type_id()));
-                locals_lookup.insert(*ident.inner(), (local, expr.type_id()));
-
-                Statement::Assign(SrcNode::new(AssignTarget::Local(local), ident.span()), expr)
-            },
-            ast::Statement::Assignment { ident, expr } => {
-                let (tgt, id) = if let Some((location, id)) = locals_lookup.get(ident.inner()) {
-                    (AssignTarget::Local(*location), *id)
-                } else if let Some((location, id)) = builder.globals_lookup.get(ident.inner()) {
-                    (AssignTarget::Global(*location), *id)
-                } else {
-                    return Err(vec![
-                        Error::custom(String::from("Not a variable")).with_span(ident.span()),
-                    ]);
-                };
-
-                let expr = expr.build_hir(builder, locals_lookup, out)?;
-
-                match builder.infer_ctx.unify(id, expr.type_id()) {
-                    Ok(_) => {},
-                    Err(e) => return Err(vec![e]),
-                };
-
-                Statement::Assign(SrcNode::new(tgt, ident.span()), expr)
-            },
-        })
-    }
+    block
+        .stmts
+        .iter()
+        .map(|stmt| build_stmt(stmt, builder, &mut locals_lookup, out))
+        .collect::<Result<_, _>>()
 }
 
-impl SrcNode<ast::Expression> {
-    fn build_hir<'a, 'b>(
-        &self,
-        builder: &mut StatementBuilder<'a, 'b>,
-        locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
-        out: TypeId,
-    ) -> Result<InferNode, Vec<Error>> {
-        let empty = builder.infer_ctx.insert(TypeInfo::Empty, self.span());
-        let mut errors = vec![];
+fn build_stmt<'a, 'b>(
+    stmt: &ast::Stmt,
+    builder: &mut StatementBuilder<'a, 'b>,
+    locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
+    out: TypeId,
+) -> Result<Statement<(TypeId, Span)>, Vec<Error>> {
+    Ok(match stmt.kind {
+        ast::StmtKind::Expr(ref expr) => {
+            use std::mem::discriminant;
 
-        Ok(match self.inner() {
-            ast::Expression::BinaryOp { left, op, right } => {
-                let left = match left.build_hir(builder, locals_lookup, out) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                };
-                let right = match right.build_hir(builder, locals_lookup, out) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                };
+            let expr = build_expr(expr, builder, locals_lookup, out)?;
 
-                let out = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
-                builder.infer_ctx.add_constraint(Constraint::Binary {
-                    a: left.type_id(),
-                    op: op.clone(),
-                    b: right.type_id(),
-                    out,
-                });
-
-                InferNode::new(
-                    Expr::BinaryOp {
-                        left,
-                        op: *op.inner(),
-                        right,
-                    },
-                    (out, self.span()),
-                )
-            },
-            ast::Expression::UnaryOp { tgt, op } => {
-                let tgt = match tgt.build_hir(builder, locals_lookup, out) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                };
-
-                let out = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
-                builder.infer_ctx.add_constraint(Constraint::Unary {
-                    a: tgt.type_id(),
-                    op: op.clone(),
-                    out,
-                });
-
-                InferNode::new(
-                    Expr::UnaryOp {
-                        tgt,
-                        op: *op.inner(),
-                    },
-                    (out, self.span()),
-                )
-            },
-            ast::Expression::Constructor { ty, size, elements } => {
-                let elements: Vec<_> = {
-                    let (elements, e): (Vec<_>, Vec<_>) = elements
-                        .iter()
-                        .map(|arg| arg.build_hir(builder, locals_lookup, out))
-                        .partition(Result::is_ok);
-                    errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                    elements.into_iter().map(Result::unwrap).collect()
-                };
-
-                let out = match ty {
-                    ast::ConstructorType::Vector => {
-                        let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
-                        let size = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
-
-                        builder
-                            .infer_ctx
-                            .insert(TypeInfo::Vector(base, size), self.span())
-                    },
-                    ast::ConstructorType::Matrix => {
-                        let rows = builder.infer_ctx.add_size(SizeInfo::Concrete(*size));
-                        let columns = builder.infer_ctx.add_size(SizeInfo::Unknown);
-
-                        builder
-                            .infer_ctx
-                            .insert(TypeInfo::Matrix { rows, columns }, self.span())
-                    },
-                };
-
-                builder.infer_ctx.add_constraint(Constraint::Constructor {
-                    out,
-                    elements: elements.iter().map(|e| e.type_id()).collect(),
-                });
-
-                InferNode::new(Expr::Constructor { elements }, (out, self.span()))
-            },
-            ast::Expression::Call {
-                fun,
-                args: call_args,
-            } => {
-                let fun = match fun.build_hir(builder, locals_lookup, out) {
-                    Ok(t) => t,
-                    Err(ref mut e) => {
-                        errors.append(e);
-                        return Err(errors);
-                    },
-                };
-                let mut constructed_args = Vec::with_capacity(call_args.len());
-
-                for arg in call_args.iter() {
-                    match arg.build_hir(builder, locals_lookup, out) {
-                        Ok(arg) => constructed_args.push(arg),
-                        Err(mut e) => errors.append(&mut e),
-                    };
+            if discriminant(&Expr::Return(None)) != discriminant(expr.inner()) {
+                match builder.infer_ctx.unify(expr.type_id(), out) {
+                    Ok(_) => builder.infer_ctx.link(expr.type_id(), out),
+                    Err(e) => return Err(vec![e]),
                 }
+            }
 
-                let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
+            Statement::Expr(expr)
+        },
+        ast::StmtKind::ExprSemi(ref expr) => {
+            let expr = build_expr(expr, builder, locals_lookup, out)?;
 
-                builder.infer_ctx.add_constraint(Constraint::Call {
-                    fun: fun.type_id(),
-                    args: constructed_args.iter().map(InferNode::type_id).collect(),
-                    ret: out_ty,
-                });
+            Statement::ExprSemi(expr)
+        },
+        ast::StmtKind::Local(ref local) => {
+            let expr = build_expr(&local.init, builder, locals_lookup, out)?;
 
-                if !errors.is_empty() {
+            if let Some(ref ty) = local.ty {
+                let id = build_hir_ty(ty, builder.structs, builder.infer_ctx)?;
+
+                match builder.infer_ctx.unify(expr.type_id(), id) {
+                    Ok(_) => {},
+                    Err(e) => return Err(vec![e]),
+                }
+            }
+
+            let local_id = builder.locals.len() as u32;
+
+            builder.locals.push((local_id, expr.type_id()));
+            locals_lookup.insert(local.ident.symbol, (local_id, expr.type_id()));
+
+            Statement::Assign(SrcNode::new(AssignTarget::Local(local_id), stmt.span), expr)
+        },
+        ast::StmtKind::Assignment { ident, ref expr } => {
+            let (tgt, id) = if let Some((location, id)) = locals_lookup.get(&ident) {
+                (AssignTarget::Local(*location), *id)
+            } else if let Some((location, id)) = builder.globals_lookup.get(&ident) {
+                (AssignTarget::Global(*location), *id)
+            } else {
+                return Err(vec![
+                    Error::custom(String::from("Not a variable")).with_span(ident.span),
+                ]);
+            };
+
+            let expr = build_expr(expr, builder, locals_lookup, out)?;
+
+            match builder.infer_ctx.unify(id, expr.type_id()) {
+                Ok(_) => {},
+                Err(e) => return Err(vec![e]),
+            };
+
+            Statement::Assign(SrcNode::new(tgt, ident.span), expr)
+        },
+    })
+}
+
+fn build_expr<'a, 'b>(
+    expr: &ast::Expr,
+    builder: &mut StatementBuilder<'a, 'b>,
+    locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
+    out: TypeId,
+) -> Result<InferNode, Vec<Error>> {
+    let empty = builder.infer_ctx.insert(TypeInfo::Empty, expr.span);
+    let mut errors = vec![];
+
+    Ok(match expr.kind {
+        ast::ExprKind::BinaryOp {
+            ref left,
+            op,
+            ref right,
+        } => {
+            let left = match build_expr(left, builder, locals_lookup, out) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
                     return Err(errors);
-                }
-
-                InferNode::new(
-                    Expr::Call {
-                        fun,
-                        args: constructed_args,
-                    },
-                    (out_ty, self.span()),
-                )
-            },
-            ast::Expression::Literal(lit) => {
-                let base = builder.infer_ctx.add_scalar(lit);
-                let out = builder
-                    .infer_ctx
-                    .insert(TypeInfo::Scalar(base), self.span());
-
-                InferNode::new(Expr::Literal(*lit), (out, self.span()))
-            },
-            ast::Expression::Access { base, field } => {
-                let base = match base.build_hir(builder, locals_lookup, out) {
-                    Ok(t) => t,
-                    Err(mut e) => {
-                        errors.append(&mut e);
-                        return Err(errors);
-                    },
-                };
-
-                let out = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
-                builder.infer_ctx.add_constraint(Constraint::Access {
-                    record: base.type_id(),
-                    field: field.clone(),
-                    out,
-                });
-
-                InferNode::new(
-                    Expr::Access {
-                        base,
-                        field: *field.inner(),
-                    },
-                    (out, self.span()),
-                )
-            },
-            ast::Expression::Variable(var) => {
-                if let Some((var, local)) = locals_lookup.get(var.inner()) {
-                    InferNode::new(Expr::Local(*var), (*local, self.span()))
-                } else if let Some((id, ty)) = builder.args.get(var.inner()) {
-                    InferNode::new(Expr::Arg(*id), (*ty, self.span()))
-                } else if let Some(fun) = builder.functions.get(var.inner()) {
-                    let ty = builder
-                        .infer_ctx
-                        .insert(TypeInfo::FnDef(fun.id), self.span());
-
-                    InferNode::new(Expr::Function(fun.id), (ty, self.span()))
-                } else if let Some((var, ty)) = builder.globals_lookup.get(var.inner()) {
-                    InferNode::new(Expr::Global(*var), (*ty, self.span()))
-                } else if let Some(constant) = builder.constants.get(var.inner()) {
-                    InferNode::new(Expr::Constant(constant.id), (constant.ty, self.span()))
-                } else {
-                    errors.push(
-                        Error::custom(String::from("Variable not found")).with_span(var.span()),
-                    );
-
+                },
+            };
+            let right = match build_expr(right, builder, locals_lookup, out) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
                     return Err(errors);
-                }
-            },
-            ast::Expression::If {
-                condition,
-                accept,
-                else_ifs,
-                reject,
-            } => {
-                let out = builder.infer_ctx.insert(
-                    if reject.is_some() {
-                        TypeInfo::Unknown
-                    } else {
-                        TypeInfo::Empty
-                    },
-                    self.span(),
-                );
+                },
+            };
 
-                let condition = condition.build_hir(builder, locals_lookup, out)?;
+            let out = builder.infer_ctx.insert(TypeInfo::Unknown, expr.span);
+            builder.infer_ctx.add_constraint(Constraint::Binary {
+                a: left.type_id(),
+                op: op.clone(),
+                b: right.type_id(),
+                out,
+            });
 
-                let boolean = {
-                    let base = builder
-                        .infer_ctx
-                        .add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
+            InferNode::new(Expr::BinaryOp { left, op, right }, (out, expr.span))
+        },
+        ast::ExprKind::UnaryOp { ref tgt, op } => {
+            let tgt = match build_expr(tgt, builder, locals_lookup, out) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
+                    return Err(errors);
+                },
+            };
+
+            let out = builder.infer_ctx.insert(TypeInfo::Unknown, expr.span);
+            builder.infer_ctx.add_constraint(Constraint::Unary {
+                a: tgt.type_id(),
+                op: op.clone(),
+                out,
+            });
+
+            InferNode::new(Expr::UnaryOp { tgt, op }, (out, expr.span))
+        },
+        ast::ExprKind::Constructor {
+            ty,
+            size,
+            ref elements,
+        } => {
+            let elements: Vec<_> = {
+                let (elements, e): (Vec<_>, Vec<_>) = elements
+                    .iter()
+                    .map(|arg| build_expr(arg, builder, locals_lookup, out))
+                    .partition(Result::is_ok);
+                errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+
+                elements.into_iter().map(Result::unwrap).collect()
+            };
+
+            let out = match ty {
+                ast::ConstructorType::Vector => {
+                    let base = builder.infer_ctx.add_scalar(ScalarInfo::Real);
+                    let size = builder.infer_ctx.add_size(size);
+
                     builder
                         .infer_ctx
-                        .insert(TypeInfo::Scalar(base), condition.span())
+                        .insert(TypeInfo::Vector(base, size), expr.span)
+                },
+                ast::ConstructorType::Matrix => {
+                    let rows = builder.infer_ctx.add_size(size);
+                    let columns = builder.infer_ctx.add_size(SizeInfo::Unknown);
+
+                    builder
+                        .infer_ctx
+                        .insert(TypeInfo::Matrix { rows, columns }, expr.span)
+                },
+            };
+
+            builder.infer_ctx.add_constraint(Constraint::Constructor {
+                out,
+                elements: elements.iter().map(|e| e.type_id()).collect(),
+            });
+
+            InferNode::new(Expr::Constructor { elements }, (out, expr.span))
+        },
+        ast::ExprKind::Call {
+            ref fun,
+            args: ref call_args,
+        } => {
+            let fun = match build_expr(fun, builder, locals_lookup, out) {
+                Ok(t) => t,
+                Err(ref mut e) => {
+                    errors.append(e);
+                    return Err(errors);
+                },
+            };
+            let mut constructed_args = Vec::with_capacity(call_args.len());
+
+            for arg in call_args.iter() {
+                match build_expr(arg, builder, locals_lookup, out) {
+                    Ok(arg) => constructed_args.push(arg),
+                    Err(mut e) => errors.append(&mut e),
                 };
+            }
 
-                match builder.infer_ctx.unify(condition.type_id(), boolean) {
-                    Ok(_) => {},
-                    Err(e) => return Err(vec![e]),
-                };
+            let out_ty = builder.infer_ctx.insert(TypeInfo::Unknown, expr.span);
 
-                let accept = SrcNode::new(
-                    accept
-                        .iter()
-                        .map::<Result<_, Vec<Error>>, _>(|sta| {
-                            let mut locals_lookup = locals_lookup.clone();
+            builder.infer_ctx.add_constraint(Constraint::Call {
+                fun: fun.type_id(),
+                args: constructed_args.iter().map(InferNode::type_id).collect(),
+                ret: out_ty,
+            });
 
-                            sta.build_hir(builder, &mut locals_lookup, out)
-                        })
-                        .collect::<Result<_, _>>()?,
-                    accept.span(),
-                );
+            if !errors.is_empty() {
+                return Err(errors);
+            }
 
-                let else_ifs = else_ifs
+            InferNode::new(
+                Expr::Call {
+                    fun,
+                    args: constructed_args,
+                },
+                (out_ty, expr.span),
+            )
+        },
+        ast::ExprKind::Literal(lit) => {
+            let base = builder.infer_ctx.add_scalar(&lit);
+            let out = builder.infer_ctx.insert(base, expr.span);
+
+            InferNode::new(Expr::Literal(lit), (out, expr.span))
+        },
+        ast::ExprKind::Access { ref base, field } => {
+            let base = match build_expr(base, builder, locals_lookup, out) {
+                Ok(t) => t,
+                Err(mut e) => {
+                    errors.append(&mut e);
+                    return Err(errors);
+                },
+            };
+
+            let symbol = match field.kind {
+                ast::FieldKind::Symbol(symbol) => symbol,
+                ast::FieldKind::Uint(pos) => builder.rodeo.get_or_intern(&pos.to_string()),
+            };
+
+            let field = Ident {
+                symbol,
+                span: field.span,
+            };
+
+            let out = builder.infer_ctx.insert(TypeInfo::Unknown, expr.span);
+            builder.infer_ctx.add_constraint(Constraint::Access {
+                record: base.type_id(),
+                field,
+                out,
+            });
+
+            InferNode::new(Expr::Access { base, field }, (out, expr.span))
+        },
+        ast::ExprKind::Variable(var) => {
+            if let Some((var, local)) = locals_lookup.get(&var) {
+                InferNode::new(Expr::Local(*var), (*local, expr.span))
+            } else if let Some((id, ty)) = builder.args.get(&var) {
+                InferNode::new(Expr::Arg(*id), (*ty, expr.span))
+            } else if let Some(fun) = builder.functions.get(&var) {
+                let ty = builder.infer_ctx.insert(TypeInfo::FnDef(fun.id), expr.span);
+
+                InferNode::new(Expr::Function(fun.id), (ty, expr.span))
+            } else if let Some((var, ty)) = builder.globals_lookup.get(&var) {
+                InferNode::new(Expr::Global(*var), (*ty, expr.span))
+            } else if let Some(constant) = builder.constants.get(&var) {
+                InferNode::new(Expr::Constant(constant.id), (constant.ty, expr.span))
+            } else {
+                errors.push(Error::custom(String::from("Variable not found")).with_span(var.span));
+
+                return Err(errors);
+            }
+        },
+        ast::ExprKind::If {
+            ref condition,
+            ref accept,
+            ref reject,
+        } => {
+            let out = builder.infer_ctx.insert(
+                if reject.stmts.is_empty() {
+                    TypeInfo::Unknown
+                } else {
+                    TypeInfo::Empty
+                },
+                expr.span,
+            );
+
+            let condition = build_expr(condition, builder, locals_lookup, out)?;
+
+            let boolean = {
+                let base = builder
+                    .infer_ctx
+                    .add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
+                builder
+                    .infer_ctx
+                    .insert(TypeInfo::Scalar(base), condition.span())
+            };
+
+            match builder.infer_ctx.unify(condition.type_id(), boolean) {
+                Ok(_) => {},
+                Err(e) => return Err(vec![e]),
+            };
+
+            let accept = SrcNode::new(
+                build_block(accept, builder, locals_lookup, out)?,
+                accept.span,
+            );
+
+            let reject = SrcNode::new(
+                build_block(reject, builder, locals_lookup, out)?,
+                reject.span,
+            );
+
+            InferNode::new(
+                Expr::If {
+                    condition,
+                    accept,
+                    reject,
+                },
+                (out, expr.span),
+            )
+        },
+        ast::ExprKind::Return(ref ret_expr) => {
+            let ret_expr = ret_expr
+                .as_ref()
+                .map(|e| build_expr(e, builder, locals_lookup, out))
+                .transpose()?;
+
+            match builder.infer_ctx.unify(
+                builder.ret,
+                ret_expr.as_ref().map(|e| e.type_id()).unwrap_or(empty),
+            ) {
+                Ok(_) => {},
+                Err(e) => return Err(vec![e]),
+            };
+
+            InferNode::new(Expr::Return(ret_expr), (empty, expr.span))
+        },
+        ast::ExprKind::Index {
+            ref base,
+            ref index,
+        } => {
+            let base = build_expr(base, builder, locals_lookup, out)?;
+
+            let index = build_expr(index, builder, locals_lookup, out)?;
+
+            let out = builder.infer_ctx.insert(TypeInfo::Unknown, expr.span);
+
+            builder.infer_ctx.add_constraint(Constraint::Index {
+                out,
+                base: base.type_id(),
+                index: index.type_id(),
+            });
+
+            InferNode::new(Expr::Index { base, index }, (out, expr.span))
+        },
+        ast::ExprKind::TupleConstructor(ref elements) => {
+            let elements: Vec<_> = {
+                let (elements, e): (Vec<_>, Vec<_>) = elements
                     .iter()
-                    .map::<Result<_, Vec<Error>>, _>(|(condition, block)| {
-                        let condition = condition.build_hir(builder, locals_lookup, out)?;
+                    .map(|arg| build_expr(arg, builder, locals_lookup, out))
+                    .partition(Result::is_ok);
+                errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
 
-                        let boolean = {
-                            let base = builder
-                                .infer_ctx
-                                .add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
-                            builder
-                                .infer_ctx
-                                .insert(TypeInfo::Scalar(base), condition.span())
-                        };
+                elements.into_iter().map(Result::unwrap).collect()
+            };
 
-                        match builder.infer_ctx.unify(condition.type_id(), boolean) {
-                            Ok(_) => {},
-                            Err(e) => return Err(vec![e]),
-                        };
-                        let mut locals_lookup = locals_lookup.clone();
+            let ids = elements.iter().map(|ele| ele.type_id()).collect();
 
-                        Ok((
-                            condition,
-                            SrcNode::new(
-                                block
-                                    .iter()
-                                    .map::<Result<_, Vec<Error>>, _>(|sta| {
-                                        sta.build_hir(builder, &mut locals_lookup, out)
-                                    })
-                                    .collect::<Result<_, _>>()?,
-                                block.span(),
-                            ),
-                        ))
-                    })
-                    .collect::<Result<_, _>>()?;
-                let reject = reject
-                    .as_ref()
-                    .map::<Result<_, Vec<Error>>, _>(|r| {
-                        Ok(SrcNode::new(
-                            r.iter()
-                                .map::<Result<_, Vec<Error>>, _>(|sta| {
-                                    let mut locals_lookup = locals_lookup.clone();
+            let out = builder.infer_ctx.insert(TypeInfo::Tuple(ids), expr.span);
 
-                                    sta.build_hir(builder, &mut locals_lookup, out)
-                                })
-                                .collect::<Result<_, _>>()?,
-                            r.span(),
-                        ))
-                    })
-                    .transpose()?
-                    .unwrap_or_else(|| SrcNode::new(Vec::new(), Span::None));
+            InferNode::new(Expr::Constructor { elements }, (out, expr.span))
+        },
+        ast::ExprKind::Block(ref block) => {
+            let built_block = build_block(block, builder, locals_lookup, out)?;
 
-                InferNode::new(
-                    Expr::If {
-                        accept,
-                        condition,
-                        else_ifs,
-                        reject,
-                    },
-                    (out, self.span()),
-                )
-            },
-            ast::Expression::Return(expr) => {
-                let expr = expr
-                    .as_ref()
-                    .map(|e| e.build_hir(builder, locals_lookup, out))
-                    .transpose()?;
-
-                match builder.infer_ctx.unify(
-                    builder.ret,
-                    expr.as_ref().map(|e| e.type_id()).unwrap_or(empty),
-                ) {
-                    Ok(_) => {},
-                    Err(e) => return Err(vec![e]),
-                };
-
-                InferNode::new(Expr::Return(expr), (empty, self.span()))
-            },
-            ast::Expression::Index { base, index } => {
-                let base = base.build_hir(builder, locals_lookup, out)?;
-
-                let index = index.build_hir(builder, locals_lookup, out)?;
-
-                let out = builder.infer_ctx.insert(TypeInfo::Unknown, self.span());
-
-                builder.infer_ctx.add_constraint(Constraint::Index {
-                    out,
-                    base: base.type_id(),
-                    index: index.type_id(),
-                });
-
-                InferNode::new(Expr::Index { base, index }, (out, self.span()))
-            },
-            ast::Expression::TupleConstructor(elements) => {
-                let elements: Vec<_> = {
-                    let (elements, e): (Vec<_>, Vec<_>) = elements
-                        .iter()
-                        .map(|arg| arg.build_hir(builder, locals_lookup, out))
-                        .partition(Result::is_ok);
-                    errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
-
-                    elements.into_iter().map(Result::unwrap).collect()
-                };
-
-                let ids = elements.iter().map(|ele| ele.type_id()).collect();
-
-                let out = builder.infer_ctx.insert(TypeInfo::Tuple(ids), self.span());
-
-                InferNode::new(Expr::Constructor { elements }, (out, self.span()))
-            },
-        })
-    }
+            InferNode::new(
+                Expr::Block(SrcNode::new(built_block, block.span)),
+                (out, expr.span),
+            )
+        },
+    })
 }
 
-impl SrcNode<ast::TraitBound> {
-    fn build_hir<'a, 'b>(
-        &self,
-        builder: &mut TypeBuilder<'a, 'b>,
-    ) -> Result<TraitBound, Vec<Error>> {
-        let mut errors = vec![];
+fn build_trait_bound<'a, 'b>(
+    bound: &ast::GenericBound,
+    builder: &mut TypeBuilder<'a, 'b>,
+) -> Result<TraitBound, Vec<Error>> {
+    let mut errors = vec![];
 
-        let bound = match self.inner() {
-            ast::TraitBound::Fn { args, ret } => {
-                let args = args
-                    .iter()
-                    .map(|ty| match ty.build_ast_ty(builder, 0) {
-                        Ok(ty) => ty,
-                        Err(mut e) => {
-                            errors.append(&mut e);
-                            builder.infer_ctx.insert(TypeInfo::Empty, ty.span())
-                        },
-                    })
-                    .collect();
+    let bound = match bound.kind {
+        ast::GenericBoundKind::Fn { ref args, ref ret } => {
+            let args = args
+                .iter()
+                .map(|ty| match build_ast_ty(ty, builder, 0) {
+                    Ok(ty) => ty,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        builder.infer_ctx.insert(TypeInfo::Empty, ty.span)
+                    },
+                })
+                .collect();
 
-                let ret = ret
-                    .as_ref()
-                    .map(|ret| match ret.build_ast_ty(builder, 0) {
-                        Ok(ty) => ty,
-                        Err(mut e) => {
-                            errors.append(&mut e);
-                            builder.infer_ctx.insert(TypeInfo::Empty, ret.span())
-                        },
-                    })
-                    .unwrap_or_else(|| builder.infer_ctx.insert(TypeInfo::Empty, Span::None));
+            let ret = ret
+                .as_ref()
+                .map(|ret| match build_ast_ty(ret, builder, 0) {
+                    Ok(ty) => ty,
+                    Err(mut e) => {
+                        errors.append(&mut e);
+                        builder.infer_ctx.insert(TypeInfo::Empty, ret.span)
+                    },
+                })
+                .unwrap_or_else(|| builder.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
-                TraitBound::Fn { args, ret }
-            },
-        };
+            TraitBound::Fn { args, ret }
+        },
+    };
 
-        if errors.is_empty() {
-            Ok(bound)
-        } else {
-            Err(errors)
-        }
+    if errors.is_empty() {
+        Ok(bound)
+    } else {
+        Err(errors)
     }
 }

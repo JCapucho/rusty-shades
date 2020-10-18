@@ -503,7 +503,7 @@ impl Type {
                     types.fetch_or_append(NagaType {
                         name: None,
                         inner: TypeInner::Vector {
-                            size: *size,
+                            size: (*size).into(),
                             kind,
                             width,
                         },
@@ -515,8 +515,8 @@ impl Type {
                 types.fetch_or_append(NagaType {
                     name: None,
                     inner: TypeInner::Matrix {
-                        columns: *columns,
-                        rows: *rows,
+                        columns: (*columns).into(),
+                        rows: (*rows).into(),
                         // TODO
                         width: 4,
                     },
@@ -619,7 +619,6 @@ impl Statement {
             Statement::If {
                 condition,
                 accept,
-                else_ifs,
                 reject,
             } => {
                 let accept = accept
@@ -628,43 +627,12 @@ impl Statement {
                         s.build_naga(module, locals_lookup, expressions, modifier, builder, iter)
                     })
                     .collect::<Result<_, _>>()?;
-                let mut reject_block = reject
+                let reject_block = reject
                     .iter()
                     .map(|s| {
                         s.build_naga(module, locals_lookup, expressions, modifier, builder, iter)
                     })
                     .collect::<Result<_, _>>()?;
-
-                for (condition, body) in else_ifs.iter().rev() {
-                    let condition = condition.build_naga(
-                        module,
-                        locals_lookup,
-                        expressions,
-                        modifier,
-                        builder,
-                        iter,
-                    )?;
-
-                    let accept = body
-                        .iter()
-                        .map(|s| {
-                            s.build_naga(
-                                module,
-                                locals_lookup,
-                                expressions,
-                                modifier,
-                                builder,
-                                iter,
-                            )
-                        })
-                        .collect::<Result<_, _>>()?;
-
-                    reject_block = vec![NagaStatement::If {
-                        condition: expressions.append(condition),
-                        accept,
-                        reject: reject_block,
-                    }]
-                }
 
                 let condition = condition.build_naga(
                     module,
@@ -680,6 +648,16 @@ impl Statement {
                     accept,
                     reject: reject_block,
                 }
+            },
+            Statement::Block(block) => {
+                let block = block
+                    .iter()
+                    .map(|s| {
+                        s.build_naga(module, locals_lookup, expressions, modifier, builder, iter)
+                    })
+                    .collect::<Result<_, _>>()?;
+
+                NagaStatement::Block(block)
             },
         })
     }

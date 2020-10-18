@@ -253,7 +253,6 @@ impl<'a> HirPrettyPrinter<'a> {
                     Expr::If {
                         condition,
                         accept,
-                        else_ifs,
                         reject,
                     } => {
                         writeln!(f, "if {} {{", self.scoped(condition))?;
@@ -263,16 +262,6 @@ impl<'a> HirPrettyPrinter<'a> {
                         }
 
                         write!(f, "}}")?;
-
-                        for (expr, body) in else_ifs {
-                            writeln!(f, "else if {} {{", self.scoped(expr))?;
-
-                            for sta in body.iter() {
-                                writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
-                            }
-
-                            write!(f, "}}")?;
-                        }
 
                         if !reject.is_empty() {
                             writeln!(f, "else {{")?;
@@ -286,6 +275,13 @@ impl<'a> HirPrettyPrinter<'a> {
                     },
                     Expr::Index { base, index } => {
                         write!(f, "{}[{}]", self.scoped(base), self.scoped(index))?
+                    },
+                    Expr::Block(block) => {
+                        writeln!(f, "{{")?;
+                        for sta in block.iter() {
+                            writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
+                        }
+                        write!(f, "}}")?;
                     },
                 }
 
@@ -323,19 +319,6 @@ impl<'a> fmt::Display for HirPrettyPrinter<'a> {
         }
 
         Ok(())
-    }
-}
-
-impl fmt::Display for super::GlobalBinding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            crate::ast::GlobalBinding::Position => write!(f, "position"),
-            crate::ast::GlobalBinding::Input(loc) => write!(f, "in={}", loc),
-            crate::ast::GlobalBinding::Output(loc) => write!(f, "out={}", loc),
-            crate::ast::GlobalBinding::Uniform { set, binding } => {
-                write!(f, "uniform {{ set={} binding={} }}", set, binding)
-            },
-        }
     }
 }
 

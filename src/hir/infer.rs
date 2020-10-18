@@ -1,7 +1,10 @@
 use super::{Symbol, TraitBound};
 use crate::{error::Error, node::SrcNode, ty::Type};
-use naga::{FastHashMap, VectorSize};
-use rsh_common::{src::Span, BinaryOp, Literal, Rodeo, ScalarType, UnaryOp};
+use naga::FastHashMap;
+use rsh_common::{
+    src::{Span, Spanned},
+    BinaryOp, Ident, Literal, Rodeo, ScalarType, UnaryOp, VectorSize,
+};
 use std::fmt;
 
 mod constraints;
@@ -52,11 +55,19 @@ impl From<&Literal> for ScalarInfo {
     }
 }
 
+impl From<ScalarType> for ScalarInfo {
+    fn from(ty: ScalarType) -> Self { ScalarInfo::Concrete(ty) }
+}
+
 #[derive(Clone, Debug, PartialEq, Copy)]
 pub enum SizeInfo {
     Unknown,
     Ref(SizeId),
     Concrete(VectorSize),
+}
+
+impl From<VectorSize> for SizeInfo {
+    fn from(size: VectorSize) -> Self { SizeInfo::Concrete(size) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,23 +84,27 @@ pub enum TypeInfo {
     Generic(u32, TraitBound),
 }
 
+impl From<ScalarId> for TypeInfo {
+    fn from(scalar: ScalarId) -> Self { TypeInfo::Scalar(scalar) }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Constraint {
     Unary {
         out: TypeId,
-        op: SrcNode<UnaryOp>,
+        op: Spanned<UnaryOp>,
         a: TypeId,
     },
     Binary {
         out: TypeId,
-        op: SrcNode<BinaryOp>,
+        op: Spanned<BinaryOp>,
         a: TypeId,
         b: TypeId,
     },
     Access {
         out: TypeId,
         record: TypeId,
-        field: SrcNode<Symbol>,
+        field: Ident,
     },
     Index {
         out: TypeId,
@@ -195,9 +210,9 @@ impl<'a> InferContext<'a> {
         id
     }
 
-    pub fn add_size(&mut self, size: SizeInfo) -> SizeId {
+    pub fn add_size(&mut self, size: impl Into<SizeInfo>) -> SizeId {
         let id = self.size_id_counter.new_id();
-        self.sizes.insert(id, size);
+        self.sizes.insert(id, size.into());
         id
     }
 

@@ -1,13 +1,36 @@
 use lasso::{Spur, ThreadedRodeo};
-use std::fmt;
+use std::{
+    fmt,
+    hash::{self, Hash},
+    ops::Deref,
+};
 
-#[cfg(feature = "naga")]
-mod naga;
+#[cfg(feature = "naga")] mod naga;
 pub mod src;
 
 pub type Symbol = Spur;
 pub type Rodeo = ThreadedRodeo<Symbol, fxhash::FxBuildHasher>;
 pub type Hasher = fxhash::FxBuildHasher;
+
+#[derive(Clone, Copy, Debug, Eq)]
+pub struct Ident {
+    pub symbol: Symbol,
+    pub span: src::Span,
+}
+
+impl Deref for Ident {
+    type Target = Symbol;
+
+    fn deref(&self) -> &Self::Target { &self.symbol }
+}
+
+impl PartialEq for Ident {
+    fn eq(&self, other: &Self) -> bool { self.symbol == other.symbol }
+}
+
+impl Hash for Ident {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) { self.symbol.hash(state) }
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
 pub enum VectorSize {
@@ -146,6 +169,27 @@ impl fmt::Display for UnaryOp {
         match self {
             UnaryOp::BitWiseNot => write!(f, "!"),
             UnaryOp::Negation => write!(f, "-"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+pub enum GlobalBinding {
+    Position,
+    Input(u32 /* location */),
+    Output(u32 /* location */),
+    Uniform { set: u32, binding: u32 },
+}
+
+impl fmt::Display for GlobalBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GlobalBinding::Position => write!(f, "position"),
+            GlobalBinding::Input(loc) => write!(f, "in={}", loc),
+            GlobalBinding::Output(loc) => write!(f, "out={}", loc),
+            GlobalBinding::Uniform { set, binding } => {
+                write!(f, "uniform {{ set={} binding={} }}", set, binding)
+            },
         }
     }
 }

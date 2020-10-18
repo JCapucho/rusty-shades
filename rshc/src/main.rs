@@ -11,9 +11,9 @@ use rusty_shades::{
     backends,
     common::{Hasher, Rodeo},
     error::Error,
-    grammar, hir,
+    hir,
     ir::Module as IrModule,
-    lexer,
+    lexer, parser,
 };
 use std::{
     fs::{read_to_string, File, OpenOptions},
@@ -160,7 +160,7 @@ fn parse(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
 
     let lexer = lexer::Lexer::new(&code, &rodeo);
 
-    let ast = grammar::ProgramParser::new()
+    let ast = parser::ProgramParser::new()
         .parse(&rodeo, lexer)
         .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
 

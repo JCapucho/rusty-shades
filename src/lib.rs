@@ -3,9 +3,9 @@
 #![allow(clippy::match_like_matches_macro)]
 
 pub use rsh_ast as ast;
-pub use rsh_parser as parser;
 pub use rsh_common as common;
 pub use rsh_lexer as lexer;
+pub use rsh_parser as parser;
 
 pub mod backends;
 pub mod error;

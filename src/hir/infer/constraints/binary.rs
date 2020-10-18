@@ -1,12 +1,15 @@
 use super::{InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
-use crate::{error::Error, node::SrcNode};
-use rsh_common::{src::Span, BinaryOp, ScalarType};
+use crate::error::Error;
+use rsh_common::{
+    src::{Span, Spanned},
+    BinaryOp, ScalarType,
+};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_binary(
         &mut self,
         out: TypeId,
-        op: SrcNode<BinaryOp>,
+        op: Spanned<BinaryOp>,
         a: TypeId,
         b: TypeId,
     ) -> Result<bool, Error> {
@@ -451,18 +454,18 @@ impl<'a> InferContext<'a> {
 
         let mut matches = matchers
             .iter()
-            .filter_map(|matcher| matcher(self, out, *op, a, b))
+            .filter_map(|matcher| matcher(self, out, op.node, a, b))
             .collect::<Vec<_>>();
 
         if matches.is_empty() {
             Err(Error::custom(format!(
                 "Cannot resolve '{}' {} '{}' as '{}'",
                 self.display_type_info(a),
-                *op,
+                op,
                 self.display_type_info(b),
                 self.display_type_info(out)
             ))
-            .with_span(op.span())
+            .with_span(op.span)
             .with_span(self.span(a))
             .with_span(self.span(b)))
         } else if matches.len() > 1 {
