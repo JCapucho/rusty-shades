@@ -24,6 +24,7 @@ use std::{
 #[cfg(not(any(feature = "spirv", feature = "glsl", feature = "msl")))]
 compile_error!("At least one target should be enabled.");
 
+const COLOR: &[&str] = &["auto", "always", "never"];
 const TARGETS: &[&str] = &[
     #[cfg(feature = "spirv")]
     "spirv",
@@ -68,10 +69,40 @@ fn main() -> io::Result<()> {
                         .required(true),
                 ),
         )
+        .subcommand(
+            SubCommand::with_name("check")
+                .about("Checks the file for errors with outputting build artifacts")
+                .arg(
+                    Arg::with_name("input")
+                        .value_name("INPUT")
+                        .help("The input file to be used")
+                        .required(true),
+                ),
+        )
+        .arg(
+            Arg::with_name("color")
+                .long("color")
+                .help("Specifies the color output")
+                .value_name("COLOR")
+                .possible_values(&COLOR)
+                .validator(|tgt| match COLOR.contains(&&*tgt) {
+                    true => Ok(()),
+                    false => Err(format!("'{}' isn't a valid target", tgt)),
+                })
+                .default_value(COLOR[0]),
+        )
         .get_matches();
 
+    let color = match matches.value_of("color").unwrap() {
+        "auto" => ColorChoice::Auto,
+        "always" => ColorChoice::Always,
+        "never" => ColorChoice::Never,
+        _ => unreachable!(),
+    };
+
     match matches.subcommand() {
-        ("build", Some(matches)) => build(matches),
+        ("build", Some(matches)) => build(matches, color),
+        ("check", Some(matches)) => check(matches, color),
         (name, _) => Err(io::Error::new(
             io::ErrorKind::Other,
             format!("Unknow subcommand {}", name),
@@ -79,7 +110,20 @@ fn main() -> io::Result<()> {
     }
 }
 
-fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
+fn check(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
+    let input = matches.value_of("input").unwrap();
+
+    let code = read_to_string(input)?;
+
+    let mut files = SimpleFiles::new();
+    let file_id = files.add(input, &code);
+
+    let _ = handle_errors(build_ir(&code), &files, file_id, color)?;
+
+    Ok(())
+}
+
+fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     let input = matches.value_of("input").unwrap();
     let target = matches.value_of("target").unwrap();
     let output = {
@@ -106,9 +150,14 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
     let mut files = SimpleFiles::new();
     let file_id = files.add(input, &code);
 
-    let (module, rodeo) = handle_errors(parse(&code), &files, file_id)?;
+    let (module, rodeo) = handle_errors(build_ir(&code), &files, file_id, color)?;
 
-    let naga_ir = handle_errors(backends::naga::build(&module, &rodeo), &files, file_id)?;
+    let naga_ir = handle_errors(
+        backends::naga::build(&module, &rodeo),
+        &files,
+        file_id,
+        color,
+    )?;
 
     let mut output = OpenOptions::new()
         .write(true)
@@ -155,7 +204,7 @@ fn build(matches: &ArgMatches<'_>) -> io::Result<()> {
     Ok(())
 }
 
-fn parse(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
+fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
     let rodeo = Rodeo::with_hasher(Hasher::default());
 
     let lexer = lexer::Lexer::new(&code, &rodeo);
@@ -186,11 +235,12 @@ fn handle_errors<T>(
     res: Result<T, Vec<Error>>,
     files: &SimpleFiles<&str, &String>,
     file_id: usize,
+    color: ColorChoice,
 ) -> io::Result<T> {
     match res {
         Ok(val) => Ok(val),
         Err(errors) => {
-            let writer = StandardStream::stderr(ColorChoice::Always);
+            let writer = StandardStream::stderr(color);
             let config = codespan_reporting::term::Config::default();
 
             for error in errors {

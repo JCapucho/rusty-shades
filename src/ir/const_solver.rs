@@ -187,10 +187,7 @@ impl TypedNode {
                     _ => unreachable!(),
                 })
             },
-            crate::hir::Expr::Arg(_) => unreachable!(),
-            crate::hir::Expr::Function(_) => unreachable!(),
             crate::hir::Expr::Local(id) => Ok(locals.get(&id).unwrap().clone()),
-            crate::hir::Expr::Global(_) => unreachable!(),
             crate::hir::Expr::Constant(id) => get_constant(*id),
             crate::hir::Expr::Return(_) => {
                 Err(Error::custom(String::from("Cannot return in a constant"))
@@ -220,6 +217,9 @@ impl TypedNode {
                 Ok(base.index(&index))
             },
             crate::hir::Expr::Block(block) => block.solve(get_constant, locals, rodeo),
+            crate::hir::Expr::Arg(_) => unreachable!(),
+            crate::hir::Expr::Function(_) => unreachable!(),
+            crate::hir::Expr::Global(_) => unreachable!(),
         }
     }
 }

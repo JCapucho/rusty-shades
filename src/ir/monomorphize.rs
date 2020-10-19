@@ -12,26 +12,31 @@ pub fn collect(
     args: &[TypedNode],
     generics: &[Type],
 ) -> Vec<Type> {
-    let id = match instantiate_ty(called_fun, generics) {
-        Type::FnDef(id) => id,
+    let origin = match instantiate_ty(called_fun, generics) {
+        Type::FnDef(origin) => origin,
         _ => unreachable!(),
     };
 
-    let called_fun = hir_functions.get(id).unwrap();
+    match origin {
+        rsh_common::FunctionOrigin::Local(id) => {
+            let called_fun = hir_functions.get(id).unwrap();
 
-    let mut called_generics = vec![Type::Empty; called_fun.generics.len()];
+            let mut called_generics = vec![Type::Empty; called_fun.generics.len()];
 
-    for (a, b) in called_fun.args.iter().zip(args.iter()) {
-        if let Type::Generic(pos) = a {
-            called_generics[*pos as usize] = instantiate_ty(b.ty(), generics).clone();
-        }
+            for (a, b) in called_fun.args.iter().zip(args.iter()) {
+                if let Type::Generic(pos) = a {
+                    called_generics[*pos as usize] = instantiate_ty(b.ty(), generics).clone();
+                }
+            }
+
+            if let Type::Generic(pos) = called_fun.ret {
+                called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
+            }
+
+            called_generics
+        },
+        rsh_common::FunctionOrigin::External(_) => Vec::new(),
     }
-
-    if let Type::Generic(pos) = called_fun.ret {
-        called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
-    }
-
-    called_generics
 }
 
 pub fn instantiate_ty<'a>(ty: &'a Type, generics: &'a [Type]) -> &'a Type {

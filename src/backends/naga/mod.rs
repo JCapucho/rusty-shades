@@ -483,7 +483,7 @@ impl Type {
         structs_lookup: &FastHashMap<u32, (Handle<NagaType>, u32)>,
     ) -> Result<Option<(Handle<NagaType>, u32)>, Error> {
         Ok(match self {
-            Type::Empty | Type::FnDef(_) => None,
+            Type::Empty | Type::FnDef(_) => unreachable!(),
             Type::Generic(_) => unreachable!(),
             Type::Scalar(scalar) => {
                 let (kind, width) = scalar.naga_kind_width();
@@ -701,7 +701,7 @@ impl TypedExpr {
                     expr: expressions.append(tgt),
                 }
             },
-            Expr::Call { id, args } => {
+            Expr::Call { origin, args } => {
                 let arguments = args
                     .iter()
                     .map::<Result<_, Error>, _>(|arg| {
@@ -718,18 +718,18 @@ impl TypedExpr {
                     })
                     .collect::<Result<_, Error>>()?;
 
-                let origin = {
-                    if let Some(function) = builder.functions.get(id) {
-                        function.build_naga(module, *id, builder, iter + 1).unwrap()
-                    } else {
-                        unreachable!()
-                    }
+                let origin = match origin {
+                    rsh_common::FunctionOrigin::Local(id) => {
+                        let function = builder.functions.get(id).unwrap();
+                        let id = function.build_naga(module, *id, builder, iter + 1).unwrap();
+                        FunctionOrigin::Local(id)
+                    },
+                    rsh_common::FunctionOrigin::External(ident) => {
+                        FunctionOrigin::External(builder.rodeo.resolve(&ident).to_owned())
+                    },
                 };
 
-                Expression::Call {
-                    origin: FunctionOrigin::Local(origin),
-                    arguments,
-                }
+                Expression::Call { origin, arguments }
             },
             Expr::Literal(literal) => {
                 let ty = self

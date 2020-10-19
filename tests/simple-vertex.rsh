@@ -73,3 +73,5 @@ fn pain<T: Fn() -> Int>(f: T) -> Int {
 fn pain2<T, F: Fn() -> T>(f: F) -> T {
     f()
 }
+
+// args: --color never check

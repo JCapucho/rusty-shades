@@ -7,8 +7,8 @@ use crate::{
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 use rsh_common::{
-    src::Span, BinaryOp, EntryPointStage, GlobalBinding, Literal, Rodeo, ScalarType, Symbol,
-    UnaryOp,
+    src::Span, BinaryOp, EntryPointStage, FunctionOrigin, GlobalBinding, Literal, Rodeo,
+    ScalarType, Symbol, UnaryOp,
 };
 
 pub type TypedExpr = Node<Expr, Type>;
@@ -74,7 +74,7 @@ pub enum Expr {
         op: UnaryOp,
     },
     Call {
-        id: u32,
+        origin: FunctionOrigin,
         args: Vec<TypedExpr>,
     },
     Literal(Literal),
@@ -568,42 +568,46 @@ impl hir::TypedNode {
                     ))?);
                 }
 
-                let id = if let Type::FnDef(id) =
-                    monomorphize::instantiate_ty(fun.ty(), sta_builder.generics)
-                {
-                    let id = *id;
+                match monomorphize::instantiate_ty(fun.ty(), sta_builder.generics) {
+                    Type::FnDef(origin) => {
+                        let origin = (*origin).map_local(|id| {
+                            builder
+                                .instances_map
+                                .get(&(id, generics.clone()))
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    match builder
+                                        .hir_functions
+                                        .get(&id)
+                                        .cloned()
+                                        .unwrap()
+                                        .build_ir(builder, generics, id)
+                                    {
+                                        Ok(id) => id,
+                                        Err(mut e) => {
+                                            errors.append(&mut e);
+                                            0
+                                        },
+                                    }
+                                })
+                        });
 
-                    builder
-                        .instances_map
-                        .get(&(id, generics.clone()))
-                        .copied()
-                        .unwrap_or_else(|| {
-                            match builder
-                                .hir_functions
-                                .get(&id)
-                                .cloned()
-                                .unwrap()
-                                .build_ir(builder, generics, id)
-                            {
-                                Ok(id) => id,
-                                Err(mut e) => {
-                                    errors.append(&mut e);
-                                    0
-                                },
-                            }
-                        })
-                } else {
-                    errors.push(
-                        Error::custom(String::from("Couldn't resolve a function id"))
-                            .with_span(span),
-                    );
+                        Expr::Call {
+                            origin,
+                            args: constructed_args,
+                        }
+                    },
+                    _ => {
+                        errors.push(
+                            Error::custom(String::from("Couldn't resolve a function id"))
+                                .with_span(span),
+                        );
 
-                    0
-                };
-
-                Expr::Call {
-                    id,
-                    args: constructed_args,
+                        Expr::Call {
+                            origin: FunctionOrigin::Local(0),
+                            args: constructed_args,
+                        }
+                    },
                 }
             },
             hir::Expr::Literal(lit) => Expr::Literal(lit),
@@ -878,7 +882,6 @@ impl hir::TypedNode {
                 Expr::Index { base, index }
             },
             hir::Expr::Constant(id) => Expr::Constant(id),
-            hir::Expr::Function(_) => unreachable!(),
             hir::Expr::Block(block) => {
                 let local = sta_builder.locals.len() as u32;
                 sta_builder.locals.insert(local, ty.clone());
@@ -909,6 +912,7 @@ impl hir::TypedNode {
 
                 Expr::Local(local)
             },
+            hir::Expr::Function(_) => unreachable!(),
         };
 
         if errors.is_empty() {

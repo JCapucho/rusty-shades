@@ -2,7 +2,7 @@ use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::FastHashMap;
 use rsh_common::{
     src::{Span, Spanned},
-    BinaryOp, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp, VectorSize,
+    BinaryOp, FunctionOrigin, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp, VectorSize,
 };
 use std::fmt;
 
@@ -79,7 +79,7 @@ pub enum TypeInfo {
     Matrix { columns: SizeId, rows: SizeId },
     Struct(u32),
     Tuple(Vec<TypeId>),
-    FnDef(u32),
+    FnDef(FunctionOrigin),
     Generic(u32, TraitBound),
 }
 
@@ -146,7 +146,7 @@ pub struct InferContext<'a> {
     constraints: FastHashMap<ConstraintId, Constraint>,
 
     structs: FastHashMap<u32, Vec<(Symbol, TypeId)>>,
-    functions: FastHashMap<u32, (Symbol, Vec<TypeId>, TypeId)>,
+    functions: FastHashMap<FunctionOrigin, (Ident, Vec<TypeId>, TypeId)>,
 }
 
 impl<'a> InferContext<'a> {
@@ -232,14 +232,20 @@ impl<'a> InferContext<'a> {
             .unwrap()
     }
 
-    pub fn add_function(&mut self, id: u32, name: Symbol, args: Vec<TypeId>, ret: TypeId) {
-        self.functions.insert(id, (name, args, ret));
+    pub fn add_function(
+        &mut self,
+        origin: FunctionOrigin,
+        name: Ident,
+        args: Vec<TypeId>,
+        ret: TypeId,
+    ) {
+        self.functions.insert(origin, (name, args, ret));
     }
 
-    pub fn get_function(&self, id: u32) -> &(Symbol, Vec<TypeId>, TypeId) {
+    pub fn get_function(&self, origin: FunctionOrigin) -> &(Ident, Vec<TypeId>, TypeId) {
         self.functions
-            .get(&id)
-            .or_else(|| self.parent.map(|p| p.get_function(id)))
+            .get(&origin)
+            .or_else(|| self.parent.map(|p| p.get_function(origin)))
             .unwrap()
     }
 
@@ -453,12 +459,13 @@ impl<'a> InferContext<'a> {
                             .join(", ")
                     ),
                     Generic(id, _) => write!(f, "Generic({})", id),
-                    FnDef(id) => {
-                        let (name, args, ret) = self.ctx.get_function(id);
+                    FnDef(origin) => {
+                        let (name, args, ret) = self.ctx.get_function(origin);
 
                         write!(
                             f,
-                            "fn({}) -> {} {{ {} }}",
+                            "{}fn({}) -> {} {{ {} }}",
+                            if origin.is_extern() { "extern " } else { "" },
                             args.iter()
                                 .map(|id| format!("{}", self.with_id(*id)))
                                 .collect::<Vec<_>>()
@@ -649,8 +656,8 @@ impl<'a> InferContext<'a> {
             TraitBound::Fn { ref args, ret } => match self.get(ty) {
                 TypeInfo::Unknown => None,
                 TypeInfo::Ref(id) => self.check_bound(id, bound),
-                TypeInfo::FnDef(id) => {
-                    let (_, fn_args, fn_ret) = self.get_function(id).clone();
+                TypeInfo::FnDef(origin) => {
+                    let (_, fn_args, fn_ret) = self.get_function(origin).clone();
                     let mut scoped = self.scoped();
 
                     if args.len() != fn_args.len() {
@@ -776,7 +783,7 @@ impl<'a> InferContext<'a> {
                     .collect::<Result<_, _>>()?,
             ),
             Generic(gen, _) => Type::Generic(gen),
-            FnDef(id) => Type::FnDef(id),
+            FnDef(origin) => Type::FnDef(origin),
         };
 
         Ok(SrcNode::new(ty, self.span(id)))

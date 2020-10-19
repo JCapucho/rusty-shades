@@ -27,7 +27,7 @@ impl<'a> HirPrettyPrinter<'a> {
                         "   {}|{}: {},",
                         self.rodeo.resolve(field),
                         pos,
-                        ty.inner()
+                        ty.inner().display(self.rodeo)
                     )?;
                 }
 
@@ -53,7 +53,7 @@ impl<'a> HirPrettyPrinter<'a> {
                     f,
                     "const {}: {} = {};",
                     self.printer.rodeo.resolve(&self.constant.name),
-                    self.constant.ty,
+                    self.constant.ty.display(self.printer.rodeo),
                     self.printer.expr_fmt(&self.constant.expr)
                 )
             }
@@ -78,7 +78,7 @@ impl<'a> HirPrettyPrinter<'a> {
                     "global {} {}: {};",
                     self.rodeo.resolve(&self.global.name),
                     self.global.modifier,
-                    self.global.ty
+                    self.global.ty.display(self.rodeo)
                 )
             }
         }
@@ -141,10 +141,10 @@ impl<'a> HirPrettyPrinter<'a> {
                 write!(f, "(")?;
 
                 for arg in self.func.args.iter() {
-                    write!(f, "{},", arg)?;
+                    write!(f, "{},", arg.display(self.printer.rodeo))?;
                 }
 
-                writeln!(f, ") -> {} {{", self.func.ret)?;
+                writeln!(f, ") -> {} {{", self.func.ret.display(self.printer.rodeo))?;
 
                 for sta in self.func.body.iter() {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
@@ -242,7 +242,7 @@ impl<'a> HirPrettyPrinter<'a> {
                     Expr::Local(local) => write!(f, "Local({})", local)?,
                     Expr::Global(global) => write!(f, "Global({})", global)?,
                     Expr::Constant(constant) => write!(f, "Const({})", constant)?,
-                    Expr::Function(fun) => write!(f, "Function({})", fun)?,
+                    Expr::Function(fun) => write!(f, "{}", fun.display(self.printer.rodeo))?,
                     Expr::Return(expr) => {
                         write!(f, "return")?;
 
@@ -285,7 +285,7 @@ impl<'a> HirPrettyPrinter<'a> {
                     },
                 }
 
-                write!(f, ": {})", self.expr.ty())
+                write!(f, ": {})", self.expr.ty().display(self.printer.rodeo))
             }
         }
 

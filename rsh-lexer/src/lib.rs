@@ -91,6 +91,8 @@ pub enum Token {
     #[regex("(Uint|Int|Float|Double|Bool)", scalar_type)]
     ScalarType(ScalarType),
 
+    #[token("extern")]
+    Extern,
     #[token("global")]
     Global,
     #[token("const")]
@@ -242,6 +244,7 @@ impl Token {
                         ScalarType::Bool => "Bool",
                     }),
 
+                    Token::Extern => write!(f, "extern"),
                     Token::Global => write!(f, "global"),
                     Token::Const => write!(f, "const"),
                     Token::Fn => write!(f, "fn"),

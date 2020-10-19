@@ -8,8 +8,8 @@ use crate::{
 use naga::FastHashMap;
 use rsh_common::{
     src::{Span, Spanned},
-    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
-    VectorSize,
+    BinaryOp, EntryPointStage, FunctionOrigin, GlobalBinding, Ident, Literal, Rodeo, ScalarType,
+    Symbol, UnaryOp, VectorSize,
 };
 
 mod infer;
@@ -131,7 +131,7 @@ pub enum Expr<M> {
     Local(u32),
     Global(u32),
     Constant(u32),
-    Function(u32),
+    Function(FunctionOrigin),
     Return(Option<Node<Self, M>>),
     If {
         condition: Node<Self, M>,
@@ -265,6 +265,8 @@ struct PartialModule {
     globals: FastHashMap<Symbol, SrcNode<PartialGlobal>>,
     functions: FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: FastHashMap<Symbol, SrcNode<PartialConstant>>,
+    externs: FastHashMap<Symbol, Ident>,
+
     entry_points: Vec<SrcNode<PartialEntryPoint>>,
 }
 
@@ -327,6 +329,7 @@ impl Module {
                 ret: func.ret,
                 functions: &partial.functions,
                 constants: &partial.constants,
+                externs: &partial.externs,
             };
 
             let body =
@@ -404,6 +407,7 @@ impl Module {
                     ret,
                     functions: &partial.functions,
                     constants: &partial.constants,
+                    externs: &partial.externs,
                 };
 
                 let body =
@@ -481,6 +485,7 @@ impl Module {
                     ret: partial_const.ty,
                     functions: &FastHashMap::default(),
                     constants: &partial.constants,
+                    externs: &FastHashMap::default(),
                 };
 
                 let expr = build_expr(
@@ -538,6 +543,7 @@ impl Module {
         let mut structs = FastHashMap::default();
         let mut functions = FastHashMap::default();
         let mut constants = FastHashMap::default();
+        let mut externs = FastHashMap::default();
         let mut names = FastHashMap::default();
         let mut entry_points = Vec::new();
 
@@ -646,8 +652,8 @@ impl Module {
                     func_id += 1;
 
                     infer_ctx.add_function(
-                        func_id,
-                        item.ident.symbol,
+                        FunctionOrigin::Local(func_id),
+                        item.ident,
                         {
                             let mut args = constructed_args.values().collect::<Vec<_>>();
                             args.sort_by(|a, b| a.0.cmp(&b.0));
@@ -694,6 +700,28 @@ impl Module {
                     },
                     item.span,
                 )),
+                ast::ItemKind::Extern(ref sig) => {
+                    let args = sig
+                        .args
+                        .iter()
+                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
+                        .collect();
+
+                    let ret = sig
+                        .ret
+                        .as_ref()
+                        .map(|r| build_ast_ty(r, &mut ctx, 0))
+                        .unwrap_or_else(|| ctx.infer_ctx.insert(TypeInfo::Empty, Span::None));
+
+                    infer_ctx.add_function(
+                        FunctionOrigin::External(item.ident),
+                        item.ident,
+                        args,
+                        ret,
+                    );
+
+                    externs.insert(item.ident.symbol, item.ident);
+                },
             }
         }
 
@@ -702,6 +730,8 @@ impl Module {
             globals,
             structs,
             constants,
+            externs,
+
             entry_points,
         }
     }
@@ -907,6 +937,7 @@ struct StatementBuilderCtx<'a, 'b> {
     ret: TypeId,
     functions: &'a FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: &'a FastHashMap<Symbol, SrcNode<PartialConstant>>,
+    externs: &'a FastHashMap<Symbol, Ident>,
 }
 
 fn build_block<'a, 'b>(
@@ -1120,13 +1151,19 @@ fn build_expr<'a, 'b>(
             } else if let Some((id, ty)) = ctx.args.get(&var) {
                 InferNode::new(Expr::Arg(*id), (*ty, expr.span))
             } else if let Some(fun) = ctx.functions.get(&var) {
-                let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(fun.id), expr.span);
+                let origin = fun.id.into();
+                let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
-                InferNode::new(Expr::Function(fun.id), (ty, expr.span))
+                InferNode::new(Expr::Function(origin), (ty, expr.span))
             } else if let Some((var, ty)) = ctx.globals_lookup.get(&var) {
                 InferNode::new(Expr::Global(*var), (*ty, expr.span))
             } else if let Some(constant) = ctx.constants.get(&var) {
                 InferNode::new(Expr::Constant(constant.id), (constant.ty, expr.span))
+            } else if let Some(ident) = ctx.externs.get(&var).copied() {
+                let origin = ident.into();
+                let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
+
+                InferNode::new(Expr::Function(origin), (ty, expr.span))
             } else {
                 ctx.errors
                     .push(Error::custom(String::from("Variable not found")).with_span(var.span));

@@ -38,6 +38,7 @@ extern {
 
         "scalar type" => Token::ScalarType(<ScalarType>),
         
+        "extern" => Token::Extern,
         "global" => Token::Global,
         "const" => Token::Const,
         "fn" => Token::Fn,
@@ -181,6 +182,13 @@ Item: Item = {
                 kind: ItemKind::Const(constant),
                 span: Span::range(l,r)
             },
+
+    <l: @L> "extern" "fn" <ident: Ident> <sig: FnSig> <r: @R> ";"
+        => Item {
+                    ident,
+                    kind: ItemKind::Extern(sig),
+                    span: Span::range(l,r)
+                },
 }
 
 Fn: Function = <sig: FnSig> <body: Block> => Function { <> };

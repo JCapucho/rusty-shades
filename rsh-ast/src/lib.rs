@@ -18,6 +18,7 @@ pub enum ItemKind {
     Fn(Generics, Function),
     Struct(StructKind),
     EntryPoint(EntryPointStage, Function),
+    Extern(FnSig),
 }
 
 #[derive(Clone, Debug, PartialEq)]

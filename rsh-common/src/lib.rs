@@ -193,3 +193,54 @@ impl fmt::Display for GlobalBinding {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum FunctionOrigin {
+    Local(u32),
+    External(Ident),
+}
+
+impl FunctionOrigin {
+    pub fn is_extern(&self) -> bool {
+        match self {
+            FunctionOrigin::Local(_) => false,
+            FunctionOrigin::External(_) => true,
+        }
+    }
+
+    pub fn display<'a>(&'a self, rodeo: &'a Rodeo) -> impl fmt::Display + 'a {
+        struct OriginDisplay<'a> {
+            origin: &'a FunctionOrigin,
+            rodeo: &'a Rodeo,
+        }
+
+        impl<'a> fmt::Display for OriginDisplay<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self.origin {
+                    FunctionOrigin::Local(id) => write!(f, "Function({})", id),
+                    FunctionOrigin::External(ident) => write!(f, "{}", self.rodeo.resolve(&ident)),
+                }
+            }
+        }
+
+        OriginDisplay {
+            origin: self,
+            rodeo,
+        }
+    }
+
+    pub fn map_local(self, f: impl FnOnce(u32) -> u32) -> Self {
+        match self {
+            FunctionOrigin::Local(local) => FunctionOrigin::Local(f(local)),
+            external => external,
+        }
+    }
+}
+
+impl From<Ident> for FunctionOrigin {
+    fn from(ident: Ident) -> Self { FunctionOrigin::External(ident) }
+}
+
+impl From<u32> for FunctionOrigin {
+    fn from(id: u32) -> Self { FunctionOrigin::Local(id) }
+}

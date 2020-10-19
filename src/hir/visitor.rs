@@ -56,17 +56,17 @@ impl TypedNode {
                 base.visit(f);
                 index.visit(f);
             },
+            Expr::Block(block) => {
+                for stmt in block.iter() {
+                    stmt.visit(f);
+                }
+            },
             Expr::Literal(_)
             | Expr::Arg(_)
             | Expr::Local(_)
             | Expr::Global(_)
             | Expr::Constant(_)
             | Expr::Function(_) => {},
-            Expr::Block(block) => {
-                for stmt in block.iter() {
-                    stmt.visit(f);
-                }
-            },
         }
     }
 }
