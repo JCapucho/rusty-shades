@@ -152,12 +152,7 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
 
     let (module, rodeo) = handle_errors(build_ir(&code), &files, file_id, color)?;
 
-    let naga_ir = handle_errors(
-        backends::naga::build(&module, &rodeo),
-        &files,
-        file_id,
-        color,
-    )?;
+    let naga_ir = backends::naga::build(&module, &rodeo);
 
     let mut output = OpenOptions::new()
         .write(true)

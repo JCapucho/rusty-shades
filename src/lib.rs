@@ -30,7 +30,7 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
     let module = hir::Module::build(&ast, &rodeo)?;
     let module = module.build_ir(&rodeo)?;
 
-    let naga_ir = backends::naga::build(&module, &rodeo)?;
+    let naga_ir = backends::naga::build(&module, &rodeo);
 
     let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
