@@ -1,3 +1,4 @@
+use super::FnSig;
 use crate::{error::Error, node::SrcNode, ty::Type};
 use naga::FastHashMap;
 use rsh_common::{
@@ -146,7 +147,7 @@ pub struct InferContext<'a> {
     constraints: FastHashMap<ConstraintId, Constraint>,
 
     structs: FastHashMap<u32, Vec<(Symbol, TypeId)>>,
-    functions: FastHashMap<FunctionOrigin, (Ident, Vec<TypeId>, TypeId)>,
+    functions: FastHashMap<FunctionOrigin, FnSig>,
 }
 
 impl<'a> InferContext<'a> {
@@ -232,17 +233,11 @@ impl<'a> InferContext<'a> {
             .unwrap()
     }
 
-    pub fn add_function(
-        &mut self,
-        origin: FunctionOrigin,
-        name: Ident,
-        args: Vec<TypeId>,
-        ret: TypeId,
-    ) {
-        self.functions.insert(origin, (name, args, ret));
+    pub fn add_function(&mut self, origin: FunctionOrigin, sig: FnSig) {
+        self.functions.insert(origin, sig);
     }
 
-    pub fn get_function(&self, origin: FunctionOrigin) -> &(Ident, Vec<TypeId>, TypeId) {
+    pub fn get_function(&self, origin: FunctionOrigin) -> &FnSig {
         self.functions
             .get(&origin)
             .or_else(|| self.parent.map(|p| p.get_function(origin)))
@@ -460,18 +455,18 @@ impl<'a> InferContext<'a> {
                     ),
                     Generic(id, _) => write!(f, "Generic({})", id),
                     FnDef(origin) => {
-                        let (name, args, ret) = self.ctx.get_function(origin);
+                        let FnSig { ident, args, ret } = self.ctx.get_function(origin);
 
                         write!(
                             f,
                             "{}fn({}) -> {} {{ {} }}",
                             if origin.is_extern() { "extern " } else { "" },
-                            args.iter()
-                                .map(|id| format!("{}", self.with_id(*id)))
+                            args.values()
+                                .map(|(_, id)| format!("{}", self.with_id(*id)))
                                 .collect::<Vec<_>>()
                                 .join(", "),
                             self.with_id(*ret),
-                            self.ctx.rodeo.resolve(name)
+                            self.ctx.rodeo.resolve(ident)
                         )
                     },
                 }
@@ -657,15 +652,19 @@ impl<'a> InferContext<'a> {
                 TypeInfo::Unknown => None,
                 TypeInfo::Ref(id) => self.check_bound(id, bound),
                 TypeInfo::FnDef(origin) => {
-                    let (_, fn_args, fn_ret) = self.get_function(origin).clone();
+                    let FnSig {
+                        args: fn_args,
+                        ret: fn_ret,
+                        ..
+                    } = self.get_function(origin).clone();
                     let mut scoped = self.scoped();
 
                     if args.len() != fn_args.len() {
                         return Some(false);
                     }
 
-                    for (a, b) in args.iter().zip(fn_args.iter()) {
-                        if scoped.unify_or_check_bounds(*a, *b).is_err() {
+                    for (a, b) in args.iter().zip(fn_args.values().map(|(_, id)| *id)) {
+                        if scoped.unify_or_check_bounds(*a, b).is_err() {
                             return Some(false);
                         }
                     }

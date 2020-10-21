@@ -225,6 +225,7 @@ impl InferNode {
 
 #[derive(Debug)]
 struct PartialGlobal {
+    ident: Ident,
     modifier: GlobalBinding,
     ty: TypeId,
 }
@@ -232,6 +233,7 @@ struct PartialGlobal {
 #[derive(Debug)]
 struct PartialConstant {
     id: u32,
+    ident: Ident,
     init: ast::Expr,
     ty: TypeId,
 }
@@ -239,15 +241,23 @@ struct PartialConstant {
 #[derive(Debug)]
 struct PartialFunction {
     id: u32,
-    args: FastHashMap<Symbol, (u32, TypeId)>,
-    ret: TypeId,
+    sig: FnSig,
     body: Block,
     generics: Vec<(Symbol, TraitBound)>,
 }
 
+// TODO: Remove pub
+#[derive(Debug, Clone)]
+pub struct FnSig {
+    ident: Ident,
+    // TODO: Make this a vec
+    args: FastHashMap<Symbol, (u32, TypeId)>,
+    ret: TypeId,
+}
+
 #[derive(Debug)]
 struct PartialEntryPoint {
-    name: Ident,
+    ident: Ident,
     stage: EntryPointStage,
     body: Block,
 }
@@ -255,6 +265,7 @@ struct PartialEntryPoint {
 #[derive(Debug)]
 struct PartialStruct {
     id: u32,
+    ident: Ident,
     ty: TypeId,
     fields: FastHashMap<Symbol, (u32, TypeId)>,
 }
@@ -265,7 +276,7 @@ struct PartialModule {
     globals: FastHashMap<Symbol, SrcNode<PartialGlobal>>,
     functions: FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: FastHashMap<Symbol, SrcNode<PartialConstant>>,
-    externs: FastHashMap<Symbol, Ident>,
+    externs: FastHashMap<Symbol, FnSig>,
 
     entry_points: Vec<SrcNode<PartialEntryPoint>>,
 }
@@ -323,27 +334,26 @@ impl Module {
                 errors: &mut errors,
 
                 locals: &mut locals,
-                args: &func.args,
+                sig: &func.sig,
                 globals_lookup: &globals_lookup,
                 structs: &partial.structs,
-                ret: func.ret,
                 functions: &partial.functions,
                 constants: &partial.constants,
                 externs: &partial.externs,
             };
 
-            let body =
-                build_block(&func.body, &mut builder, &mut locals_lookup, func.ret).into_inner();
+            let body = build_block(&func.body, &mut builder, &mut locals_lookup, func.sig.ret)
+                .into_inner();
 
             match scoped.solve_all() {
                 Ok(_) => {},
                 Err(e) => errors.push(e),
             };
 
-            let ret = reconstruct(func.ret, func.span(), &mut scoped, &mut errors).into_inner();
+            let ret = reconstruct(func.sig.ret, func.span(), &mut scoped, &mut errors).into_inner();
 
             let args = {
-                let mut sorted: Vec<_> = func.args.values().collect();
+                let mut sorted: Vec<_> = func.sig.args.values().collect();
                 sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
                 sorted
@@ -355,11 +365,11 @@ impl Module {
             };
 
             let locals = locals
-                .iter()
+                .into_iter()
                 .map(|(id, ty)| {
-                    let ty = reconstruct(*ty, Span::None, &mut scoped, &mut errors).into_inner();
+                    let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors).into_inner();
 
-                    (*id, ty)
+                    (id, ty)
                 })
                 .collect();
 
@@ -394,6 +404,11 @@ impl Module {
                 let mut locals_lookup = FastHashMap::default();
 
                 let ret = scoped.insert(TypeInfo::Empty, Span::None);
+                let sig = FnSig {
+                    ident: func.ident,
+                    args: FastHashMap::default(),
+                    ret,
+                };
 
                 let mut builder = StatementBuilderCtx {
                     infer_ctx: &mut scoped,
@@ -401,10 +416,9 @@ impl Module {
                     errors: &mut errors,
 
                     locals: &mut locals,
-                    args: &FastHashMap::default(),
+                    sig: &sig,
                     globals_lookup: &globals_lookup,
                     structs: &partial.structs,
-                    ret,
                     functions: &partial.functions,
                     constants: &partial.constants,
                     externs: &partial.externs,
@@ -435,7 +449,7 @@ impl Module {
 
                 SrcNode::new(
                     EntryPoint {
-                        name: func.name,
+                        name: func.ident,
                         stage: func.stage,
                         body,
                         locals,
@@ -472,6 +486,11 @@ impl Module {
                 let mut scoped = infer_ctx.scoped();
 
                 let mut locals = vec![];
+                let sig = FnSig {
+                    ident: partial_const.ident,
+                    args: FastHashMap::default(),
+                    ret: partial_const.ty,
+                };
 
                 let mut const_builder = StatementBuilderCtx {
                     infer_ctx: &mut scoped,
@@ -479,10 +498,9 @@ impl Module {
                     errors: &mut errors,
 
                     locals: &mut locals,
-                    args: &FastHashMap::default(),
+                    sig: &sig,
                     globals_lookup: &FastHashMap::default(),
                     structs: &FastHashMap::default(),
-                    ret: partial_const.ty,
                     functions: &FastHashMap::default(),
                     constants: &partial.constants,
                     externs: &FastHashMap::default(),
@@ -596,6 +614,7 @@ impl Module {
                         item.ident.symbol,
                         SrcNode::new(
                             PartialGlobal {
+                                ident: item.ident,
                                 modifier: binding,
                                 ty,
                             },
@@ -622,7 +641,7 @@ impl Module {
                         .map(|r| build_ast_ty(r, &mut ctx, 0))
                         .unwrap_or_else(|| ctx.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
-                    let constructed_args: FastHashMap<_, _> = sig
+                    let args: FastHashMap<_, _> = sig
                         .args
                         .iter()
                         .enumerate()
@@ -649,28 +668,24 @@ impl Module {
                         })
                         .collect();
 
+                    let sig = FnSig {
+                        ident: item.ident,
+                        args,
+                        ret,
+                    };
+
                     func_id += 1;
 
-                    infer_ctx.add_function(
-                        FunctionOrigin::Local(func_id),
-                        item.ident,
-                        {
-                            let mut args = constructed_args.values().collect::<Vec<_>>();
-                            args.sort_by(|a, b| a.0.cmp(&b.0));
-                            args.into_iter().map(|(_, ty)| *ty).collect()
-                        },
-                        ret,
-                    );
+                    infer_ctx.add_function(FunctionOrigin::Local(func_id), sig.clone());
 
                     functions.insert(
                         item.ident.symbol,
                         SrcNode::new(
                             PartialFunction {
                                 id: func_id,
-                                body: fun.body.clone(),
-                                args: constructed_args,
                                 generics,
-                                ret,
+                                sig,
+                                body: fun.body.clone(),
                             },
                             item.span,
                         ),
@@ -685,6 +700,7 @@ impl Module {
                         SrcNode::new(
                             PartialConstant {
                                 id,
+                                ident: item.ident,
                                 ty,
                                 init: constant.init.clone(),
                             },
@@ -694,17 +710,23 @@ impl Module {
                 },
                 ast::ItemKind::EntryPoint(stage, ref function) => entry_points.push(SrcNode::new(
                     PartialEntryPoint {
-                        name: item.ident,
+                        ident: item.ident,
                         stage,
                         body: function.body.clone(),
                     },
                     item.span,
                 )),
                 ast::ItemKind::Extern(ref sig) => {
-                    let args = sig
+                    let args: FastHashMap<_, _> = sig
                         .args
                         .iter()
-                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
+                        .enumerate()
+                        .map(|(pos, arg)| {
+                            (
+                                arg.ident.symbol,
+                                (pos as u32, build_ast_ty(&arg.ty, &mut ctx, 0)),
+                            )
+                        })
                         .collect();
 
                     let ret = sig
@@ -713,14 +735,15 @@ impl Module {
                         .map(|r| build_ast_ty(r, &mut ctx, 0))
                         .unwrap_or_else(|| ctx.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
-                    infer_ctx.add_function(
-                        FunctionOrigin::External(item.ident),
-                        item.ident,
+                    let sig = FnSig {
+                        ident: item.ident,
                         args,
                         ret,
-                    );
+                    };
 
-                    externs.insert(item.ident.symbol, item.ident);
+                    infer_ctx.add_function(FunctionOrigin::External(item.ident), sig.clone());
+
+                    externs.insert(item.ident.symbol, sig);
                 },
             }
         }
@@ -802,6 +825,7 @@ fn build_struct<'a, 'b>(
         ident.symbol,
         SrcNode::new(
             PartialStruct {
+                ident,
                 fields: resolved_fields,
                 ty,
                 id,
@@ -931,13 +955,12 @@ struct StatementBuilderCtx<'a, 'b> {
     errors: &'a mut Vec<Error>,
 
     locals: &'a mut Vec<(u32, TypeId)>,
-    args: &'a FastHashMap<Symbol, (u32, TypeId)>,
+    sig: &'a FnSig,
     globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
     structs: &'a FastHashMap<Symbol, SrcNode<PartialStruct>>,
-    ret: TypeId,
     functions: &'a FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: &'a FastHashMap<Symbol, SrcNode<PartialConstant>>,
-    externs: &'a FastHashMap<Symbol, Ident>,
+    externs: &'a FastHashMap<Symbol, FnSig>,
 }
 
 fn build_block<'a, 'b>(
@@ -1148,7 +1171,7 @@ fn build_expr<'a, 'b>(
         ast::ExprKind::Variable(var) => {
             if let Some((var, local)) = locals_lookup.get(&var) {
                 InferNode::new(Expr::Local(*var), (*local, expr.span))
-            } else if let Some((id, ty)) = ctx.args.get(&var) {
+            } else if let Some((id, ty)) = ctx.sig.args.get(&var) {
                 InferNode::new(Expr::Arg(*id), (*ty, expr.span))
             } else if let Some(fun) = ctx.functions.get(&var) {
                 let origin = fun.id.into();
@@ -1159,8 +1182,8 @@ fn build_expr<'a, 'b>(
                 InferNode::new(Expr::Global(*var), (*ty, expr.span))
             } else if let Some(constant) = ctx.constants.get(&var) {
                 InferNode::new(Expr::Constant(constant.id), (constant.ty, expr.span))
-            } else if let Some(ident) = ctx.externs.get(&var).copied() {
-                let origin = ident.into();
+            } else if let Some(FnSig { ident, .. }) = ctx.externs.get(&var) {
+                let origin = (*ident).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
                 InferNode::new(Expr::Function(origin), (ty, expr.span))
@@ -1222,7 +1245,7 @@ fn build_expr<'a, 'b>(
                 .map(|e| build_expr(e, ctx, locals_lookup, out));
 
             if let Err(e) = ctx.infer_ctx.unify(
-                ctx.ret,
+                ctx.sig.ret,
                 ret_expr.as_ref().map(|e| e.type_id()).unwrap_or(empty),
             ) {
                 ctx.errors.push(e)
