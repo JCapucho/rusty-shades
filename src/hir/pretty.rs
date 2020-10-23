@@ -126,12 +126,12 @@ impl<'a> HirPrettyPrinter<'a> {
 
         impl<'c> fmt::Display for FunctionFmt<'c> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "fn {}", self.printer.rodeo.resolve(&self.func.name))?;
+                write!(f, "fn {}", self.printer.rodeo.resolve(&self.func.sig.ident))?;
 
-                if !self.func.generics.is_empty() {
+                if !self.func.sig.generics.is_empty() {
                     write!(f, "<")?;
 
-                    for gen in self.func.generics.iter() {
+                    for gen in self.func.sig.generics.iter() {
                         write!(f, "{},", self.printer.rodeo.resolve(gen))?;
                     }
 
@@ -140,11 +140,15 @@ impl<'a> HirPrettyPrinter<'a> {
 
                 write!(f, "(")?;
 
-                for arg in self.func.args.iter() {
+                for arg in self.func.sig.args.iter() {
                     write!(f, "{},", arg.display(self.printer.rodeo))?;
                 }
 
-                writeln!(f, ") -> {} {{", self.func.ret.display(self.printer.rodeo))?;
+                writeln!(
+                    f,
+                    ") -> {} {{",
+                    self.func.sig.ret.display(self.printer.rodeo)
+                )?;
 
                 for sta in self.func.body.iter() {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;

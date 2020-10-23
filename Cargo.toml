@@ -1,5 +1,5 @@
 [package]
-name = "rusty_shades"
+name = "rusty-shades"
 version = "0.1.0"
 authors = ["Capucho <jcapucho7@gmail.com>"]
 edition = "2018"
@@ -13,6 +13,7 @@ rsh-ast = { path = "./rsh-ast" }
 rsh-parser = { path = "./rsh-parser" }
 lalrpop-util = "0.19"
 codespan-reporting = { version = "0.9", optional = true }
+petgraph = { version = "0.5", default-features = false }
 
 [features]
 default = ["spirv"]

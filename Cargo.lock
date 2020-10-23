@@ -679,7 +679,7 @@ dependencies = [
  "goldentests",
  "naga",
  "ron",
- "rusty_shades",
+ "rusty-shades",
  "serde",
 ]
 
@@ -696,12 +696,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "rusty_shades"
+name = "rusty-shades"
 version = "0.1.0"
 dependencies = [
  "codespan-reporting",
  "lalrpop-util",
  "naga",
+ "petgraph",
  "rsh-ast",
  "rsh-common",
  "rsh-lexer",

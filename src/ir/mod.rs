@@ -6,6 +6,7 @@ use crate::{
     AssignTarget,
 };
 use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
+use petgraph::graph::NodeIndex as GraphIndex;
 use rsh_common::{
     src::Span, BinaryOp, EntryPointStage, FunctionOrigin, GlobalBinding, Literal, Rodeo,
     ScalarType, Symbol, UnaryOp,
@@ -268,7 +269,11 @@ impl hir::Module {
             constants.into_iter().map(Result::unwrap).collect()
         };
 
-        let mut builder = FunctionBuilder {
+        let mut call_graph = petgraph::Graph::new();
+
+        let mut ctx = FunctionBuilderCtx {
+            errors: &mut errors,
+            call_graph: &mut call_graph,
             hir_functions,
             globals: &mut globals,
             globals_lookup: &mut global_lookups,
@@ -278,16 +283,35 @@ impl hir::Module {
             rodeo,
         };
 
-        let entry_points = {
-            let (entry_points, e): (Vec<_>, Vec<_>) = self
-                .entry_points
-                .into_iter()
-                .map(|entry| entry.build_ir(&mut builder))
-                .partition(Result::is_ok);
-            errors.extend(e.into_iter().map(Result::unwrap_err).flatten());
+        use petgraph::visit::Control;
 
-            entry_points.into_iter().map(Result::unwrap).collect()
-        };
+        let entry_points = self
+            .entry_points
+            .into_iter()
+            .map(|entry| {
+                let (entry, node) = entry.build_ir(&mut ctx);
+
+                if let Control::Break((a, b)) =
+                    petgraph::visit::depth_first_search(&*ctx.call_graph, Some(node), |event| {
+                        match event {
+                            petgraph::visit::DfsEvent::BackEdge(a, b) => Control::Break((a, b)),
+                            _ => Control::Continue,
+                        }
+                    })
+                {
+                    for call_site in ctx.call_graph.edges_connecting(a, b) {
+                        ctx.errors.push(
+                            Error::custom(String::from("Recursive function detected"))
+                                .with_span(*call_site.weight())
+                                .with_span(ctx.call_graph[a])
+                                .with_span(ctx.call_graph[b]),
+                        )
+                    }
+                }
+
+                entry
+            })
+            .collect();
 
         if errors.is_empty() {
             Ok(Module {
@@ -327,21 +351,50 @@ impl hir::Struct {
     }
 }
 
+struct FunctionBuilderCtx<'a> {
+    errors: &'a mut Vec<Error>,
+
+    call_graph: &'a mut petgraph::Graph<Span, Span>,
+    hir_functions: &'a FastHashMap<u32, SrcNode<hir::Function>>,
+    globals: &'a mut FastHashMap<u32, Global>,
+    globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
+    structs: &'a FastHashMap<u32, SrcNode<hir::Struct>>,
+    functions: &'a mut FastHashMap<u32, Function>,
+    instances_map: &'a mut FastHashMap<(u32, Vec<Type>), (u32, GraphIndex)>,
+    rodeo: &'a Rodeo,
+}
+
+struct StatementBuilder<'a> {
+    modifier: Option<EntryPointStage>,
+    locals: &'a mut FastHashMap<u32, Type>,
+    generics: &'a [Type],
+}
+
 impl SrcNode<hir::Function> {
     fn build_ir(
         self,
-        builder: &mut FunctionBuilder<'_>,
+        ctx: &mut FunctionBuilderCtx<'_>,
         generics: Vec<Type>,
         id: u32,
-    ) -> Result<u32, Vec<Error>> {
+    ) -> (u32, GraphIndex) {
+        if let Some(t) = ctx.instances_map.get(&(id, generics.clone())) {
+            return *t;
+        }
+
         let span = self.span();
         let mut func = self.into_inner();
 
-        let mut errors = vec![];
+        let ir_id = ctx.functions.len() as u32;
+        let node = ctx.call_graph.add_node(func.sig.span);
+
+        ctx.instances_map
+            .insert((id, generics.clone()), (ir_id, node));
+
         let mut body = vec![];
 
-        if !block_returns(&func.body, &func.ret) {
-            errors.push(Error::custom(String::from("Body doesn't return")).with_span(span))
+        if !block_returns(&func.body, &func.sig.ret) {
+            ctx.errors
+                .push(Error::custom(String::from("Body doesn't return")).with_span(span))
         }
 
         let mut sta_builder = StatementBuilder {
@@ -351,10 +404,11 @@ impl SrcNode<hir::Function> {
         };
 
         for sta in func.body.into_iter() {
-            errors.append(&mut sta.build_ir(builder, &mut sta_builder, &mut body, None));
+            sta.build_ir(node, ctx, &mut sta_builder, &mut body, None);
         }
 
         let args = func
+            .sig
             .args
             .into_iter()
             .map(|ty| monomorphize::instantiate_ty(&ty, &generics).clone())
@@ -364,35 +418,28 @@ impl SrcNode<hir::Function> {
             })
             .collect();
 
-        let ret = monomorphize::instantiate_ty(&func.ret, &generics).clone();
+        let ret = monomorphize::instantiate_ty(&func.sig.ret, &generics).clone();
 
         let fun = Function {
-            name: func.name,
+            name: func.sig.ident.symbol,
             args,
             ret,
             body,
             locals: func.locals,
         };
 
-        let ir_id = builder.functions.len() as u32;
+        ctx.functions.insert(ir_id, fun);
 
-        builder.functions.insert(ir_id, fun);
-        builder.instances_map.insert((id, generics), ir_id);
-
-        if errors.is_empty() {
-            Ok(ir_id)
-        } else {
-            Err(errors)
-        }
+        (ir_id, node)
     }
 }
 
 impl SrcNode<hir::EntryPoint> {
-    fn build_ir(self, builder: &mut FunctionBuilder<'_>) -> Result<EntryPoint, Vec<Error>> {
+    fn build_ir(self, ctx: &mut FunctionBuilderCtx<'_>) -> (EntryPoint, GraphIndex) {
         let mut func = self.into_inner();
-
-        let mut errors = vec![];
         let mut body = vec![];
+
+        let node = ctx.call_graph.add_node(func.sig_span);
 
         let mut sta_builder = StatementBuilder {
             modifier: Some(func.stage),
@@ -401,88 +448,67 @@ impl SrcNode<hir::EntryPoint> {
         };
 
         for sta in func.body.into_iter() {
-            errors.append(&mut sta.build_ir(builder, &mut sta_builder, &mut body, None));
+            sta.build_ir(node, ctx, &mut sta_builder, &mut body, None);
         }
 
-        if errors.is_empty() {
-            Ok(EntryPoint {
-                name: func.name.symbol,
-                stage: func.stage,
-                body,
-                locals: func.locals,
-            })
-        } else {
-            Err(errors)
-        }
+        let entry = EntryPoint {
+            name: func.name.symbol,
+            stage: func.stage,
+            body,
+            locals: func.locals,
+        };
+
+        (entry, node)
     }
-}
-
-struct StatementBuilder<'a> {
-    modifier: Option<EntryPointStage>,
-    locals: &'a mut FastHashMap<u32, Type>,
-    generics: &'a [Type],
-}
-
-struct FunctionBuilder<'a> {
-    hir_functions: &'a FastHashMap<u32, SrcNode<hir::Function>>,
-    globals: &'a mut FastHashMap<u32, Global>,
-    globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
-    structs: &'a FastHashMap<u32, SrcNode<hir::Struct>>,
-    functions: &'a mut FastHashMap<u32, Function>,
-    instances_map: &'a mut FastHashMap<(u32, Vec<Type>), u32>,
-    rodeo: &'a Rodeo,
 }
 
 impl hir::Statement<(Type, Span)> {
     fn build_ir<'a, 'b>(
         self,
-        builder: &mut FunctionBuilder<'a>,
+        node: GraphIndex,
+        ctx: &mut FunctionBuilderCtx<'a>,
         sta_builder: &mut StatementBuilder<'b>,
         body: &mut Vec<Statement>,
         nested: Option<u32>,
-    ) -> Vec<Error> {
-        let mut errors = vec![];
-
+    ) {
         match self {
             hir::Statement::Expr(e) => {
-                match (e.build_ir(builder, sta_builder, body, nested), nested) {
-                    (Ok(Some(expr)), Some(local)) => {
+                match (e.build_ir(node, ctx, sta_builder, body, nested), nested) {
+                    (Some(expr), Some(local)) => {
                         body.push(Statement::Assign(AssignTarget::Local(local), expr))
                     },
-                    (Ok(Some(expr)), None) => body.push(Statement::Return(Some(expr))),
-                    (Err(mut e), _) => errors.append(&mut e),
+                    (Some(expr), None) => body.push(Statement::Return(Some(expr))),
                     _ => {},
                 }
             },
-            hir::Statement::ExprSemi(e) => match e.build_ir(builder, sta_builder, body, nested) {
-                Ok(_) => {},
-                Err(mut e) => errors.append(&mut e),
+            hir::Statement::ExprSemi(e) => {
+                e.build_ir(node, ctx, sta_builder, body, nested);
             },
             hir::Statement::Assign(tgt, e) => {
                 let tgt = match tgt.inner() {
                     AssignTarget::Global(global) => {
-                        let id = match builder.globals_lookup.get(&global).unwrap() {
+                        let id = match ctx.globals_lookup.get(&global).unwrap() {
                             GlobalLookup::ContextLess(id) => *id,
                             GlobalLookup::ContextFull { vert, frag } => {
                                 match sta_builder.modifier {
                                     Some(EntryPointStage::Vertex) => *vert,
                                     Some(EntryPointStage::Fragment) => *frag,
                                     None => {
-                                        errors.push(
+                                        ctx.errors.push(
                                             Error::custom(String::from(
                                                 "Context full globals can only be used in entry \
                                                  point functions",
                                             ))
                                             .with_span(tgt.span()),
                                         );
-                                        return errors;
+                                        *vert
                                     },
                                 }
                             },
                         };
 
-                        if !builder.globals.get(&id).unwrap().is_writeable() {
-                            errors.push(
+                        if !ctx.globals.get(&id).unwrap().is_writeable() {
+                            ctx.errors.push(
                                 Error::custom(String::from("Global cannot be wrote to"))
                                     .with_span(tgt.span()),
                             );
@@ -493,44 +519,30 @@ impl hir::Statement<(Type, Span)> {
                     id => *id,
                 };
 
-                match e.build_ir(builder, sta_builder, body, nested) {
-                    Ok(Some(expr)) => body.push(Statement::Assign(tgt, expr)),
-                    Err(mut e) => errors.append(&mut e),
-                    _ => {},
+                if let Some(expr) = e.build_ir(node, ctx, sta_builder, body, nested) {
+                    body.push(Statement::Assign(tgt, expr))
                 }
             },
         }
-
-        errors
     }
 }
 
 impl hir::TypedNode {
     fn build_ir<'a, 'b>(
         self,
-        builder: &mut FunctionBuilder<'a>,
+        node: GraphIndex,
+        ctx: &mut FunctionBuilderCtx<'a>,
         sta_builder: &mut StatementBuilder<'b>,
         body: &mut Vec<Statement>,
         nested: Option<u32>,
-    ) -> Result<Option<TypedExpr>, Vec<Error>> {
-        macro_rules! fallthrough {
-            ($res:expr) => {
-                match $res {
-                    Ok(None) => return Ok(None),
-                    Ok(Some(r)) => Ok(r),
-                    Err(e) => Err(e),
-                }
-            };
-        }
-
-        let mut errors = vec![];
+    ) -> Option<TypedExpr> {
         let ty = monomorphize::instantiate_ty(self.ty(), &sta_builder.generics).clone();
         let span = self.span();
 
         let expr = match self.into_inner() {
             hir::Expr::BinaryOp { left, op, right } => {
-                let left = fallthrough!(left.build_ir(builder, sta_builder, body, nested))?;
-                let right = fallthrough!(right.build_ir(builder, sta_builder, body, nested))?;
+                let left = left.build_ir(node, ctx, sta_builder, body, nested)?;
+                let right = right.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::BinaryOp {
                     left,
@@ -539,13 +551,13 @@ impl hir::TypedNode {
                 }
             },
             hir::Expr::UnaryOp { tgt, op } => {
-                let tgt = fallthrough!(tgt.build_ir(builder, sta_builder, body, nested))?;
+                let tgt = tgt.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::UnaryOp { tgt, op: op.node }
             },
             hir::Expr::Call { fun, args } => {
                 let generics = monomorphize::collect(
-                    builder.hir_functions,
+                    ctx.hir_functions,
                     fun.ty(),
                     &ty,
                     &args,
@@ -560,36 +572,22 @@ impl hir::TypedNode {
                         _ => {},
                     }
 
-                    constructed_args.push(fallthrough!(arg.build_ir(
-                        builder,
-                        sta_builder,
-                        body,
-                        nested
-                    ))?);
+                    constructed_args.push(arg.build_ir(node, ctx, sta_builder, body, nested)?);
                 }
 
                 match monomorphize::instantiate_ty(fun.ty(), sta_builder.generics) {
                     Type::FnDef(origin) => {
                         let origin = (*origin).map_local(|id| {
-                            builder
-                                .instances_map
-                                .get(&(id, generics.clone()))
-                                .copied()
-                                .unwrap_or_else(|| {
-                                    match builder
-                                        .hir_functions
-                                        .get(&id)
-                                        .cloned()
-                                        .unwrap()
-                                        .build_ir(builder, generics, id)
-                                    {
-                                        Ok(id) => id,
-                                        Err(mut e) => {
-                                            errors.append(&mut e);
-                                            0
-                                        },
-                                    }
-                                })
+                            let (id, called_node) = ctx
+                                .hir_functions
+                                .get(&id)
+                                .cloned()
+                                .unwrap()
+                                .build_ir(ctx, generics, id);
+
+                            ctx.call_graph.add_edge(node, called_node, span);
+
+                            id
                         });
 
                         Expr::Call {
@@ -598,7 +596,7 @@ impl hir::TypedNode {
                         }
                     },
                     _ => {
-                        errors.push(
+                        ctx.errors.push(
                             Error::custom(String::from("Couldn't resolve a function id"))
                                 .with_span(span),
                         );
@@ -613,22 +611,14 @@ impl hir::TypedNode {
             hir::Expr::Literal(lit) => Expr::Literal(lit),
             hir::Expr::Access { base, field } => {
                 let fields = match base.ty() {
-                    Type::Struct(id) => vec![
-                        builder
-                            .structs
-                            .get(id)
-                            .unwrap()
-                            .fields
-                            .get(&field)
-                            .unwrap()
-                            .0,
-                    ],
-                    Type::Tuple(_) => vec![builder.rodeo.resolve(&field).parse().unwrap()],
+                    Type::Struct(id) => {
+                        vec![ctx.structs.get(id).unwrap().fields.get(&field).unwrap().0]
+                    },
+                    Type::Tuple(_) => vec![ctx.rodeo.resolve(&field).parse().unwrap()],
                     Type::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
-                        builder
-                            .rodeo
+                        ctx.rodeo
                             .resolve(&field)
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
@@ -638,7 +628,7 @@ impl hir::TypedNode {
                 };
 
                 Expr::Access {
-                    base: fallthrough!(base.build_ir(builder, sta_builder, body, nested))?,
+                    base: base.build_ir(node, ctx, sta_builder, body, nested)?,
                     fields,
                 }
             },
@@ -646,12 +636,13 @@ impl hir::TypedNode {
                 let mut constructed_elements = vec![];
 
                 for ele in elements {
-                    constructed_elements.push(fallthrough!(ele.build_ir(
-                        builder,
+                    constructed_elements.push(ele.build_ir(
+                        node,
+                        ctx,
                         sta_builder,
                         body,
-                        nested
-                    ))?);
+                        nested,
+                    )?);
                 }
 
                 match ty {
@@ -782,26 +773,27 @@ impl hir::TypedNode {
             hir::Expr::Arg(pos) => Expr::Arg(pos),
             hir::Expr::Local(local) => Expr::Local(local),
             hir::Expr::Global(global) => {
-                let id = match builder.globals_lookup.get(&global).unwrap() {
+                let id = match ctx.globals_lookup.get(&global).unwrap() {
                     GlobalLookup::ContextLess(id) => *id,
                     GlobalLookup::ContextFull { vert, frag } => match sta_builder.modifier {
                         Some(EntryPointStage::Vertex) => *vert,
                         Some(EntryPointStage::Fragment) => *frag,
                         None => {
-                            errors.push(
+                            ctx.errors.push(
                                 Error::custom(String::from(
                                     "Context full globals can only be used in entry point \
                                      functions",
                                 ))
                                 .with_span(span),
                             );
-                            return Err(errors);
+
+                            *vert
                         },
                     },
                 };
 
-                if !builder.globals.get(&id).unwrap().is_readable() {
-                    errors
+                if !ctx.globals.get(&id).unwrap().is_readable() {
+                    ctx.errors
                         .push(Error::custom(String::from("Global cannot be read")).with_span(span));
                 }
 
@@ -809,12 +801,11 @@ impl hir::TypedNode {
             },
             hir::Expr::Return(e) => {
                 let sta = Statement::Return(
-                    e.and_then(|e| e.build_ir(builder, sta_builder, body, nested).transpose())
-                        .transpose()?,
+                    e.and_then(|e| e.build_ir(node, ctx, sta_builder, body, nested)),
                 );
 
                 body.push(sta);
-                return Ok(None);
+                return None;
             },
             hir::Expr::If {
                 condition,
@@ -825,24 +816,19 @@ impl hir::TypedNode {
                 sta_builder.locals.insert(local, ty.clone());
 
                 let sta = Statement::If {
-                    condition: fallthrough!(condition.build_ir(builder, sta_builder, body, None))?,
+                    condition: condition.build_ir(node, ctx, sta_builder, body, None)?,
                     accept: {
                         let mut body = vec![];
 
                         if !block_returns(&accept, &ty) {
-                            errors.push(
+                            ctx.errors.push(
                                 Error::custom(String::from("Block doesn't return"))
                                     .with_span(accept.span()),
                             )
                         }
 
                         for sta in accept.into_inner() {
-                            errors.append(&mut sta.build_ir(
-                                builder,
-                                sta_builder,
-                                &mut body,
-                                Some(local),
-                            ));
+                            sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                         }
 
                         body
@@ -851,19 +837,14 @@ impl hir::TypedNode {
                         let mut body = vec![];
 
                         if !block_returns(&reject, &ty) {
-                            errors.push(
+                            ctx.errors.push(
                                 Error::custom(String::from("Block doesn't return"))
                                     .with_span(reject.span()),
                             )
                         }
 
                         for sta in reject.into_inner() {
-                            errors.append(&mut sta.build_ir(
-                                builder,
-                                sta_builder,
-                                &mut body,
-                                Some(local),
-                            ));
+                            sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                         }
 
                         body
@@ -875,9 +856,9 @@ impl hir::TypedNode {
                 Expr::Local(local)
             },
             hir::Expr::Index { base, index } => {
-                let base = fallthrough!(base.build_ir(builder, sta_builder, body, nested))?;
+                let base = base.build_ir(node, ctx, sta_builder, body, nested)?;
 
-                let index = fallthrough!(index.build_ir(builder, sta_builder, body, nested))?;
+                let index = index.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::Index { base, index }
             },
@@ -890,19 +871,14 @@ impl hir::TypedNode {
                     let mut body = vec![];
 
                     if !block_returns(&block, &ty) {
-                        errors.push(
+                        ctx.errors.push(
                             Error::custom(String::from("Block doesn't return"))
                                 .with_span(block.span()),
                         )
                     }
 
                     for sta in block.into_inner() {
-                        errors.append(&mut sta.build_ir(
-                            builder,
-                            sta_builder,
-                            &mut body,
-                            Some(local),
-                        ));
+                        sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                     }
 
                     body
@@ -915,11 +891,7 @@ impl hir::TypedNode {
             hir::Expr::Function(_) => unreachable!(),
         };
 
-        if errors.is_empty() {
-            Ok(Some(TypedExpr::new(expr, ty)))
-        } else {
-            Err(errors)
-        }
+        Some(TypedExpr::new(expr, ty))
     }
 
     fn returns(&self) -> bool {

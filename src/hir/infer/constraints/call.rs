@@ -1,7 +1,7 @@
 use super::{InferContext, TypeId, TypeInfo};
 use crate::{
     error::Error,
-    hir::{FnSig, TraitBound},
+    hir::{PartialFnSig, TraitBound},
 };
 use naga::FastHashMap;
 
@@ -22,7 +22,7 @@ impl<'a> InferContext<'a> {
             Some(true) => {
                 let (called_args, called_ret) = match self.get(fun) {
                     crate::hir::infer::TypeInfo::FnDef(fun) => {
-                        let FnSig { args, ret, .. } = self.get_function(fun);
+                        let PartialFnSig { args, ret, .. } = self.get_function(fun);
 
                         (args.values().map(|(_, id)| *id).collect(), *ret)
                     },

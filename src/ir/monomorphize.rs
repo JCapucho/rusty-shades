@@ -21,15 +21,15 @@ pub fn collect(
         rsh_common::FunctionOrigin::Local(id) => {
             let called_fun = hir_functions.get(id).unwrap();
 
-            let mut called_generics = vec![Type::Empty; called_fun.generics.len()];
+            let mut called_generics = vec![Type::Empty; called_fun.sig.generics.len()];
 
-            for (a, b) in called_fun.args.iter().zip(args.iter()) {
+            for (a, b) in called_fun.sig.args.iter().zip(args.iter()) {
                 if let Type::Generic(pos) = a {
                     called_generics[*pos as usize] = instantiate_ty(b.ty(), generics).clone();
                 }
             }
 
-            if let Type::Generic(pos) = called_fun.ret {
+            if let Type::Generic(pos) = called_fun.sig.ret {
                 called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
             }
 

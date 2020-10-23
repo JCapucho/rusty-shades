@@ -8,7 +8,7 @@ edition = "2018"
 [dependencies]
 naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26" }
 codespan-reporting = { version = "0.9" }
-rusty_shades = { path = "..", features = ["codespan-reporting"] }
+rusty-shades = { path = "..", features = ["codespan-reporting"] }
 clap = "2.33"
 ron = { version = "0.6", optional = true }
 serde = { version = "1.0", optional = true }

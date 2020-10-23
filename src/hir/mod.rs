@@ -46,12 +46,18 @@ pub struct Module {
 // TODO: Make this non clone
 #[derive(Debug, Clone)]
 pub struct Function {
-    pub name: Symbol,
-    pub generics: Vec<Symbol>,
-    pub args: Vec<Type>,
-    pub ret: Type,
+    pub sig: FnSig,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FnSig {
+    pub ident: Ident,
+    pub generics: Vec<Ident>,
+    pub args: Vec<Type>,
+    pub ret: Type,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -78,6 +84,7 @@ pub struct Constant {
 pub struct EntryPoint {
     pub name: Ident,
     pub stage: EntryPointStage,
+    pub sig_span: Span,
     pub body: Vec<Statement<(Type, Span)>>,
     pub locals: FastHashMap<u32, Type>,
 }
@@ -241,24 +248,26 @@ struct PartialConstant {
 #[derive(Debug)]
 struct PartialFunction {
     id: u32,
-    sig: FnSig,
+    generics: Vec<(Ident, TraitBound)>,
+    sig: PartialFnSig,
     body: Block,
-    generics: Vec<(Symbol, TraitBound)>,
 }
 
 // TODO: Remove pub
 #[derive(Debug, Clone)]
-pub struct FnSig {
+pub struct PartialFnSig {
     ident: Ident,
     // TODO: Make this a vec
     args: FastHashMap<Symbol, (u32, TypeId)>,
     ret: TypeId,
+    span: Span,
 }
 
 #[derive(Debug)]
 struct PartialEntryPoint {
     ident: Ident,
     stage: EntryPointStage,
+    sig_span: Span,
     body: Block,
 }
 
@@ -276,7 +285,7 @@ struct PartialModule {
     globals: FastHashMap<Symbol, SrcNode<PartialGlobal>>,
     functions: FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: FastHashMap<Symbol, SrcNode<PartialConstant>>,
-    externs: FastHashMap<Symbol, FnSig>,
+    externs: FastHashMap<Symbol, PartialFnSig>,
 
     entry_points: Vec<SrcNode<PartialEntryPoint>>,
 }
@@ -322,7 +331,7 @@ impl Module {
             })
             .collect();
 
-        for (name, func) in partial.functions.iter() {
+        for (_, func) in partial.functions.iter() {
             let mut scoped = infer_ctx.scoped();
 
             let mut locals = vec![];
@@ -378,19 +387,17 @@ impl Module {
                 .map(|sta| sta.into_statement(&mut scoped, &mut errors))
                 .collect();
 
+            let sig = FnSig {
+                ident: func.sig.ident,
+                generics: func.generics.iter().map(|(name, _)| *name).collect(),
+                args,
+                ret,
+                span: func.sig.span,
+            };
+
             functions.insert(
                 func.id,
-                SrcNode::new(
-                    Function {
-                        name: *name,
-                        generics: func.generics.iter().map(|(name, _)| *name).collect(),
-                        args,
-                        ret,
-                        body,
-                        locals,
-                    },
-                    func.span(),
-                ),
+                SrcNode::new(Function { sig, body, locals }, func.span()),
             );
         }
 
@@ -404,10 +411,11 @@ impl Module {
                 let mut locals_lookup = FastHashMap::default();
 
                 let ret = scoped.insert(TypeInfo::Empty, Span::None);
-                let sig = FnSig {
+                let sig = PartialFnSig {
                     ident: func.ident,
                     args: FastHashMap::default(),
                     ret,
+                    span: func.sig_span,
                 };
 
                 let mut builder = StatementBuilderCtx {
@@ -450,6 +458,7 @@ impl Module {
                 SrcNode::new(
                     EntryPoint {
                         name: func.ident,
+                        sig_span: func.sig_span,
                         stage: func.stage,
                         body,
                         locals,
@@ -486,10 +495,11 @@ impl Module {
                 let mut scoped = infer_ctx.scoped();
 
                 let mut locals = vec![];
-                let sig = FnSig {
+                let sig = PartialFnSig {
                     ident: partial_const.ident,
                     args: FastHashMap::default(),
                     ret: partial_const.ty,
+                    span: partial_const.span(),
                 };
 
                 let mut const_builder = StatementBuilderCtx {
@@ -658,7 +668,7 @@ impl Module {
                         .iter()
                         .map(|generic| {
                             (
-                                generic.ident.symbol,
+                                generic.ident,
                                 generic
                                     .bound
                                     .as_ref()
@@ -668,10 +678,14 @@ impl Module {
                         })
                         .collect();
 
-                    let sig = FnSig {
+                    let item_start = item.span.as_range().map(|range| range.start).unwrap_or(0);
+                    let sig_end = fun.sig.span.as_range().map(|range| range.end).unwrap_or(0);
+
+                    let sig = PartialFnSig {
                         ident: item.ident,
                         args,
                         ret,
+                        span: Span::Range(item_start.into(), sig_end.into()),
                     };
 
                     func_id += 1;
@@ -708,14 +722,20 @@ impl Module {
                         ),
                     );
                 },
-                ast::ItemKind::EntryPoint(stage, ref function) => entry_points.push(SrcNode::new(
-                    PartialEntryPoint {
-                        ident: item.ident,
-                        stage,
-                        body: function.body.clone(),
-                    },
-                    item.span,
-                )),
+                ast::ItemKind::EntryPoint(stage, ref fun) => {
+                    let item_start = item.span.as_range().map(|range| range.start).unwrap_or(0);
+                    let sig_end = fun.sig.span.as_range().map(|range| range.end).unwrap_or(0);
+
+                    entry_points.push(SrcNode::new(
+                        PartialEntryPoint {
+                            ident: item.ident,
+                            stage,
+                            sig_span: Span::Range(item_start.into(), sig_end.into()),
+                            body: fun.body.clone(),
+                        },
+                        item.span,
+                    ))
+                },
                 ast::ItemKind::Extern(ref sig) => {
                     let args: FastHashMap<_, _> = sig
                         .args
@@ -735,10 +755,11 @@ impl Module {
                         .map(|r| build_ast_ty(r, &mut ctx, 0))
                         .unwrap_or_else(|| ctx.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
-                    let sig = FnSig {
+                    let sig = PartialFnSig {
                         ident: item.ident,
                         args,
                         ret,
+                        span: item.span,
                     };
 
                     infer_ctx.add_function(FunctionOrigin::External(item.ident), sig.clone());
@@ -955,12 +976,12 @@ struct StatementBuilderCtx<'a, 'b> {
     errors: &'a mut Vec<Error>,
 
     locals: &'a mut Vec<(u32, TypeId)>,
-    sig: &'a FnSig,
+    sig: &'a PartialFnSig,
     globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
     structs: &'a FastHashMap<Symbol, SrcNode<PartialStruct>>,
     functions: &'a FastHashMap<Symbol, SrcNode<PartialFunction>>,
     constants: &'a FastHashMap<Symbol, SrcNode<PartialConstant>>,
-    externs: &'a FastHashMap<Symbol, FnSig>,
+    externs: &'a FastHashMap<Symbol, PartialFnSig>,
 }
 
 fn build_block<'a, 'b>(
@@ -1182,7 +1203,7 @@ fn build_expr<'a, 'b>(
                 InferNode::new(Expr::Global(*var), (*ty, expr.span))
             } else if let Some(constant) = ctx.constants.get(&var) {
                 InferNode::new(Expr::Constant(constant.id), (constant.ty, expr.span))
-            } else if let Some(FnSig { ident, .. }) = ctx.externs.get(&var) {
+            } else if let Some(PartialFnSig { ident, .. }) = ctx.externs.get(&var) {
                 let origin = (*ident).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
