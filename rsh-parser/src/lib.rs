@@ -9,6 +9,7 @@ use rsh_lexer::{LexerError, Token};
 use std::fmt;
 
 #[allow(clippy::all)]
+#[rustfmt::skip]
 mod grammar;
 
 // TODO: Return multiple errors
