@@ -31,6 +31,8 @@ jobs:
           command: test
 
       - uses: actions-rs/cargo@v1
+        # The custom .rustfmt.toml is only supported on nightly
+        if: matrix.rust == 'nightly'
         with:
           command: fmt
           args: --all -- --check
