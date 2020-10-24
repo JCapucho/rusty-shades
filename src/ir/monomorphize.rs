@@ -1,6 +1,6 @@
 use crate::{
-    hir::{Function, TypedNode},
     node::SrcNode,
+    thir::{Function, TypedNode},
     ty::Type,
 };
 use naga::FastHashMap;

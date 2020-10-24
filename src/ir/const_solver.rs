@@ -1,8 +1,8 @@
 use crate::{
     error::Error,
-    hir::{Statement, TypedNode},
     ir::ConstantInner,
     node::SrcNode,
+    thir::{Expr, Statement, TypedNode},
     ty::Type,
     AssignTarget,
 };
@@ -17,7 +17,7 @@ impl TypedNode {
         rodeo: &Rodeo,
     ) -> Result<ConstantInner, Error> {
         match self.inner() {
-            crate::hir::Expr::BinaryOp { left, op, right } => {
+            Expr::BinaryOp { left, op, right } => {
                 let left = left.solve(get_constant, locals, rodeo)?;
                 let right = right.solve(get_constant, locals, rodeo)?;
 
@@ -56,7 +56,7 @@ impl TypedNode {
                     _ => unreachable!(),
                 })
             },
-            crate::hir::Expr::UnaryOp { tgt, op } => {
+            Expr::UnaryOp { tgt, op } => {
                 let tgt = tgt.solve(get_constant, locals, rodeo)?;
 
                 Ok(match tgt {
@@ -74,9 +74,9 @@ impl TypedNode {
                 })
             },
             // TODO: const functions when?
-            crate::hir::Expr::Call { .. } => unreachable!(),
-            crate::hir::Expr::Literal(lit) => Ok(ConstantInner::Scalar(*lit)),
-            crate::hir::Expr::Access { base, field } => {
+            Expr::Call { .. } => unreachable!(),
+            Expr::Literal(lit) => Ok(ConstantInner::Scalar(*lit)),
+            Expr::Access { base, field } => {
                 let fields: Vec<_> = match base.ty() {
                     Type::Struct(_) | Type::Tuple(_) => todo!(),
                     Type::Vector(_, _) => {
@@ -110,7 +110,7 @@ impl TypedNode {
                     ConstantInner::Vector(data)
                 })
             },
-            crate::hir::Expr::Constructor { elements } => {
+            Expr::Constructor { elements } => {
                 let elements: Vec<_> = elements
                     .iter()
                     .map(|ele| Ok((ele.solve(get_constant, locals, rodeo)?, ele.ty())))
@@ -187,13 +187,13 @@ impl TypedNode {
                     _ => unreachable!(),
                 })
             },
-            crate::hir::Expr::Local(id) => Ok(locals.get(&id).unwrap().clone()),
-            crate::hir::Expr::Constant(id) => get_constant(*id),
-            crate::hir::Expr::Return(_) => {
+            Expr::Local(id) => Ok(locals.get(&id).unwrap().clone()),
+            Expr::Constant(id) => get_constant(*id),
+            Expr::Return(_) => {
                 Err(Error::custom(String::from("Cannot return in a constant"))
                     .with_span(self.span()))
             },
-            crate::hir::Expr::If {
+            Expr::If {
                 condition,
                 accept,
                 reject,
@@ -210,16 +210,16 @@ impl TypedNode {
                     reject.solve(get_constant, locals, rodeo)
                 }
             },
-            crate::hir::Expr::Index { base, index } => {
+            Expr::Index { base, index } => {
                 let base = base.solve(get_constant, locals, rodeo)?;
                 let index = index.solve(get_constant, locals, rodeo)?;
 
                 Ok(base.index(&index))
             },
-            crate::hir::Expr::Block(block) => block.solve(get_constant, locals, rodeo),
-            crate::hir::Expr::Arg(_) => unreachable!(),
-            crate::hir::Expr::Function(_) => unreachable!(),
-            crate::hir::Expr::Global(_) => unreachable!(),
+            Expr::Block(block) => block.solve(get_constant, locals, rodeo),
+            Expr::Arg(_) => unreachable!(),
+            Expr::Function(_) => unreachable!(),
+            Expr::Global(_) => unreachable!(),
         }
     }
 }

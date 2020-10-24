@@ -1,4 +1,4 @@
-use super::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
+use super::{Constraint, InferContext, ScalarInfo, SizeInfo, TraitBound, TypeId, TypeInfo};
 use crate::error::Error;
 
 mod access;

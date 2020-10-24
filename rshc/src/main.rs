@@ -13,7 +13,7 @@ use rusty_shades::{
     error::Error,
     hir,
     ir::Module as IrModule,
-    lexer, parser,
+    lexer, parser, thir,
 };
 use std::{
     fs::{read_to_string, File, OpenOptions},
@@ -208,7 +208,8 @@ fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
         .parse(&rodeo, lexer)
         .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
 
-    let module = hir::Module::build(&ast, &rodeo)?;
+    let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
+    let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
 
     let module = module.build_ir(&rodeo)?;
 

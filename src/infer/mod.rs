@@ -1,5 +1,4 @@
-use super::PartialFnSig;
-use crate::{error::Error, node::SrcNode, ty::Type};
+use crate::{error::Error, hir::FnSig, node::SrcNode, ty::Type};
 use naga::FastHashMap;
 use rsh_common::{
     src::{Span, Spanned},
@@ -147,7 +146,7 @@ pub struct InferContext<'a> {
     constraints: FastHashMap<ConstraintId, Constraint>,
 
     structs: FastHashMap<u32, Vec<(Symbol, TypeId)>>,
-    functions: FastHashMap<FunctionOrigin, PartialFnSig>,
+    functions: FastHashMap<FunctionOrigin, FnSig>,
 }
 
 impl<'a> InferContext<'a> {
@@ -233,11 +232,11 @@ impl<'a> InferContext<'a> {
             .unwrap()
     }
 
-    pub fn add_function(&mut self, origin: FunctionOrigin, sig: PartialFnSig) {
+    pub fn add_function(&mut self, origin: FunctionOrigin, sig: FnSig) {
         self.functions.insert(origin, sig);
     }
 
-    pub fn get_function(&self, origin: FunctionOrigin) -> &PartialFnSig {
+    pub fn get_function(&self, origin: FunctionOrigin) -> &FnSig {
         self.functions
             .get(&origin)
             .or_else(|| self.parent.map(|p| p.get_function(origin)))
@@ -455,7 +454,7 @@ impl<'a> InferContext<'a> {
                     ),
                     Generic(id, _) => write!(f, "Generic({})", id),
                     FnDef(origin) => {
-                        let PartialFnSig {
+                        let FnSig {
                             ident, args, ret, ..
                         } = self.ctx.get_function(origin);
 
@@ -654,7 +653,7 @@ impl<'a> InferContext<'a> {
                 TypeInfo::Unknown => None,
                 TypeInfo::Ref(id) => self.check_bound(id, bound),
                 TypeInfo::FnDef(origin) => {
-                    let PartialFnSig {
+                    let FnSig {
                         args: fn_args,
                         ret: fn_ret,
                         ..

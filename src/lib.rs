@@ -10,8 +10,10 @@ pub use rsh_parser as parser;
 pub mod backends;
 pub mod error;
 pub mod hir;
+pub mod infer;
 pub mod ir;
 pub mod node;
+pub mod thir;
 pub mod ty;
 
 use common::{Hasher, Rodeo};
@@ -27,7 +29,8 @@ pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
         .parse(&rodeo, lexer)
         .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
 
-    let module = hir::Module::build(&ast, &rodeo)?;
+    let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
+    let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
     let module = module.build_ir(&rodeo)?;
 
     let naga_ir = backends::naga::build(&module, &rodeo);

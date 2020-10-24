@@ -1,7 +1,7 @@
 use crate::{
     error::Error,
-    hir::{self},
     node::{Node, SrcNode},
+    thir,
     ty::Type,
     AssignTarget,
 };
@@ -142,7 +142,7 @@ enum GlobalLookup {
     ContextFull { vert: u32, frag: u32 },
 }
 
-impl hir::Module {
+impl thir::Module {
     pub fn build_ir(self, rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
         let mut errors = vec![];
 
@@ -236,7 +236,7 @@ impl hir::Module {
 
         fn get_constant_inner(
             id: u32,
-            constants: &FastHashMap<u32, SrcNode<hir::Constant>>,
+            constants: &FastHashMap<u32, SrcNode<thir::Constant>>,
             rodeo: &Rodeo,
         ) -> Result<ConstantInner, Error> {
             constants.get(&id).unwrap().expr.solve(
@@ -331,7 +331,7 @@ impl hir::Module {
     }
 }
 
-impl hir::Struct {
+impl thir::Struct {
     fn build_ir(self) -> Struct {
         let mut fields: Vec<_> = self
             .fields
@@ -355,10 +355,10 @@ struct FunctionBuilderCtx<'a> {
     errors: &'a mut Vec<Error>,
 
     call_graph: &'a mut petgraph::Graph<Span, Span>,
-    hir_functions: &'a FastHashMap<u32, SrcNode<hir::Function>>,
+    hir_functions: &'a FastHashMap<u32, SrcNode<thir::Function>>,
     globals: &'a mut FastHashMap<u32, Global>,
     globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
-    structs: &'a FastHashMap<u32, SrcNode<hir::Struct>>,
+    structs: &'a FastHashMap<u32, SrcNode<thir::Struct>>,
     functions: &'a mut FastHashMap<u32, Function>,
     instances_map: &'a mut FastHashMap<(u32, Vec<Type>), (u32, GraphIndex)>,
     rodeo: &'a Rodeo,
@@ -370,7 +370,7 @@ struct StatementBuilder<'a> {
     generics: &'a [Type],
 }
 
-impl SrcNode<hir::Function> {
+impl SrcNode<thir::Function> {
     fn build_ir(
         self,
         ctx: &mut FunctionBuilderCtx<'_>,
@@ -434,7 +434,7 @@ impl SrcNode<hir::Function> {
     }
 }
 
-impl SrcNode<hir::EntryPoint> {
+impl SrcNode<thir::EntryPoint> {
     fn build_ir(self, ctx: &mut FunctionBuilderCtx<'_>) -> (EntryPoint, GraphIndex) {
         let mut func = self.into_inner();
         let mut body = vec![];
@@ -462,7 +462,7 @@ impl SrcNode<hir::EntryPoint> {
     }
 }
 
-impl hir::Statement<(Type, Span)> {
+impl thir::Statement<(Type, Span)> {
     fn build_ir<'a, 'b>(
         self,
         node: GraphIndex,
@@ -472,7 +472,7 @@ impl hir::Statement<(Type, Span)> {
         nested: Option<u32>,
     ) {
         match self {
-            hir::Statement::Expr(e) => {
+            thir::Statement::Expr(e) => {
                 match (e.build_ir(node, ctx, sta_builder, body, nested), nested) {
                     (Some(expr), Some(local)) => {
                         body.push(Statement::Assign(AssignTarget::Local(local), expr))
@@ -481,10 +481,10 @@ impl hir::Statement<(Type, Span)> {
                     _ => {},
                 }
             },
-            hir::Statement::ExprSemi(e) => {
+            thir::Statement::ExprSemi(e) => {
                 e.build_ir(node, ctx, sta_builder, body, nested);
             },
-            hir::Statement::Assign(tgt, e) => {
+            thir::Statement::Assign(tgt, e) => {
                 let tgt = match tgt.inner() {
                     AssignTarget::Global(global) => {
                         let id = match ctx.globals_lookup.get(&global).unwrap() {
@@ -527,7 +527,7 @@ impl hir::Statement<(Type, Span)> {
     }
 }
 
-impl hir::TypedNode {
+impl thir::TypedNode {
     fn build_ir<'a, 'b>(
         self,
         node: GraphIndex,
@@ -540,7 +540,7 @@ impl hir::TypedNode {
         let span = self.span();
 
         let expr = match self.into_inner() {
-            hir::Expr::BinaryOp { left, op, right } => {
+            thir::Expr::BinaryOp { left, op, right } => {
                 let left = left.build_ir(node, ctx, sta_builder, body, nested)?;
                 let right = right.build_ir(node, ctx, sta_builder, body, nested)?;
 
@@ -550,12 +550,12 @@ impl hir::TypedNode {
                     op: op.node,
                 }
             },
-            hir::Expr::UnaryOp { tgt, op } => {
+            thir::Expr::UnaryOp { tgt, op } => {
                 let tgt = tgt.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::UnaryOp { tgt, op: op.node }
             },
-            hir::Expr::Call { fun, args } => {
+            thir::Expr::Call { fun, args } => {
                 let generics = monomorphize::collect(
                     ctx.hir_functions,
                     fun.ty(),
@@ -608,8 +608,8 @@ impl hir::TypedNode {
                     },
                 }
             },
-            hir::Expr::Literal(lit) => Expr::Literal(lit),
-            hir::Expr::Access { base, field } => {
+            thir::Expr::Literal(lit) => Expr::Literal(lit),
+            thir::Expr::Access { base, field } => {
                 let fields = match base.ty() {
                     Type::Struct(id) => {
                         vec![ctx.structs.get(id).unwrap().fields.get(&field).unwrap().0]
@@ -632,7 +632,7 @@ impl hir::TypedNode {
                     fields,
                 }
             },
-            hir::Expr::Constructor { elements } => {
+            thir::Expr::Constructor { elements } => {
                 let mut constructed_elements = vec![];
 
                 for ele in elements {
@@ -770,9 +770,9 @@ impl hir::TypedNode {
                     elements: constructed_elements,
                 }
             },
-            hir::Expr::Arg(pos) => Expr::Arg(pos),
-            hir::Expr::Local(local) => Expr::Local(local),
-            hir::Expr::Global(global) => {
+            thir::Expr::Arg(pos) => Expr::Arg(pos),
+            thir::Expr::Local(local) => Expr::Local(local),
+            thir::Expr::Global(global) => {
                 let id = match ctx.globals_lookup.get(&global).unwrap() {
                     GlobalLookup::ContextLess(id) => *id,
                     GlobalLookup::ContextFull { vert, frag } => match sta_builder.modifier {
@@ -799,7 +799,7 @@ impl hir::TypedNode {
 
                 Expr::Global(id)
             },
-            hir::Expr::Return(e) => {
+            thir::Expr::Return(e) => {
                 let sta = Statement::Return(
                     e.and_then(|e| e.build_ir(node, ctx, sta_builder, body, nested)),
                 );
@@ -807,7 +807,7 @@ impl hir::TypedNode {
                 body.push(sta);
                 return None;
             },
-            hir::Expr::If {
+            thir::Expr::If {
                 condition,
                 accept,
                 reject,
@@ -855,15 +855,15 @@ impl hir::TypedNode {
 
                 Expr::Local(local)
             },
-            hir::Expr::Index { base, index } => {
+            thir::Expr::Index { base, index } => {
                 let base = base.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 let index = index.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::Index { base, index }
             },
-            hir::Expr::Constant(id) => Expr::Constant(id),
-            hir::Expr::Block(block) => {
+            thir::Expr::Constant(id) => Expr::Constant(id),
+            thir::Expr::Block(block) => {
                 let local = sta_builder.locals.len() as u32;
                 sta_builder.locals.insert(local, ty.clone());
 
@@ -888,7 +888,7 @@ impl hir::TypedNode {
 
                 Expr::Local(local)
             },
-            hir::Expr::Function(_) => unreachable!(),
+            thir::Expr::Function(_) => unreachable!(),
         };
 
         Some(TypedExpr::new(expr, ty))
@@ -896,31 +896,31 @@ impl hir::TypedNode {
 
     fn returns(&self) -> bool {
         match self.inner() {
-            hir::Expr::BinaryOp { left, right, .. } => {
+            thir::Expr::BinaryOp { left, right, .. } => {
                 let left = left.returns();
                 let right = right.returns();
 
                 left || right
             },
-            hir::Expr::UnaryOp { tgt, .. } => tgt.returns(),
-            hir::Expr::Call { args, .. } => args.iter().any(hir::TypedNode::returns),
-            hir::Expr::Access { base, .. } => base.returns(),
-            hir::Expr::Return(_) => true,
+            thir::Expr::UnaryOp { tgt, .. } => tgt.returns(),
+            thir::Expr::Call { args, .. } => args.iter().any(thir::TypedNode::returns),
+            thir::Expr::Access { base, .. } => base.returns(),
+            thir::Expr::Return(_) => true,
             _ => false,
         }
     }
 }
 
-fn block_returns(block: &[hir::Statement<(Type, Span)>], ty: &Type) -> bool {
+fn block_returns(block: &[thir::Statement<(Type, Span)>], ty: &Type) -> bool {
     for sta in block {
         match sta {
-            hir::Statement::Expr(_) => return true,
-            hir::Statement::ExprSemi(expr) => {
+            thir::Statement::Expr(_) => return true,
+            thir::Statement::ExprSemi(expr) => {
                 if expr.returns() {
                     return true;
                 }
             },
-            hir::Statement::Assign(_, expr) => {
+            thir::Statement::Assign(_, expr) => {
                 if expr.returns() {
                     return true;
                 }
