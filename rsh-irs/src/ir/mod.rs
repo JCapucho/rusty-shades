@@ -287,22 +287,30 @@ impl thir::Module {
             .map(|entry| {
                 let (entry, node) = entry.build_ir(&mut ctx);
 
-                if let Control::Break((a, b)) =
-                    petgraph::visit::depth_first_search(&*ctx.call_graph, Some(node), |event| {
-                        match event {
-                            petgraph::visit::DfsEvent::BackEdge(a, b) => Control::Break((a, b)),
-                            _ => Control::Continue,
-                        }
-                    })
-                {
+                let mut nodes = Vec::new();
+
+                petgraph::visit::depth_first_search::<_, _, _, Control<()>>(
+                    &*ctx.call_graph,
+                    Some(node),
+                    |event| match event {
+                        petgraph::visit::DfsEvent::BackEdge(a, b) => {
+                            nodes.push((a, b));
+                            Control::Prune
+                        },
+                        _ => Control::Continue,
+                    },
+                );
+
+                for (a, b) in nodes {
+                    let mut error = Error::custom(String::from("Recursive function detected"))
+                        .with_span(ctx.call_graph[a])
+                        .with_span(ctx.call_graph[b]);
+
                     for call_site in ctx.call_graph.edges_connecting(a, b) {
-                        ctx.errors.push(
-                            Error::custom(String::from("Recursive function detected"))
-                                .with_span(*call_site.weight())
-                                .with_span(ctx.call_graph[a])
-                                .with_span(ctx.call_graph[b]),
-                        )
+                        error = error.with_span(*call_site.weight());
                     }
+
+                    ctx.errors.push(error)
                 }
 
                 entry
