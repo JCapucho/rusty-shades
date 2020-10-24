@@ -1,0 +1,50 @@
+on:
+  push:
+    tags:
+      - "v*"
+
+name: Release
+
+env:
+  RELEASE_BIN: rshc
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+    matrix:
+      build: [linux, macos, windows]
+      include:
+        - build: linux
+          os: ubuntu-latest
+        - build: macos
+          os: macos-latest
+        - build: windows
+          os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --verbose
+
+      - name: Create artifact directory
+        run: mkdir artifacts
+
+      - name: Move
+        run: mv ./target/release/${{ env.RELEASE_BIN }} ./artifacts/${{ env.RELEASE_BIN }}-${{ runner.build }}-x86_64
+
+      - uses: actions/upload-artifact@v1
+        name: Upload archive
+        with:
+          name: ${{ runner.build }}
+          path: artifacts/
