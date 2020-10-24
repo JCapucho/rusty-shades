@@ -9,18 +9,38 @@ env:
   RELEASE_BIN: rshc
 
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
   build:
+    needs: release
     runs-on: ${{ matrix.os }}
     strategy:
-    matrix:
-      build: [linux, macos, windows]
-      include:
-        - build: linux
-          os: ubuntu-latest
-        - build: macos
-          os: macos-latest
-        - build: windows
-          os: windows-latest
+      matrix:
+        build: [linux, macos, windows]
+        include:
+          - build: linux
+            os: ubuntu-latest
+            name: linux
+          - build: macos
+            os: macos-latest
+            name: macos
+          - build: windows
+            os: windows-latest
+            name: windows
 
     steps:
       - uses: actions/checkout@v2
@@ -37,14 +57,40 @@ jobs:
           command: build
           args: --release --verbose
 
-      - name: Create artifact directory
-        run: mkdir artifacts
+      - name: Create archive for Linux
+        run: 7z a -ttar -so -an ./target/release/${{ env.RELEASE_BIN }} | 7z a -si ./${{ matrix.name }}-x86_64.tar.gz
+        if: matrix.os == 'ubuntu-latest'
 
-      - name: Move
-        run: mv ./target/release/${{ env.RELEASE_BIN }} ./artifacts/${{ env.RELEASE_BIN }}-${{ runner.build }}-x86_64
+      - name: Create archive for Windows
+        run: 7z a -tzip ./${{ matrix.name }}-x86_64.zip ./target/release/${{ env.RELEASE_BIN }}.exe
+        if: matrix.os == 'windows-latest'
 
-      - uses: actions/upload-artifact@v1
-        name: Upload archive
+      - name: Install p7zip
+        run: brew install p7zip
+        if: matrix.os == 'macos-latest'
+
+      - name: Create archive for MacOS
+        run: 7z a -tzip ./${{ matrix.name }}-x86_64.zip ./target/release/${{ env.RELEASE_BIN }}
+        if: matrix.os == 'macos-latest'
+
+      - name: Upload Release Asset
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: ${{ runner.build }}
-          path: artifacts/
+          upload_url: ${{ needs.release.outputs.upload_url }}
+          asset_path: ./${{ matrix.name }}-x86_64.tar.gz
+          asset_name: ${{ matrix.name }}-x86_64.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Upload Release Asset
+        if: matrix.os != 'ubuntu-latest'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.release.outputs.upload_url }}
+          asset_path: ./${{ matrix.name }}-x86_64.zip
+          asset_name: ${{ matrix.name }}-x86_64.zip
+          asset_content_type: application/zip
