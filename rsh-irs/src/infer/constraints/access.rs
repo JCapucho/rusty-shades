@@ -1,6 +1,5 @@
 use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use crate::error::Error;
-use rsh_common::{src::Span, Ident, VectorSize};
+use rsh_common::{error::Error, src::Span, Ident, VectorSize};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_access(

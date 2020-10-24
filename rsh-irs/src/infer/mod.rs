@@ -1,8 +1,13 @@
-use crate::{error::Error, hir::FnSig, node::SrcNode, ty::Type};
-use naga::FastHashMap;
-use rsh_common::{
-    src::{Span, Spanned},
-    BinaryOp, FunctionOrigin, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp, VectorSize,
+use crate::{
+    common::{
+        error::Error,
+        src::{Span, Spanned},
+        BinaryOp, FastHashMap, FunctionOrigin, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
+        VectorSize,
+    },
+    hir::FnSig,
+    node::SrcNode,
+    ty::Type,
 };
 use std::fmt;
 

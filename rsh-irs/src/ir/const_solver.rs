@@ -1,13 +1,11 @@
 use crate::{
-    error::Error,
+    common::{error::Error, src::Span, BinaryOp, FastHashMap, Literal, Rodeo, UnaryOp},
     ir::ConstantInner,
     node::SrcNode,
     thir::{Expr, Statement, TypedNode},
     ty::Type,
     AssignTarget,
 };
-use naga::FastHashMap;
-use rsh_common::{src::Span, BinaryOp, Literal, Rodeo, UnaryOp};
 
 impl TypedNode {
     pub(super) fn solve(

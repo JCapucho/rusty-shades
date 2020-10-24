@@ -1,0 +1,11 @@
+[package]
+name = "rsh-naga"
+version = "0.1.0"
+authors = ["Capucho <jcapucho7@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[dependencies]
+naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26" }
+rsh-common = { path = "../rsh-common", features = ["naga"] }
+rsh-irs = { path = "../rsh-irs" }

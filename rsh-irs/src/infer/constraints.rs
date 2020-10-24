@@ -1,5 +1,5 @@
 use super::{Constraint, InferContext, ScalarInfo, SizeInfo, TraitBound, TypeId, TypeInfo};
-use crate::error::Error;
+use rsh_common::error::Error;
 
 mod access;
 mod binary;

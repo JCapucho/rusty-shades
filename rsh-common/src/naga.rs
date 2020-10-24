@@ -1,6 +1,10 @@
-use super::{BinaryOp, EntryPointStage, Literal, ScalarType, UnaryOp, VectorSize};
+use super::{
+    BinaryOp, Binding, BuiltIn, EntryPointStage, Literal, ScalarType, StorageClass, UnaryOp,
+    VectorSize,
+};
 use naga::{
-    BinaryOperator, ConstantInner, ScalarKind, ShaderStage, TypeInner, UnaryOperator,
+    BinaryOperator, Binding as NagaBinding, BuiltIn as NagaBuiltIn, ConstantInner, ScalarKind,
+    ShaderStage, StorageClass as NagaStorageClass, TypeInner, UnaryOperator,
     VectorSize as NagaVectorSize,
 };
 
@@ -82,6 +86,34 @@ impl Into<NagaVectorSize> for VectorSize {
             VectorSize::Bi => NagaVectorSize::Bi,
             VectorSize::Tri => NagaVectorSize::Tri,
             VectorSize::Quad => NagaVectorSize::Quad,
+        }
+    }
+}
+
+impl Into<NagaBuiltIn> for BuiltIn {
+    fn into(self) -> NagaBuiltIn {
+        match self {
+            BuiltIn::Position => NagaBuiltIn::Position,
+        }
+    }
+}
+
+impl Into<NagaStorageClass> for StorageClass {
+    fn into(self) -> NagaStorageClass {
+        match self {
+            StorageClass::Input => NagaStorageClass::Input,
+            StorageClass::Output => NagaStorageClass::Output,
+            StorageClass::Uniform => NagaStorageClass::Uniform,
+        }
+    }
+}
+
+impl Into<NagaBinding> for Binding {
+    fn into(self) -> NagaBinding {
+        match self {
+            Binding::BuiltIn(builtin) => NagaBinding::BuiltIn(builtin.into()),
+            Binding::Location(loc) => NagaBinding::Location(loc),
+            Binding::Resource { group, binding } => NagaBinding::Resource { group, binding },
         }
     }
 }

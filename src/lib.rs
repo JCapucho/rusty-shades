@@ -1,47 +1,37 @@
-// matches! is only supported since 1.42
-// we have no set msrv but if we ever set one this will be useful
-#![allow(clippy::match_like_matches_macro)]
+pub use rsh_common::error::Error;
 
-pub use rsh_ast as ast;
-pub use rsh_common as common;
-pub use rsh_lexer as lexer;
-pub use rsh_parser as parser;
+use rsh_common::{Hasher, Rodeo};
+use rsh_irs::{hir, ir::Module as IrModule, thir};
 
-pub mod backends;
-pub mod error;
-pub mod hir;
-pub mod infer;
-pub mod ir;
-pub mod node;
-pub mod thir;
-pub mod ty;
-
-use common::{Hasher, Rodeo};
-use error::Error;
-use naga::back::spv;
-
-#[cfg(feature = "spirv")]
-pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
+pub fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
     let rodeo = Rodeo::with_hasher(Hasher::default());
-    let lexer = lexer::Lexer::new(code, &rodeo);
 
-    let ast = parser::ProgramParser::new()
-        .parse(&rodeo, lexer)
-        .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
+    let lexer = rsh_lexer::Lexer::new(&code, &rodeo);
+
+    let ast = rsh_parser::parse(lexer, &rodeo)?;
 
     let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
     let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
+
     let module = module.build_ir(&rodeo)?;
 
-    let naga_ir = backends::naga::build(&module, &rodeo);
+    Ok((module, rodeo))
+}
+
+#[cfg(feature = "naga")]
+pub fn build_naga_ir(code: &str) -> Result<naga::Module, Vec<Error>> {
+    let (module, rodeo) = build_ir(code)?;
+
+    Ok(rsh_naga::build(&module, &rodeo))
+}
+
+#[cfg(feature = "spirv")]
+pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
+    use naga::back::spv;
+
+    let naga_ir = build_naga_ir(code)?;
 
     let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
 
     Ok(spirv)
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum AssignTarget {
-    Local(u32),
-    Global(u32),
 }

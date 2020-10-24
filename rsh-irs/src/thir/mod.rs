@@ -1,17 +1,16 @@
 use crate::{
     ast::{self},
-    error::Error,
+    common::{
+        error::Error,
+        src::{Span, Spanned},
+        BinaryOp, EntryPointStage, FastHashMap, FunctionOrigin, GlobalBinding, Ident, Literal,
+        Rodeo, ScalarType, Symbol, UnaryOp,
+    },
     hir,
     infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo},
     node::{Node, SrcNode},
     ty::Type,
     AssignTarget,
-};
-use naga::FastHashMap;
-use rsh_common::{
-    src::{Span, Spanned},
-    BinaryOp, EntryPointStage, FunctionOrigin, GlobalBinding, Ident, Literal, Rodeo, ScalarType,
-    Symbol, UnaryOp,
 };
 
 /// Pretty printing of the HIR

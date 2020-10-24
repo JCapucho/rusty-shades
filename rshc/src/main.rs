@@ -6,15 +6,7 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
-use naga::back::spv;
-use rusty_shades::{
-    backends,
-    common::{Hasher, Rodeo},
-    error::Error,
-    hir,
-    ir::Module as IrModule,
-    lexer, parser, thir,
-};
+use rusty_shades::{build_ir, build_naga_ir, Error};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
@@ -150,9 +142,7 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     let mut files = SimpleFiles::new();
     let file_id = files.add(input, &code);
 
-    let (module, rodeo) = handle_errors(build_ir(&code), &files, file_id, color)?;
-
-    let naga_ir = backends::naga::build(&module, &rodeo);
+    let naga_ir = handle_errors(build_naga_ir(&code), &files, file_id, color)?;
 
     let mut output = OpenOptions::new()
         .write(true)
@@ -163,7 +153,8 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     match target {
         #[cfg(feature = "spirv")]
         "spirv" => {
-            let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
+            use naga::back::spv::{Writer, WriterFlags};
+            let spirv = Writer::new(&naga_ir.header, WriterFlags::DEBUG).write(&naga_ir);
 
             let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
                 f.write_all(&x.to_le_bytes())?;
@@ -174,10 +165,15 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         },
         #[cfg(feature = "glsl")]
         "glsl" => {
+            use naga::{
+                back::glsl::{write, Options, Version},
+                ShaderStage,
+            };
+
             // TODO: Support specifying version and stage
-            naga::back::glsl::write(&naga_ir, &mut output, naga::back::glsl::Options {
-                entry_point: (naga::ShaderStage::Vertex, String::from("vertex_main")),
-                version: naga::back::glsl::Version::Embedded(310),
+            write(&naga_ir, &mut output, Options {
+                entry_point: (ShaderStage::Vertex, String::from("vertex_main")),
+                version: Version::Embedded(310),
             })
             .unwrap();
         },
@@ -185,11 +181,10 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         "msl" => todo!(),
         #[cfg(feature = "ir")]
         "ron" => {
+            use ron::{ser::PrettyConfig, Serializer};
             use serde::Serialize;
 
-            let mut s =
-                ron::Serializer::new(output, Some(ron::ser::PrettyConfig::default()), false)
-                    .unwrap();
+            let mut s = Serializer::new(output, Some(PrettyConfig::default()), false).unwrap();
 
             naga_ir.serialize(&mut s).unwrap();
         },
@@ -197,23 +192,6 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     }
 
     Ok(())
-}
-
-fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
-    let rodeo = Rodeo::with_hasher(Hasher::default());
-
-    let lexer = lexer::Lexer::new(&code, &rodeo);
-
-    let ast = parser::ProgramParser::new()
-        .parse(&rodeo, lexer)
-        .map_err(|e| vec![Error::from_parser_error(e, &rodeo)])?;
-
-    let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
-    let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
-
-    let module = module.build_ir(&rodeo)?;
-
-    Ok((module, rodeo))
 }
 
 fn prefix(tgt: &str) -> &str {

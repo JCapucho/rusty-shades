@@ -1,6 +1,8 @@
 use super::{InferContext, TraitBound, TypeId, TypeInfo};
-use crate::{error::Error, hir::FnSig};
-use naga::FastHashMap;
+use crate::{
+    common::{error::Error, FastHashMap},
+    hir::FnSig,
+};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_call(

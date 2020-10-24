@@ -1,16 +1,14 @@
 use crate::{
-    error::Error,
+    common::{
+        error::Error, src::Span, BinaryOp, Binding, BuiltIn, EntryPointStage, FastHashMap,
+        FunctionOrigin, GlobalBinding, Literal, Rodeo, ScalarType, StorageClass, Symbol, UnaryOp,
+    },
     node::{Node, SrcNode},
     thir,
     ty::Type,
     AssignTarget,
 };
-use naga::{Binding, BuiltIn, FastHashMap, StorageClass};
 use petgraph::graph::NodeIndex as GraphIndex;
-use rsh_common::{
-    src::Span, BinaryOp, EntryPointStage, FunctionOrigin, GlobalBinding, Literal, Rodeo,
-    ScalarType, Symbol, UnaryOp,
-};
 
 pub type TypedExpr = Node<Expr, Type>;
 
@@ -31,7 +29,6 @@ impl Global {
             StorageClass::Input => true,
             StorageClass::Output => false,
             StorageClass::Uniform => true,
-            _ => unreachable!(),
         }
     }
 
@@ -40,7 +37,6 @@ impl Global {
             StorageClass::Input => false,
             StorageClass::Output => true,
             StorageClass::Uniform => false,
-            _ => unreachable!(),
         }
     }
 }

@@ -10,6 +10,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6789e291be47ace86a60303502173d84af8327e3627ecf334356ee0f87a164c"
+
+[[package]]
 name = "aho-corasick"
 version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -227,7 +233,7 @@ version = "3.11.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f260e2fc850179ef410018660006951c1b55b79e8087e87111a2c388994b9b5"
 dependencies = [
- "ahash",
+ "ahash 0.3.8",
  "cfg-if",
  "num_cpus",
 ]
@@ -362,19 +368,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91b62f79061a0bc2e046024cb7ba44b08419ed238ecbd9adbd787434b9e8c25"
-dependencies = [
- "ahash",
- "autocfg",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7afe4a420e3fe79967a00898cc1f4db7c8a49a9333a29f8a4bd76a253d5cd04"
+dependencies = [
+ "ahash 0.4.6",
+]
 
 [[package]]
 name = "hermit-abi"
@@ -392,7 +391,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55e2e4c765aa53a0424761bf9f41aa7a6ac1efa87238f59560640e27fca028f2"
 dependencies = [
  "autocfg",
- "hashbrown 0.9.1",
+ "hashbrown",
 ]
 
 [[package]]
@@ -438,11 +437,10 @@ checksum = "6771161eff561647fad8bb7e745e002c304864fb8f436b52b30acda51fca4408"
 [[package]]
 name = "lasso"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf1a626ea51398f5acf36666c8046ff4bfd048aab88e92db676d2a6eac8805d0"
+source = "git+https://github.com/Kixiron/lasso.git?rev=ccafec656171f78e4f46fbc266dc90a91b1fb949#ccafec656171f78e4f46fbc266dc90a91b1fb949"
 dependencies = [
  "dashmap",
- "hashbrown 0.8.2",
+ "hashbrown",
 ]
 
 [[package]]
@@ -646,9 +644,19 @@ dependencies = [
 name = "rsh-common"
 version = "0.1.0"
 dependencies = [
+ "codespan-reporting",
  "fxhash",
  "lasso",
  "naga",
+]
+
+[[package]]
+name = "rsh-irs"
+version = "0.1.0"
+dependencies = [
+ "petgraph",
+ "rsh-ast",
+ "rsh-common",
 ]
 
 [[package]]
@@ -657,6 +665,15 @@ version = "0.1.0"
 dependencies = [
  "logos",
  "rsh-common",
+]
+
+[[package]]
+name = "rsh-naga"
+version = "0.1.0"
+dependencies = [
+ "naga",
+ "rsh-common",
+ "rsh-irs",
 ]
 
 [[package]]
@@ -699,13 +716,11 @@ dependencies = [
 name = "rusty-shades"
 version = "0.1.0"
 dependencies = [
- "codespan-reporting",
- "lalrpop-util",
  "naga",
- "petgraph",
- "rsh-ast",
  "rsh-common",
+ "rsh-irs",
  "rsh-lexer",
+ "rsh-naga",
  "rsh-parser",
 ]
 

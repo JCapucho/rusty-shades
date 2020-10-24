@@ -1,12 +1,10 @@
 use crate::{
     ast::{self, Block},
-    error::Error,
+    common::{
+        error::Error, src::Span, EntryPointStage, FastHashMap, FunctionOrigin, GlobalBinding,
+        Ident, Rodeo, ScalarType, Symbol, VectorSize,
+    },
     infer::{InferContext, TraitBound, TypeId, TypeInfo},
-};
-use naga::FastHashMap;
-use rsh_common::{
-    src::Span, EntryPointStage, FunctionOrigin, GlobalBinding, Ident, Rodeo, ScalarType, Symbol,
-    VectorSize,
 };
 
 #[derive(Debug)]

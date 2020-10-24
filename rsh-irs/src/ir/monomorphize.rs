@@ -1,9 +1,9 @@
 use crate::{
+    common::FastHashMap,
     node::SrcNode,
     thir::{Function, TypedNode},
     ty::Type,
 };
-use naga::FastHashMap;
 
 pub fn collect(
     hir_functions: &FastHashMap<u32, SrcNode<Function>>,

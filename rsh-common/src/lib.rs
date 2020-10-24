@@ -1,16 +1,20 @@
 use lasso::{Spur, ThreadedRodeo};
 use std::{
+    collections::HashMap,
     fmt,
     hash::{self, Hash},
     ops::Deref,
 };
 
-#[cfg(feature = "naga")] mod naga;
+pub mod error;
+#[cfg(feature = "naga")]
+mod naga;
 pub mod src;
 
 pub type Symbol = Spur;
 pub type Rodeo = ThreadedRodeo<Symbol, fxhash::FxBuildHasher>;
 pub type Hasher = fxhash::FxBuildHasher;
+pub type FastHashMap<K, V> = HashMap<K, V, Hasher>;
 
 #[derive(Clone, Copy, Debug, Eq)]
 pub struct Ident {
@@ -243,4 +247,23 @@ impl From<Ident> for FunctionOrigin {
 
 impl From<u32> for FunctionOrigin {
     fn from(id: u32) -> Self { FunctionOrigin::Local(id) }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum StorageClass {
+    Input,
+    Output,
+    Uniform,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum BuiltIn {
+    Position,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Binding {
+    BuiltIn(BuiltIn),
+    Location(u32),
+    Resource { group: u32, binding: u32 },
 }

@@ -1,6 +1,5 @@
 use super::{InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo};
-use crate::error::Error;
-use rsh_common::{src::Span, VectorSize};
+use rsh_common::{error::Error, src::Span, VectorSize};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_constructor(

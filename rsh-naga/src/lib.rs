@@ -1,8 +1,3 @@
-use crate::{
-    ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
-    ty::Type,
-    AssignTarget,
-};
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression, FastHashMap,
     Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
@@ -10,6 +5,11 @@ use naga::{
     StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
 use rsh_common::{EntryPointStage, Rodeo};
+use rsh_irs::{
+    ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
+    ty::Type,
+    AssignTarget,
+};
 
 #[derive(Debug)]
 pub enum GlobalLookup {
@@ -56,8 +56,8 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
 
         let handle = ctx.globals.append(GlobalVariable {
             name: Some(rodeo.resolve(&global.name).to_string()),
-            class: global.storage,
-            binding: Some(global.binding.clone()),
+            class: global.storage.into(),
+            binding: Some(global.binding.into()),
             ty,
             interpolation: None,
             storage_access: StorageAccess::empty(),

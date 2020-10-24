@@ -1,6 +1,6 @@
 use super::{InferContext, ScalarInfo, TypeId, TypeInfo};
-use crate::error::Error;
 use rsh_common::{
+    error::Error,
     src::{Span, Spanned},
     ScalarType, UnaryOp,
 };

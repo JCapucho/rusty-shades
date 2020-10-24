@@ -5,7 +5,6 @@ wrap_comments = true
 use_try_shorthand = true
 reorder_impl_items = true
 fn_single_line = true
-inline_attribute_width = 50
 match_block_trailing_comma = true
 merge_imports = true
 overflow_delimited_expr = true

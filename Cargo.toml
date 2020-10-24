@@ -6,19 +6,26 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26" }
-rsh-common = { path = "./rsh-common", features = ["naga"] }
+rsh-irs = { path = "./rsh-irs" }
 rsh-lexer = { path = "./rsh-lexer" }
-rsh-ast = { path = "./rsh-ast" }
 rsh-parser = { path = "./rsh-parser" }
-lalrpop-util = "0.19"
-codespan-reporting = { version = "0.9", optional = true }
-petgraph = { version = "0.5", default-features = false }
+rsh-naga = { path = "./rsh-naga" }
+naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26", optional = true }
+rsh-common = { path = "./rsh-common" }
 
 [features]
 default = ["spirv"]
-spirv = ["naga/spv-out"]
+spirv = ["naga", "naga/spv-out"]
+codespan = ["rsh-common/codespan-reporting"]
 
 [workspace]
 default-members = ["rshc"]
-members = ["rsh-lexer", "rsh-common", "rshc", "rsh-ast", "rsh-parser"]
+members = [
+    "rsh-lexer",
+    "rsh-naga",
+    "rsh-common",
+    "rshc",
+    "rsh-ast",
+    "rsh-parser",
+    "rsh-irs"
+]
