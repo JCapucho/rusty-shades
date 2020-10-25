@@ -1,9 +1,10 @@
 pub use rsh_common::error::Error;
+pub use rsh_irs::thir::pretty::HirPrettyPrinter;
 
 use rsh_common::{Hasher, Rodeo};
-use rsh_irs::{hir, ir::Module as IrModule, thir};
+use rsh_irs::{hir, ir::Module as IrModule, thir, thir::Module as HirModule};
 
-pub fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
+pub fn build_hir(code: &str) -> Result<(HirModule, Rodeo), Vec<Error>> {
     let rodeo = Rodeo::with_hasher(Hasher::default());
 
     let lexer = rsh_lexer::Lexer::new(&code, &rodeo);
@@ -12,6 +13,12 @@ pub fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
 
     let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
     let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
+
+    Ok((module, rodeo))
+}
+
+pub fn build_ir(code: &str) -> Result<(IrModule, Rodeo), Vec<Error>> {
+    let (module, rodeo) = build_hir(code)?;
 
     let module = module.build_ir(&rodeo)?;
 

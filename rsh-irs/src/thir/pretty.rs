@@ -1,6 +1,8 @@
-use super::{Constant, EntryPoint, Expr, Function, Global, Module, Statement, Struct, TypedNode};
+use super::{
+    Constant, EntryPoint, Expr, ExprKind, Function, Global, Module, Stmt, StmtKind, Struct,
+};
 use crate::ty::{Type, TypeKind};
-use rsh_common::{src::Span, Rodeo};
+use rsh_common::Rodeo;
 use std::fmt;
 
 pub struct HirPrettyPrinter<'a> {
@@ -19,15 +21,14 @@ impl<'a> HirPrettyPrinter<'a> {
 
         impl<'c> fmt::Display for StructFmt<'c> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                writeln!(f, "struct {} {{", self.rodeo.resolve(&self.strct.name))?;
+                writeln!(f, "struct {} {{", self.rodeo.resolve(&self.strct.ident))?;
 
-                for (field, (pos, ty)) in self.strct.fields.iter() {
+                for field in self.strct.fields.iter() {
                     writeln!(
                         f,
-                        "   {}|{}: {},",
-                        self.rodeo.resolve(field),
-                        pos,
-                        ty.display(self.rodeo)
+                        "   {}: {},",
+                        self.rodeo.resolve(&field.ident),
+                        field.ty.display(self.rodeo)
                     )?;
                 }
 
@@ -52,7 +53,7 @@ impl<'a> HirPrettyPrinter<'a> {
                 writeln!(
                     f,
                     "const {}: {} = {};",
-                    self.printer.rodeo.resolve(&self.constant.name),
+                    self.printer.rodeo.resolve(&self.constant.ident),
                     self.constant.ty.display(self.printer.rodeo),
                     self.printer.expr_fmt(&self.constant.expr)
                 )
@@ -76,7 +77,7 @@ impl<'a> HirPrettyPrinter<'a> {
                 writeln!(
                     f,
                     "global {} {}: {};",
-                    self.rodeo.resolve(&self.global.name),
+                    self.rodeo.resolve(&self.global.ident),
                     self.global.modifier,
                     self.global.ty.display(self.rodeo)
                 )
@@ -101,10 +102,10 @@ impl<'a> HirPrettyPrinter<'a> {
                     f,
                     "fn {} {}() {{",
                     self.entry_point.stage,
-                    self.printer.rodeo.resolve(&self.entry_point.name)
+                    self.printer.rodeo.resolve(&self.entry_point.ident)
                 )?;
 
-                for sta in self.entry_point.body.iter() {
+                for sta in self.entry_point.body.stmts.iter() {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                 }
 
@@ -150,7 +151,7 @@ impl<'a> HirPrettyPrinter<'a> {
                     self.func.sig.ret.display(self.printer.rodeo)
                 )?;
 
-                for sta in self.func.body.iter() {
+                for sta in self.func.body.stmts.iter() {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                 }
 
@@ -164,19 +165,19 @@ impl<'a> HirPrettyPrinter<'a> {
         }
     }
 
-    fn stmt_fmt<'b>(&'b self, stmt: &'b Statement<(Type, Span)>) -> impl fmt::Display + 'b {
+    fn stmt_fmt<'b>(&'b self, stmt: &'b Stmt<Type>) -> impl fmt::Display + 'b {
         struct StmtFmt<'c> {
-            stmt: &'c Statement<(Type, Span)>,
+            stmt: &'c Stmt<Type>,
             printer: &'c HirPrettyPrinter<'c>,
         }
 
         impl<'c> fmt::Display for StmtFmt<'c> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                match self.stmt {
-                    Statement::Expr(expr) => write!(f, "{}", self.printer.expr_fmt(expr)),
-                    Statement::ExprSemi(expr) => write!(f, "{};", self.printer.expr_fmt(expr)),
-                    Statement::Assign(tgt, expr) => {
-                        write!(f, "{} = {};", tgt.inner(), self.printer.expr_fmt(expr))
+                match self.stmt.kind {
+                    StmtKind::Expr(ref expr) => write!(f, "{}", self.printer.expr_fmt(expr)),
+                    StmtKind::ExprSemi(ref expr) => write!(f, "{};", self.printer.expr_fmt(expr)),
+                    StmtKind::Assign(tgt, ref expr) => {
+                        write!(f, "{} = {};", tgt, self.printer.expr_fmt(expr))
                     },
                 }
             }
@@ -188,14 +189,14 @@ impl<'a> HirPrettyPrinter<'a> {
         }
     }
 
-    fn expr_fmt<'b>(&'b self, expr: &'b TypedNode) -> impl fmt::Display + 'b {
+    fn expr_fmt<'b>(&'b self, expr: &'b Expr<Type>) -> impl fmt::Display + 'b {
         struct ExprFmt<'c> {
-            expr: &'c TypedNode,
+            expr: &'c Expr<Type>,
             printer: &'c HirPrettyPrinter<'c>,
         }
 
         impl<'c> ExprFmt<'c> {
-            fn scoped(&self, expr: &'c TypedNode) -> Self {
+            fn scoped(&self, expr: &'c Expr<Type>) -> Self {
                 ExprFmt {
                     expr,
                     printer: self.printer,
@@ -207,12 +208,14 @@ impl<'a> HirPrettyPrinter<'a> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "(")?;
 
-                match self.expr.inner() {
-                    Expr::BinaryOp { left, op, right } => {
-                        write!(f, "{} {} {}", self.scoped(left), op, self.scoped(right))?
-                    },
-                    Expr::UnaryOp { tgt, op } => write!(f, "{}{}", op, self.scoped(tgt))?,
-                    Expr::Call { fun, args } => {
+                match self.expr.kind {
+                    ExprKind::BinaryOp {
+                        ref left,
+                        op,
+                        ref right,
+                    } => write!(f, "{} {} {}", self.scoped(left), op, self.scoped(right))?,
+                    ExprKind::UnaryOp { ref tgt, op } => write!(f, "{}{}", op, self.scoped(tgt))?,
+                    ExprKind::Call { ref fun, ref args } => {
                         write!(f, "{}(", self.scoped(fun))?;
 
                         for arg in args {
@@ -221,15 +224,18 @@ impl<'a> HirPrettyPrinter<'a> {
 
                         write!(f, ")")?
                     },
-                    Expr::Literal(lit) => write!(f, "{}", lit)?,
-                    Expr::Access { base, field } => write!(
+                    ExprKind::Literal(lit) => write!(f, "{}", lit)?,
+                    ExprKind::Access {
+                        ref base,
+                        ref field,
+                    } => write!(
                         f,
                         "{}.{}",
                         self.scoped(base),
                         self.printer.rodeo.resolve(field)
                     )?,
-                    Expr::Constructor { elements } => {
-                        match self.expr.ty().kind {
+                    ExprKind::Constructor { ref elements } => {
+                        match self.expr.ty.kind {
                             TypeKind::Vector(_, size) => write!(f, "v{}(", size)?,
                             TypeKind::Matrix { rows, .. } => write!(f, "m{}(", rows)?,
                             TypeKind::Tuple(_) => write!(f, "(")?,
@@ -242,26 +248,26 @@ impl<'a> HirPrettyPrinter<'a> {
 
                         write!(f, ")")?
                     },
-                    Expr::Arg(arg) => write!(f, "Arg({})", arg)?,
-                    Expr::Local(local) => write!(f, "Local({})", local)?,
-                    Expr::Global(global) => write!(f, "Global({})", global)?,
-                    Expr::Constant(constant) => write!(f, "Const({})", constant)?,
-                    Expr::Function(fun) => write!(f, "{}", fun.display(self.printer.rodeo))?,
-                    Expr::Return(expr) => {
+                    ExprKind::Arg(arg) => write!(f, "Arg({})", arg)?,
+                    ExprKind::Local(local) => write!(f, "Local({})", local)?,
+                    ExprKind::Global(global) => write!(f, "Global({})", global)?,
+                    ExprKind::Constant(constant) => write!(f, "Const({})", constant)?,
+                    ExprKind::Function(fun) => write!(f, "{}", fun.display(self.printer.rodeo))?,
+                    ExprKind::Return(ref expr) => {
                         write!(f, "return")?;
 
                         if let Some(expr) = expr {
                             write!(f, " {}", self.scoped(expr))?;
                         }
                     },
-                    Expr::If {
-                        condition,
-                        accept,
-                        reject,
+                    ExprKind::If {
+                        ref condition,
+                        ref accept,
+                        ref reject,
                     } => {
                         writeln!(f, "if {} {{", self.scoped(condition))?;
 
-                        for sta in accept.iter() {
+                        for sta in accept.stmts.iter() {
                             writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                         }
 
@@ -270,26 +276,27 @@ impl<'a> HirPrettyPrinter<'a> {
                         if !reject.is_empty() {
                             writeln!(f, "else {{")?;
 
-                            for sta in reject.iter() {
+                            for sta in reject.stmts.iter() {
                                 writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                             }
 
                             write!(f, "}}")?;
                         }
                     },
-                    Expr::Index { base, index } => {
-                        write!(f, "{}[{}]", self.scoped(base), self.scoped(index))?
-                    },
-                    Expr::Block(block) => {
+                    ExprKind::Index {
+                        ref base,
+                        ref index,
+                    } => write!(f, "{}[{}]", self.scoped(base), self.scoped(index))?,
+                    ExprKind::Block(ref block) => {
                         writeln!(f, "{{")?;
-                        for sta in block.iter() {
+                        for sta in block.stmts.iter() {
                             writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                         }
                         write!(f, "}}")?;
                     },
                 }
 
-                write!(f, ": {})", self.expr.ty().display(self.printer.rodeo))
+                write!(f, ": {})", self.expr.ty.display(self.printer.rodeo))
             }
         }
 
@@ -302,24 +309,24 @@ impl<'a> HirPrettyPrinter<'a> {
 
 impl<'a> fmt::Display for HirPrettyPrinter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (id, srtct) in self.module.structs.iter() {
-            writeln!(f, "{}: {}", id, self.struct_fmt(srtct))?;
+        for srtct in self.module.structs.iter() {
+            writeln!(f, "{}", self.struct_fmt(srtct))?;
         }
 
-        for (id, constant) in self.module.constants.iter() {
-            writeln!(f, "{}: {}", id, self.constant_fmt(constant))?;
+        for constant in self.module.constants.iter() {
+            writeln!(f, "{}", self.constant_fmt(constant))?;
         }
 
-        for (id, global) in self.module.globals.iter() {
-            writeln!(f, "{}: {}", id, self.global_fmt(global))?;
+        for global in self.module.globals.iter() {
+            writeln!(f, "{}", self.global_fmt(global))?;
         }
 
         for entry_point in self.module.entry_points.iter() {
             writeln!(f, "{}", self.entry_point_fmt(entry_point))?;
         }
 
-        for (id, func) in self.module.functions.iter() {
-            writeln!(f, "{}: {}", id, self.function_fmt(func))?;
+        for func in self.module.functions.iter() {
+            writeln!(f, "{}", self.function_fmt(func))?;
         }
 
         Ok(())

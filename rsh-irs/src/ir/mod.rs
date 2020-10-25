@@ -3,7 +3,7 @@ use crate::{
         error::Error, src::Span, BinaryOp, Binding, BuiltIn, EntryPointStage, FastHashMap,
         FunctionOrigin, GlobalBinding, Literal, Rodeo, ScalarType, StorageClass, Symbol, UnaryOp,
     },
-    node::{Node, SrcNode},
+    node::Node,
     thir,
     ty::{Type, TypeKind},
     AssignTarget,
@@ -44,7 +44,13 @@ impl Global {
 #[derive(Debug)]
 pub struct Struct {
     pub name: Symbol,
-    pub fields: Vec<(Symbol, Type)>,
+    pub fields: Vec<StructMember>,
+}
+
+#[derive(Debug)]
+pub struct StructMember {
+    pub name: Symbol,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +104,7 @@ pub struct Function {
     pub args: Vec<Type>,
     pub ret: Type,
     pub body: Vec<Statement>,
-    pub locals: FastHashMap<u32, Type>,
+    pub locals: Vec<Local>,
 }
 
 #[derive(Debug)]
@@ -106,7 +112,13 @@ pub struct EntryPoint {
     pub name: Symbol,
     pub stage: EntryPointStage,
     pub body: Vec<Statement>,
-    pub locals: FastHashMap<u32, Type>,
+    pub locals: Vec<Local>,
+}
+
+#[derive(Debug)]
+pub struct Local {
+    pub name: Option<Symbol>,
+    pub ty: Type,
 }
 
 #[derive(Debug)]
@@ -125,10 +137,10 @@ pub enum ConstantInner {
 
 #[derive(Debug)]
 pub struct Module {
-    pub globals: FastHashMap<u32, Global>,
-    pub structs: FastHashMap<u32, Struct>,
-    pub functions: FastHashMap<u32, Function>,
-    pub constants: FastHashMap<u32, Constant>,
+    pub globals: Vec<Global>,
+    pub structs: Vec<Struct>,
+    pub functions: Vec<Function>,
+    pub constants: Vec<Constant>,
     pub entry_points: Vec<EntryPoint>,
 }
 
@@ -143,33 +155,33 @@ impl thir::Module {
         let mut errors = vec![];
 
         let mut global_lookups = FastHashMap::default();
-        let mut globals = FastHashMap::default();
-        let mut functions = FastHashMap::default();
+        let mut globals = Vec::new();
+        let mut functions = Vec::new();
 
-        for (id, global) in self.globals.into_iter() {
-            let pos = (globals.len()) as u32;
-            let span = global.span();
-            let global = global.into_inner();
+        for (hir_id, global) in self.globals.into_iter().enumerate() {
+            let hir_id = hir_id as u32;
+            let id = globals.len() as u32;
+            let span = global.span;
 
             match global.modifier {
                 GlobalBinding::Position => {
-                    globals.insert(pos, Global {
-                        name: global.name,
+                    globals.push(Global {
+                        name: global.ident.symbol,
                         ty: global.ty.clone(),
                         binding: Binding::BuiltIn(BuiltIn::Position),
                         storage: StorageClass::Output,
                     });
 
-                    globals.insert(pos + 1, Global {
-                        name: global.name,
+                    globals.push(Global {
+                        name: global.ident.symbol,
                         ty: global.ty,
                         binding: Binding::BuiltIn(BuiltIn::Position),
                         storage: StorageClass::Input,
                     });
 
-                    global_lookups.insert(id, GlobalLookup::ContextFull {
-                        vert: pos,
-                        frag: pos + 1,
+                    global_lookups.insert(hir_id, GlobalLookup::ContextFull {
+                        vert: id,
+                        frag: id + 1,
                     });
                 },
                 GlobalBinding::Input(location) => {
@@ -182,14 +194,14 @@ impl thir::Module {
                         );
                     }
 
-                    globals.insert(pos, Global {
-                        name: global.name,
+                    globals.push(Global {
+                        name: global.ident.symbol,
                         ty: global.ty,
                         binding: Binding::Location(location),
                         storage: StorageClass::Input,
                     });
 
-                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
                 },
                 GlobalBinding::Output(location) => {
                     if !global.ty.is_primitive() {
@@ -201,18 +213,18 @@ impl thir::Module {
                         );
                     }
 
-                    globals.insert(pos, Global {
-                        name: global.name,
+                    globals.push(Global {
+                        name: global.ident.symbol,
                         ty: global.ty,
                         binding: Binding::Location(location),
                         storage: StorageClass::Output,
                     });
 
-                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
                 },
                 GlobalBinding::Uniform { set, binding } => {
-                    globals.insert(pos, Global {
-                        name: global.name,
+                    globals.push(Global {
+                        name: global.ident.symbol,
                         ty: global.ty,
                         binding: Binding::Resource {
                             group: set,
@@ -221,7 +233,7 @@ impl thir::Module {
                         storage: StorageClass::Uniform,
                     });
 
-                    global_lookups.insert(id, GlobalLookup::ContextLess(pos));
+                    global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
                 },
             };
         }
@@ -232,10 +244,10 @@ impl thir::Module {
 
         fn get_constant_inner(
             id: u32,
-            constants: &FastHashMap<u32, SrcNode<thir::Constant>>,
+            constants: &Vec<thir::Constant>,
             rodeo: &Rodeo,
         ) -> Result<ConstantInner, Error> {
-            constants.get(&id).unwrap().expr.solve(
+            constants[id as usize].expr.solve(
                 &|id| get_constant_inner(id, constants, rodeo),
                 &mut FastHashMap::default(),
                 rodeo,
@@ -248,16 +260,15 @@ impl thir::Module {
             let (constants, e): (Vec<_>, Vec<_>) = self
                 .constants
                 .iter()
-                .map(|(id, s)| {
-                    let c = s.inner();
+                .enumerate()
+                .map(|(id, constant)| {
+                    let inner = get_constant(id as u32)?;
 
-                    let inner = get_constant(*id)?;
-
-                    Ok((*id, Constant {
-                        name: c.name,
-                        ty: c.ty.clone(),
+                    Ok(Constant {
+                        name: constant.ident.symbol,
+                        ty: constant.ty.clone(),
                         inner,
-                    }))
+                    })
                 })
                 .partition(Result::is_ok);
             errors.extend(e.into_iter().map(Result::unwrap_err));
@@ -320,11 +331,7 @@ impl thir::Module {
         if errors.is_empty() {
             Ok(Module {
                 functions,
-                structs: self
-                    .structs
-                    .into_iter()
-                    .map(|(id, s)| (id, s.into_inner().build_ir()))
-                    .collect(),
+                structs: self.structs.into_iter().map(|s| s.build_ir()).collect(),
                 globals,
                 constants,
                 entry_points,
@@ -337,17 +344,18 @@ impl thir::Module {
 
 impl thir::Struct {
     fn build_ir(self) -> Struct {
-        let mut fields: Vec<_> = self
+        let fields: Vec<_> = self
             .fields
             .into_iter()
-            .map(|(name, (pos, ty))| (pos, name, ty))
+            .map(|field| StructMember {
+                name: field.ident.symbol,
+                ty: field.ty,
+            })
             .collect();
 
-        fields.sort_by(|(a, _, _), (b, _, _)| a.cmp(b));
-
         Struct {
-            name: self.name,
-            fields: fields.into_iter().map(|(_, name, ty)| (name, ty)).collect(),
+            name: self.ident.symbol,
+            fields,
         }
     }
 }
@@ -356,24 +364,24 @@ struct FunctionBuilderCtx<'a> {
     errors: &'a mut Vec<Error>,
 
     call_graph: &'a mut petgraph::Graph<Span, Span>,
-    hir_functions: &'a FastHashMap<u32, SrcNode<thir::Function>>,
-    globals: &'a mut FastHashMap<u32, Global>,
+    hir_functions: &'a Vec<thir::Function>,
+    globals: &'a mut Vec<Global>,
     globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
-    structs: &'a FastHashMap<u32, SrcNode<thir::Struct>>,
-    functions: &'a mut FastHashMap<u32, Function>,
+    structs: &'a Vec<thir::Struct>,
+    functions: &'a mut Vec<Function>,
     instances_map: &'a mut FastHashMap<(u32, Vec<Type>), (u32, GraphIndex)>,
     rodeo: &'a Rodeo,
 }
 
 struct StatementBuilder<'a> {
     modifier: Option<EntryPointStage>,
-    locals: &'a mut FastHashMap<u32, Type>,
+    locals: &'a mut Vec<Local>,
     generics: &'a [Type],
 }
 
-impl SrcNode<thir::Function> {
+impl thir::Function {
     fn build_ir(
-        self,
+        &self,
         ctx: &mut FunctionBuilderCtx<'_>,
         generics: Vec<Type>,
         id: u32,
@@ -382,36 +390,43 @@ impl SrcNode<thir::Function> {
             return *t;
         }
 
-        let span = self.span();
-        let mut func = self.into_inner();
-
+        let span = self.span;
         let ir_id = ctx.functions.len() as u32;
-        let node = ctx.call_graph.add_node(func.sig.span);
+        let node = ctx.call_graph.add_node(self.sig.span);
 
         ctx.instances_map
             .insert((id, generics.clone()), (ir_id, node));
 
-        let mut body = vec![];
-
-        if !block_returns(&func.body, &func.sig.ret) {
+        if !block_returns(&self.body, &self.sig.ret) {
             ctx.errors
                 .push(Error::custom(String::from("Body doesn't return")).with_span(span))
         }
 
+        let mut locals = self
+            .locals
+            .iter()
+            .map(|local| Local {
+                name: Some(local.ident.symbol),
+                ty: local.ty.clone(),
+            })
+            .collect();
+
         let mut sta_builder = StatementBuilder {
             modifier: None,
-            locals: &mut func.locals,
+            locals: &mut locals,
             generics: &generics,
         };
 
-        for sta in func.body.into_iter() {
+        let mut body = vec![];
+
+        for sta in self.body.stmts.iter() {
             sta.build_ir(node, ctx, &mut sta_builder, &mut body, None);
         }
 
-        let args = func
+        let args = self
             .sig
             .args
-            .into_iter()
+            .iter()
             .map(|ty| monomorphize::instantiate_ty(&ty, &generics).clone())
             .filter(|ty| match ty.kind {
                 TypeKind::Empty | TypeKind::FnDef(_) => false,
@@ -419,61 +434,70 @@ impl SrcNode<thir::Function> {
             })
             .collect();
 
-        let ret = monomorphize::instantiate_ty(&func.sig.ret, &generics).clone();
+        let ret = monomorphize::instantiate_ty(&self.sig.ret, &generics).clone();
 
         let fun = Function {
-            name: func.sig.ident.symbol,
+            name: self.sig.ident.symbol,
             args,
             ret,
             body,
-            locals: func.locals,
+            locals,
         };
 
-        ctx.functions.insert(ir_id, fun);
+        let id = ctx.functions.len() as u32;
+        ctx.functions.push(fun);
 
-        (ir_id, node)
+        (id, node)
     }
 }
 
-impl SrcNode<thir::EntryPoint> {
+impl thir::EntryPoint {
     fn build_ir(self, ctx: &mut FunctionBuilderCtx<'_>) -> (EntryPoint, GraphIndex) {
-        let mut func = self.into_inner();
         let mut body = vec![];
 
-        let node = ctx.call_graph.add_node(func.sig_span);
+        let node = ctx.call_graph.add_node(self.sig_span);
+
+        let mut locals = self
+            .locals
+            .into_iter()
+            .map(|local| Local {
+                name: Some(local.ident.symbol),
+                ty: local.ty,
+            })
+            .collect();
 
         let mut sta_builder = StatementBuilder {
-            modifier: Some(func.stage),
-            locals: &mut func.locals,
+            modifier: Some(self.stage),
+            locals: &mut locals,
             generics: &[],
         };
 
-        for sta in func.body.into_iter() {
+        for sta in self.body.stmts.into_iter() {
             sta.build_ir(node, ctx, &mut sta_builder, &mut body, None);
         }
 
         let entry = EntryPoint {
-            name: func.name.symbol,
-            stage: func.stage,
+            name: self.ident.symbol,
+            stage: self.stage,
             body,
-            locals: func.locals,
+            locals,
         };
 
         (entry, node)
     }
 }
 
-impl thir::Statement<(Type, Span)> {
+impl thir::Stmt<Type> {
     fn build_ir<'a, 'b>(
-        self,
+        &self,
         node: GraphIndex,
         ctx: &mut FunctionBuilderCtx<'a>,
         sta_builder: &mut StatementBuilder<'b>,
         body: &mut Vec<Statement>,
         nested: Option<u32>,
     ) {
-        match self {
-            thir::Statement::Expr(e) => {
+        match self.kind {
+            thir::StmtKind::Expr(ref e) => {
                 match (e.build_ir(node, ctx, sta_builder, body, nested), nested) {
                     (Some(expr), Some(local)) => {
                         body.push(Statement::Assign(AssignTarget::Local(local), expr))
@@ -482,11 +506,11 @@ impl thir::Statement<(Type, Span)> {
                     _ => {},
                 }
             },
-            thir::Statement::ExprSemi(e) => {
+            thir::StmtKind::ExprSemi(ref e) => {
                 e.build_ir(node, ctx, sta_builder, body, nested);
             },
-            thir::Statement::Assign(tgt, e) => {
-                let tgt = match tgt.inner() {
+            thir::StmtKind::Assign(tgt, ref e) => {
+                let tgt = match tgt.node {
                     AssignTarget::Global(global) => {
                         let id = match ctx.globals_lookup.get(&global).unwrap() {
                             GlobalLookup::ContextLess(id) => *id,
@@ -500,7 +524,7 @@ impl thir::Statement<(Type, Span)> {
                                                 "Context full globals can only be used in entry \
                                                  point functions",
                                             ))
-                                            .with_span(tgt.span()),
+                                            .with_span(tgt.span),
                                         );
                                         *vert
                                     },
@@ -508,16 +532,16 @@ impl thir::Statement<(Type, Span)> {
                             },
                         };
 
-                        if !ctx.globals.get(&id).unwrap().is_writeable() {
+                        if !ctx.globals[id as usize].is_writeable() {
                             ctx.errors.push(
                                 Error::custom(String::from("Global cannot be wrote to"))
-                                    .with_span(tgt.span()),
+                                    .with_span(tgt.span),
                             );
                         }
 
                         AssignTarget::Global(id)
                     },
-                    id => *id,
+                    id => id,
                 };
 
                 if let Some(expr) = e.build_ir(node, ctx, sta_builder, body, nested) {
@@ -528,20 +552,24 @@ impl thir::Statement<(Type, Span)> {
     }
 }
 
-impl thir::TypedNode {
+impl thir::Expr<Type> {
     fn build_ir<'a, 'b>(
-        self,
+        &self,
         node: GraphIndex,
         ctx: &mut FunctionBuilderCtx<'a>,
         sta_builder: &mut StatementBuilder<'b>,
         body: &mut Vec<Statement>,
         nested: Option<u32>,
     ) -> Option<TypedExpr> {
-        let ty = monomorphize::instantiate_ty(self.ty(), &sta_builder.generics).clone();
-        let span = self.span();
+        let ty = monomorphize::instantiate_ty(&self.ty, &sta_builder.generics).clone();
+        let span = self.span;
 
-        let expr = match self.into_inner() {
-            thir::Expr::BinaryOp { left, op, right } => {
+        let expr = match self.kind {
+            thir::ExprKind::BinaryOp {
+                ref left,
+                op,
+                ref right,
+            } => {
                 let left = left.build_ir(node, ctx, sta_builder, body, nested)?;
                 let right = right.build_ir(node, ctx, sta_builder, body, nested)?;
 
@@ -551,15 +579,15 @@ impl thir::TypedNode {
                     op: op.node,
                 }
             },
-            thir::Expr::UnaryOp { tgt, op } => {
+            thir::ExprKind::UnaryOp { ref tgt, op } => {
                 let tgt = tgt.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::UnaryOp { tgt, op: op.node }
             },
-            thir::Expr::Call { fun, args } => {
+            thir::ExprKind::Call { ref fun, ref args } => {
                 let generics = monomorphize::collect(
                     ctx.hir_functions,
-                    fun.ty(),
+                    &fun.ty,
                     &ty,
                     &args,
                     sta_builder.generics,
@@ -568,23 +596,19 @@ impl thir::TypedNode {
                 let mut constructed_args = vec![];
 
                 for arg in args {
-                    match arg.ty().kind {
-                        TypeKind::Empty | TypeKind::Generic(_) | TypeKind::FnDef(_) => continue,
-                        _ => {},
+                    if let TypeKind::Empty | TypeKind::Generic(_) | TypeKind::FnDef(_) = arg.ty.kind
+                    {
+                        continue;
                     }
 
                     constructed_args.push(arg.build_ir(node, ctx, sta_builder, body, nested)?);
                 }
 
-                match monomorphize::instantiate_ty(fun.ty(), sta_builder.generics).kind {
+                match monomorphize::instantiate_ty(&fun.ty, sta_builder.generics).kind {
                     TypeKind::FnDef(origin) => {
                         let origin = origin.map_local(|id| {
-                            let (id, called_node) = ctx
-                                .hir_functions
-                                .get(&id)
-                                .cloned()
-                                .unwrap()
-                                .build_ir(ctx, generics, id);
+                            let (id, called_node) =
+                                ctx.hir_functions[id as usize].build_ir(ctx, generics, id);
 
                             ctx.call_graph.add_edge(node, called_node, span);
 
@@ -609,12 +633,16 @@ impl thir::TypedNode {
                     },
                 }
             },
-            thir::Expr::Literal(lit) => Expr::Literal(lit),
-            thir::Expr::Access { base, field } => {
-                let fields = match base.ty().kind {
-                    TypeKind::Struct(id) => {
-                        vec![ctx.structs.get(&id).unwrap().fields.get(&field).unwrap().0]
-                    },
+            thir::ExprKind::Literal(lit) => Expr::Literal(lit),
+            thir::ExprKind::Access { ref base, field } => {
+                let fields = match base.ty.kind {
+                    TypeKind::Struct(id) => vec![
+                        ctx.structs[id as usize]
+                            .fields
+                            .iter()
+                            .position(|member| member.ident == field)
+                            .unwrap() as u32,
+                    ],
                     TypeKind::Tuple(_) => vec![ctx.rodeo.resolve(&field).parse().unwrap()],
                     TypeKind::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
@@ -633,7 +661,7 @@ impl thir::TypedNode {
                     fields,
                 }
             },
-            thir::Expr::Constructor { elements } => {
+            thir::ExprKind::Constructor { ref elements } => {
                 let mut constructed_elements = vec![];
 
                 for ele in elements {
@@ -661,7 +689,10 @@ impl thir::TypedNode {
                             // ```
                             let local = sta_builder.locals.len() as u32;
                             let ty = constructed_elements[0].attr().clone();
-                            sta_builder.locals.insert(local, ty.clone());
+                            sta_builder.locals.push(Local {
+                                name: None,
+                                ty: ty.clone(),
+                            });
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -682,7 +713,10 @@ impl thir::TypedNode {
                                         // see Small optimization
                                         let local = sta_builder.locals.len() as u32;
                                         let ty = ele.attr().clone();
-                                        sta_builder.locals.insert(local, ty.clone());
+                                        sta_builder.locals.push(Local {
+                                            name: None,
+                                            ty: ty.clone(),
+                                        });
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -718,7 +752,10 @@ impl thir::TypedNode {
                             // see the comment on the vector
                             let local = sta_builder.locals.len() as u32;
                             let ty = constructed_elements[0].attr().clone();
-                            sta_builder.locals.insert(local, ty.clone());
+                            sta_builder.locals.push(Local {
+                                name: None,
+                                ty: ty.clone(),
+                            });
 
                             body.push(Statement::Assign(
                                 AssignTarget::Local(local),
@@ -739,7 +776,10 @@ impl thir::TypedNode {
                                         // see the small optimization on vec
                                         let local = sta_builder.locals.len() as u32;
                                         let ty = ele.attr().clone();
-                                        sta_builder.locals.insert(local, ty.clone());
+                                        sta_builder.locals.push(Local {
+                                            name: None,
+                                            ty: ty.clone(),
+                                        });
 
                                         body.push(Statement::Assign(
                                             AssignTarget::Local(local),
@@ -780,9 +820,9 @@ impl thir::TypedNode {
                     elements: constructed_elements,
                 }
             },
-            thir::Expr::Arg(pos) => Expr::Arg(pos),
-            thir::Expr::Local(local) => Expr::Local(local),
-            thir::Expr::Global(global) => {
+            thir::ExprKind::Arg(pos) => Expr::Arg(pos),
+            thir::ExprKind::Local(local) => Expr::Local(local),
+            thir::ExprKind::Global(global) => {
                 let id = match ctx.globals_lookup.get(&global).unwrap() {
                     GlobalLookup::ContextLess(id) => *id,
                     GlobalLookup::ContextFull { vert, frag } => match sta_builder.modifier {
@@ -802,28 +842,32 @@ impl thir::TypedNode {
                     },
                 };
 
-                if !ctx.globals.get(&id).unwrap().is_readable() {
+                if !ctx.globals[id as usize].is_readable() {
                     ctx.errors
                         .push(Error::custom(String::from("Global cannot be read")).with_span(span));
                 }
 
                 Expr::Global(id)
             },
-            thir::Expr::Return(e) => {
+            thir::ExprKind::Return(ref e) => {
                 let sta = Statement::Return(
-                    e.and_then(|e| e.build_ir(node, ctx, sta_builder, body, nested)),
+                    e.as_ref()
+                        .and_then(|e| e.build_ir(node, ctx, sta_builder, body, nested)),
                 );
 
                 body.push(sta);
                 return None;
             },
-            thir::Expr::If {
-                condition,
-                accept,
-                reject,
+            thir::ExprKind::If {
+                ref condition,
+                ref accept,
+                ref reject,
             } => {
                 let local = sta_builder.locals.len() as u32;
-                sta_builder.locals.insert(local, ty.clone());
+                sta_builder.locals.push(Local {
+                    name: None,
+                    ty: ty.clone(),
+                });
 
                 let sta = Statement::If {
                     condition: condition.build_ir(node, ctx, sta_builder, body, None)?,
@@ -833,11 +877,11 @@ impl thir::TypedNode {
                         if !block_returns(&accept, &ty) {
                             ctx.errors.push(
                                 Error::custom(String::from("Block doesn't return"))
-                                    .with_span(accept.span()),
+                                    .with_span(accept.span),
                             )
                         }
 
-                        for sta in accept.into_inner() {
+                        for sta in accept.stmts.iter() {
                             sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                         }
 
@@ -849,11 +893,11 @@ impl thir::TypedNode {
                         if !block_returns(&reject, &ty) {
                             ctx.errors.push(
                                 Error::custom(String::from("Block doesn't return"))
-                                    .with_span(reject.span()),
+                                    .with_span(reject.span),
                             )
                         }
 
-                        for sta in reject.into_inner() {
+                        for sta in reject.stmts.iter() {
                             sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                         }
 
@@ -865,17 +909,23 @@ impl thir::TypedNode {
 
                 Expr::Local(local)
             },
-            thir::Expr::Index { base, index } => {
+            thir::ExprKind::Index {
+                ref base,
+                ref index,
+            } => {
                 let base = base.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 let index = index.build_ir(node, ctx, sta_builder, body, nested)?;
 
                 Expr::Index { base, index }
             },
-            thir::Expr::Constant(id) => Expr::Constant(id),
-            thir::Expr::Block(block) => {
+            thir::ExprKind::Constant(id) => Expr::Constant(id),
+            thir::ExprKind::Block(ref block) => {
                 let local = sta_builder.locals.len() as u32;
-                sta_builder.locals.insert(local, ty.clone());
+                sta_builder.locals.push(Local {
+                    name: None,
+                    ty: ty.clone(),
+                });
 
                 let sta = Statement::Block({
                     let mut body = vec![];
@@ -883,11 +933,11 @@ impl thir::TypedNode {
                     if !block_returns(&block, &ty) {
                         ctx.errors.push(
                             Error::custom(String::from("Block doesn't return"))
-                                .with_span(block.span()),
+                                .with_span(block.span),
                         )
                     }
 
-                    for sta in block.into_inner() {
+                    for sta in block.stmts.iter() {
                         sta.build_ir(node, ctx, sta_builder, &mut body, Some(local));
                     }
 
@@ -898,39 +948,43 @@ impl thir::TypedNode {
 
                 Expr::Local(local)
             },
-            thir::Expr::Function(_) => unreachable!(),
+            thir::ExprKind::Function(_) => unreachable!(),
         };
 
         Some(TypedExpr::new(expr, ty))
     }
 
     fn returns(&self) -> bool {
-        match self.inner() {
-            thir::Expr::BinaryOp { left, right, .. } => {
+        match self.kind {
+            thir::ExprKind::BinaryOp {
+                ref left,
+                ref right,
+                ..
+            } => {
                 let left = left.returns();
                 let right = right.returns();
 
                 left || right
             },
-            thir::Expr::UnaryOp { tgt, .. } => tgt.returns(),
-            thir::Expr::Call { args, .. } => args.iter().any(thir::TypedNode::returns),
-            thir::Expr::Access { base, .. } => base.returns(),
-            thir::Expr::Return(_) => true,
+            thir::ExprKind::UnaryOp { ref tgt, .. } => tgt.returns(),
+            thir::ExprKind::Call { ref args, .. } => args.iter().any(thir::Expr::returns),
+            thir::ExprKind::Access { ref base, .. } => base.returns(),
+            thir::ExprKind::Return(_) => true,
             _ => false,
         }
     }
 }
 
-fn block_returns(block: &[thir::Statement<(Type, Span)>], ty: &Type) -> bool {
-    for sta in block {
-        match sta {
-            thir::Statement::Expr(_) => return true,
-            thir::Statement::ExprSemi(expr) => {
+fn block_returns(block: &thir::Block<Type>, ty: &Type) -> bool {
+    for sta in block.stmts.iter() {
+        match sta.kind {
+            thir::StmtKind::Expr(_) => return true,
+            thir::StmtKind::ExprSemi(ref expr) => {
                 if expr.returns() {
                     return true;
                 }
             },
-            thir::Statement::Assign(_, expr) => {
+            thir::StmtKind::Assign(_, ref expr) => {
                 if expr.returns() {
                     return true;
                 }

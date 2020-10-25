@@ -1,10 +1,10 @@
 use naga::{
-    Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression, FastHashMap,
+    Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
     Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
     MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
     StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
-use rsh_common::{EntryPointStage, Rodeo};
+use rsh_common::{EntryPointStage, FastHashMap, Rodeo};
 use rsh_irs::{
     ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::TypeKind,
@@ -44,14 +44,14 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
         rodeo,
     };
 
-    for (id, strct) in module.structs.iter() {
+    for (id, strct) in module.structs.iter().enumerate() {
         let (ty, offset) = build_struct(strct, rodeo.resolve(&strct.name).to_string(), &mut ctx);
 
         ctx.structs_lookup
-            .insert(*id, (ctx.types.append(ty), offset));
+            .insert(id as u32, (ctx.types.append(ty), offset));
     }
 
-    for (id, global) in module.globals.iter() {
+    for (id, global) in module.globals.iter().enumerate() {
         let ty = build_ty(&global.ty, &mut ctx).0;
 
         let handle = ctx.globals.append(GlobalVariable {
@@ -63,10 +63,10 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
             storage_access: StorageAccess::empty(),
         });
 
-        ctx.globals_lookup.insert(*id, handle);
+        ctx.globals_lookup.insert(id as u32, handle);
     }
 
-    for (id, constant) in module.constants.iter() {
+    for (id, constant) in module.constants.iter().enumerate() {
         let ty = build_ty(&constant.ty, &mut ctx).0;
 
         let inner = match constant.inner {
@@ -127,11 +127,11 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
             inner,
         });
 
-        ctx.constants_lookup.insert(*id, handle);
+        ctx.constants_lookup.insert(id as u32, handle);
     }
 
-    for (id, function) in module.functions.iter() {
-        build_fn(function, module, *id, &mut ctx);
+    for (id, function) in module.functions.iter().enumerate() {
+        build_fn(function, module, id as u32, &mut ctx);
     }
 
     let entry_points = module
@@ -160,7 +160,7 @@ struct BuilderContext<'a> {
     constants: &'a mut Arena<Constant>,
     functions_arena: &'a mut Arena<NagaFunction>,
     functions_lookup: FastHashMap<u32, Handle<NagaFunction>>,
-    functions: &'a FastHashMap<u32, Function>,
+    functions: &'a Vec<Function>,
     structs_lookup: &'a mut FastHashMap<u32, (Handle<NagaType>, u32)>,
     constants_lookup: &'a mut FastHashMap<u32, Handle<Constant>>,
     rodeo: &'a Rodeo,
@@ -186,16 +186,19 @@ fn build_fn<'a>(
     let mut local_variables = Arena::new();
     let mut locals_lookup = FastHashMap::default();
 
-    for (id, ty) in fun.locals.iter() {
-        let ty = build_ty(ty, ctx).0;
+    for (id, local) in fun.locals.iter().enumerate() {
+        let ty = build_ty(&local.ty, ctx).0;
 
         let handle = local_variables.append(LocalVariable {
-            name: None,
+            name: local
+                .name
+                .as_ref()
+                .map(|symbol| ctx.rodeo.resolve(symbol).to_string()),
             ty,
             init: None,
         });
 
-        locals_lookup.insert(*id, handle);
+        locals_lookup.insert(id as u32, handle);
     }
 
     let mut expressions = Arena::new();
@@ -232,16 +235,19 @@ fn build_entry_point<'a>(
     let mut local_variables = Arena::new();
     let mut locals_lookup = FastHashMap::default();
 
-    for (id, ty) in entry_point.locals.iter() {
-        let ty = build_ty(ty, ctx).0;
+    for (id, local) in entry_point.locals.iter().enumerate() {
+        let ty = build_ty(&local.ty, ctx).0;
 
         let handle = local_variables.append(LocalVariable {
-            name: None,
+            name: local
+                .name
+                .as_ref()
+                .map(|symbol| ctx.rodeo.resolve(symbol).to_string()),
             ty,
             init: None,
         });
 
-        locals_lookup.insert(*id, handle);
+        locals_lookup.insert(id as u32, handle);
     }
 
     let mut expressions = Arena::new();
@@ -285,11 +291,11 @@ fn build_struct(strct: &Struct, name: String, ctx: &mut BuilderContext) -> (Naga
     let mut offset = 0;
     let mut members = vec![];
 
-    for (name, ty) in strct.fields.iter() {
-        let (ty, size) = build_ty(ty, ctx);
+    for member in strct.fields.iter() {
+        let (ty, size) = build_ty(&member.ty, ctx);
 
         members.push(StructMember {
-            name: Some(ctx.rodeo.resolve(&name).to_string()),
+            name: Some(ctx.rodeo.resolve(&member.name).to_string()),
             origin: MemberOrigin::Offset(offset),
             ty,
         });
@@ -489,7 +495,7 @@ fn build_expr<'a>(
 
             let origin = match origin {
                 rsh_common::FunctionOrigin::Local(id) => {
-                    let function = ctx.functions.get(id).unwrap();
+                    let function = &ctx.functions[*id as usize];
                     let id = build_fn(function, module, *id, ctx);
                     FunctionOrigin::Local(id)
                 },

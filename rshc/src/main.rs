@@ -6,15 +6,12 @@ use codespan_reporting::{
         termcolor::{ColorChoice, StandardStream},
     },
 };
-use rusty_shades::{build_ir, build_naga_ir, Error};
+use rusty_shades::{build_hir, build_ir, build_naga_ir, Error};
 use std::{
     fs::{read_to_string, File, OpenOptions},
     io::{self, Write},
     path::Path,
 };
-
-#[cfg(not(any(feature = "spirv", feature = "glsl", feature = "msl")))]
-compile_error!("At least one target should be enabled.");
 
 const COLOR: &[&str] = &["auto", "always", "never"];
 const TARGETS: &[&str] = &[
@@ -26,6 +23,7 @@ const TARGETS: &[&str] = &[
     "msl",
     #[cfg(feature = "ir")]
     "ron",
+    "hir",
 ];
 
 fn main() -> io::Result<()> {
@@ -142,6 +140,24 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     let mut files = SimpleFiles::new();
     let file_id = files.add(input, &code);
 
+    if target == "hir" {
+        let (module, rodeo) = handle_errors(build_hir(&code), &files, file_id, color)?;
+
+        let mut output = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(output)?;
+
+        write!(
+            output,
+            "{}",
+            rusty_shades::HirPrettyPrinter::new(&module, &rodeo)
+        )?;
+
+        return Ok(());
+    }
+
     let naga_ir = handle_errors(build_naga_ir(&code), &files, file_id, color)?;
 
     let mut output = OpenOptions::new()
@@ -201,6 +217,7 @@ fn prefix(tgt: &str) -> &str {
         "glsl" => "glsl",
         "msl" => "msl",
         "ron" => "ron",
+        "hir" => ".rsh.debug",
         _ => unreachable!(),
     }
 }

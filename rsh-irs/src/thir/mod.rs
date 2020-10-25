@@ -1,5 +1,5 @@
 use crate::{
-    ast::{self},
+    ast,
     common::{
         error::Error,
         src::{Span, Spanned},
@@ -8,7 +8,6 @@ use crate::{
     },
     hir,
     infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo},
-    node::{Node, SrcNode},
     ty::{Type, TypeKind},
     AssignTarget,
 };
@@ -16,36 +15,27 @@ use crate::{
 /// Pretty printing of the HIR
 pub mod pretty;
 
-type InferNode = Node<Expr<(TypeId, Span)>, (TypeId, Span)>;
-pub type TypedNode = Node<Expr<(Type, Span)>, (Type, Span)>;
-
-impl InferNode {
-    pub fn type_id(&self) -> TypeId { self.attr().0 }
-
-    pub fn span(&self) -> Span { self.attr().1 }
-}
-
-impl TypedNode {
-    pub fn ty(&self) -> &Type { &self.attr().0 }
-
-    pub fn span(&self) -> Span { self.attr().1 }
+#[derive(Debug)]
+pub struct Module {
+    pub globals: Vec<Global>,
+    pub structs: Vec<Struct>,
+    pub functions: Vec<Function>,
+    pub constants: Vec<Constant>,
+    pub entry_points: Vec<EntryPoint>,
 }
 
 #[derive(Debug)]
-pub struct Module {
-    pub globals: FastHashMap<u32, SrcNode<Global>>,
-    pub structs: FastHashMap<u32, SrcNode<Struct>>,
-    pub functions: FastHashMap<u32, SrcNode<Function>>,
-    pub constants: FastHashMap<u32, SrcNode<Constant>>,
-    pub entry_points: Vec<SrcNode<EntryPoint>>,
-}
-
-// TODO: Make this non clone
-#[derive(Debug, Clone)]
 pub struct Function {
     pub sig: FnSig,
-    pub body: Vec<Statement<(Type, Span)>>,
-    pub locals: FastHashMap<u32, Type>,
+    pub body: Block<Type>,
+    pub locals: Vec<Local>,
+    pub span: Span,
+}
+
+#[derive(Debug)]
+pub struct Local {
+    pub ident: Ident,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone)]
@@ -59,171 +49,213 @@ pub struct FnSig {
 
 #[derive(Debug)]
 pub struct Global {
-    pub name: Symbol,
+    pub ident: Ident,
     pub modifier: GlobalBinding,
     pub ty: Type,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct Struct {
-    pub name: Symbol,
-    pub fields: FastHashMap<Symbol, (u32, Type)>,
+    pub ident: Ident,
+    pub fields: Vec<StructField>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
-pub struct Constant {
-    pub name: Symbol,
-    pub expr: TypedNode,
+pub struct StructField {
+    pub ident: Ident,
     pub ty: Type,
 }
 
 #[derive(Debug)]
+pub struct Constant {
+    pub ident: Ident,
+    pub expr: Expr<Type>,
+    pub ty: Type,
+    pub span: Span,
+}
+
+#[derive(Debug)]
 pub struct EntryPoint {
-    pub name: Ident,
+    pub ident: Ident,
     pub stage: EntryPointStage,
     pub sig_span: Span,
-    pub body: Vec<Statement<(Type, Span)>>,
-    pub locals: FastHashMap<u32, Type>,
+    pub body: Block<Type>,
+    pub locals: Vec<Local>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum Statement<M> {
-    Expr(Node<Expr<M>, M>),
-    ExprSemi(Node<Expr<M>, M>),
-    Assign(SrcNode<AssignTarget>, Node<Expr<M>, M>),
+pub struct Stmt<M> {
+    pub kind: StmtKind<M>,
+    pub span: Span,
 }
 
-impl Statement<(TypeId, Span)> {
-    fn into_statement(
-        self,
-        infer_ctx: &mut InferContext,
-        errors: &mut Vec<Error>,
-    ) -> Statement<(Type, Span)> {
-        match self {
-            Statement::Expr(e) => Statement::Expr(e.into_expr(infer_ctx, errors)),
-            Statement::ExprSemi(e) => Statement::ExprSemi(e.into_expr(infer_ctx, errors)),
-            Statement::Assign(tgt, e) => Statement::Assign(tgt, e.into_expr(infer_ctx, errors)),
+#[derive(Debug, Clone)]
+pub enum StmtKind<M> {
+    Expr(Expr<M>),
+    ExprSemi(Expr<M>),
+    Assign(Spanned<AssignTarget>, Expr<M>),
+}
+
+impl Stmt<TypeId> {
+    fn into_statement(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> Stmt<Type> {
+        let kind = match self.kind {
+            StmtKind::Expr(e) => StmtKind::Expr(e.into_expr(infer_ctx, errors)),
+            StmtKind::ExprSemi(e) => StmtKind::ExprSemi(e.into_expr(infer_ctx, errors)),
+            StmtKind::Assign(tgt, e) => StmtKind::Assign(tgt, e.into_expr(infer_ctx, errors)),
+        };
+
+        Stmt {
+            kind,
+            span: self.span,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr<M> {
-    Block(SrcNode<Vec<Statement<M>>>),
+pub struct Expr<M> {
+    pub kind: ExprKind<M>,
+    pub ty: M,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind<M> {
+    Block(Block<M>),
     BinaryOp {
-        left: Node<Self, M>,
+        left: Box<Expr<M>>,
         op: Spanned<BinaryOp>,
-        right: Node<Self, M>,
+        right: Box<Expr<M>>,
     },
     UnaryOp {
-        tgt: Node<Self, M>,
+        tgt: Box<Expr<M>>,
         op: Spanned<UnaryOp>,
     },
     Call {
-        fun: Node<Self, M>,
-        args: Vec<Node<Self, M>>,
+        fun: Box<Expr<M>>,
+        args: Vec<Expr<M>>,
     },
     Literal(Literal),
     Access {
-        base: Node<Self, M>,
+        base: Box<Expr<M>>,
         field: Ident,
     },
     Constructor {
-        elements: Vec<Node<Self, M>>,
+        elements: Vec<Expr<M>>,
     },
     Arg(u32),
     Local(u32),
     Global(u32),
     Constant(u32),
     Function(FunctionOrigin),
-    Return(Option<Node<Self, M>>),
+    Return(Option<Box<Expr<M>>>),
     If {
-        condition: Node<Self, M>,
-        accept: SrcNode<Vec<Statement<M>>>,
-        reject: SrcNode<Vec<Statement<M>>>,
+        condition: Box<Expr<M>>,
+        accept: Block<M>,
+        reject: Block<M>,
     },
     Index {
-        base: Node<Self, M>,
-        index: Node<Self, M>,
+        base: Box<Expr<M>>,
+        index: Box<Expr<M>>,
     },
 }
 
-impl InferNode {
-    fn into_expr(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> TypedNode {
-        let (ty, span) = *self.attr();
+impl Expr<TypeId> {
+    fn is_return(&self) -> bool {
+        match self.kind {
+            ExprKind::Return(_) => true,
+            _ => false,
+        }
+    }
 
-        let node = match self.into_inner() {
-            Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
-                left: left.into_expr(infer_ctx, errors),
+    fn into_expr(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> Expr<Type> {
+        let ty = self.ty;
+
+        let kind = match self.kind {
+            ExprKind::BinaryOp { left, op, right } => ExprKind::BinaryOp {
+                left: Box::new(left.into_expr(infer_ctx, errors)),
                 op,
-                right: right.into_expr(infer_ctx, errors),
+                right: Box::new(right.into_expr(infer_ctx, errors)),
             },
-            Expr::UnaryOp { tgt, op } => Expr::UnaryOp {
-                tgt: tgt.into_expr(infer_ctx, errors),
+            ExprKind::UnaryOp { tgt, op } => ExprKind::UnaryOp {
+                tgt: Box::new(tgt.into_expr(infer_ctx, errors)),
                 op,
             },
-            Expr::Call { fun, args } => Expr::Call {
-                fun: fun.into_expr(infer_ctx, errors),
+            ExprKind::Call { fun, args } => ExprKind::Call {
+                fun: Box::new(fun.into_expr(infer_ctx, errors)),
                 args: args
                     .into_iter()
                     .map(|a| a.into_expr(infer_ctx, errors))
                     .collect(),
             },
-            Expr::Literal(lit) => Expr::Literal(lit),
-            Expr::Access { base, field } => {
-                let base = base.into_expr(infer_ctx, errors);
+            ExprKind::Literal(lit) => ExprKind::Literal(lit),
+            ExprKind::Access { base, field } => {
+                let base = Box::new(base.into_expr(infer_ctx, errors));
 
-                Expr::Access { base, field }
+                ExprKind::Access { base, field }
             },
-            Expr::Constructor { elements } => Expr::Constructor {
+            ExprKind::Constructor { elements } => ExprKind::Constructor {
                 elements: elements
                     .into_iter()
                     .map(|a| a.into_expr(infer_ctx, errors))
                     .collect(),
             },
-            Expr::Arg(id) => Expr::Arg(id),
-            Expr::Local(id) => Expr::Local(id),
-            Expr::Global(id) => Expr::Global(id),
-            Expr::Constant(id) => Expr::Constant(id),
-            Expr::Function(id) => Expr::Function(id),
-            Expr::Return(expr) => Expr::Return(expr.map(|e| e.into_expr(infer_ctx, errors))),
-            Expr::If {
+            ExprKind::Arg(id) => ExprKind::Arg(id),
+            ExprKind::Local(id) => ExprKind::Local(id),
+            ExprKind::Global(id) => ExprKind::Global(id),
+            ExprKind::Constant(id) => ExprKind::Constant(id),
+            ExprKind::Function(id) => ExprKind::Function(id),
+            ExprKind::Return(expr) => {
+                ExprKind::Return(expr.map(|e| Box::new(e.into_expr(infer_ctx, errors))))
+            },
+            ExprKind::If {
                 condition,
                 accept,
                 reject,
-            } => Expr::If {
-                condition: condition.into_expr(infer_ctx, errors),
-                accept: SrcNode::new(
-                    accept
-                        .iter()
-                        .map(|a| a.clone().into_statement(infer_ctx, errors))
-                        .collect(),
-                    accept.span(),
-                ),
-                reject: SrcNode::new(
-                    reject
-                        .iter()
-                        .map(|a| a.clone().into_statement(infer_ctx, errors))
-                        .collect(),
-                    reject.span(),
-                ),
+            } => ExprKind::If {
+                condition: Box::new(condition.into_expr(infer_ctx, errors)),
+                accept: accept.into_block(infer_ctx, errors),
+                reject: reject.into_block(infer_ctx, errors),
             },
-            Expr::Index { base, index } => Expr::Index {
-                base: base.into_expr(infer_ctx, errors),
-                index: index.into_expr(infer_ctx, errors),
+            ExprKind::Index { base, index } => ExprKind::Index {
+                base: Box::new(base.into_expr(infer_ctx, errors)),
+                index: Box::new(index.into_expr(infer_ctx, errors)),
             },
-            Expr::Block(block) => Expr::Block(SrcNode::new(
-                block
-                    .iter()
-                    .map(|a| a.clone().into_statement(infer_ctx, errors))
-                    .collect(),
-                block.span(),
-            )),
+            ExprKind::Block(block) => ExprKind::Block(block.into_block(infer_ctx, errors)),
         };
 
-        let ty = reconstruct(ty, span, infer_ctx, errors);
+        let ty = reconstruct(ty, self.span, infer_ctx, errors);
 
-        TypedNode::new(node, (ty, span))
+        Expr {
+            kind,
+            ty,
+            span: self.span,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Block<M> {
+    pub stmts: Vec<Stmt<M>>,
+    pub span: Span,
+}
+
+impl<T> Block<T> {
+    fn is_empty(&self) -> bool { self.stmts.is_empty() }
+}
+
+impl Block<TypeId> {
+    fn into_block(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> Block<Type> {
+        Block {
+            stmts: self
+                .stmts
+                .into_iter()
+                .map(|stmt| stmt.into_statement(infer_ctx, errors))
+                .collect(),
+            span: self.span,
+        }
     }
 }
 
@@ -235,32 +267,70 @@ impl Module {
     ) -> Result<Module, Vec<Error>> {
         let mut errors = vec![];
 
-        let mut functions = FastHashMap::default();
+        let mut functions = Vec::new();
         let mut globals_lookup = FastHashMap::default();
+        let mut functions_lookup = FastHashMap::default();
+        let mut constants_lookup = FastHashMap::default();
+        let mut structs_lookup = FastHashMap::default();
 
         let globals = hir_module
             .globals
             .iter()
-            .map(|(name, global)| {
+            .enumerate()
+            .map(|(key, global)| {
                 let mut scoped = infer_ctx.scoped();
-                let key = globals_lookup.len() as u32;
 
-                globals_lookup.insert(*name, (key, global.ty));
+                globals_lookup.insert(global.ident.symbol, (key as u32, global.ty));
 
-                let global = SrcNode::new(
-                    Global {
-                        name: *name,
-                        modifier: global.modifier,
-                        ty: reconstruct(global.ty, global.span, &mut scoped, &mut errors),
-                    },
-                    global.span,
-                );
-
-                (key, global)
+                Global {
+                    ident: global.ident,
+                    modifier: global.modifier,
+                    ty: reconstruct(global.ty, global.span, &mut scoped, &mut errors),
+                    span: global.span,
+                }
             })
             .collect();
 
-        for (_, func) in hir_module.functions.iter() {
+        let structs = hir_module
+            .structs
+            .iter()
+            .map(|hir_module_strct| {
+                let mut scoped = infer_ctx.scoped();
+
+                let fields = hir_module_strct
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ty = reconstruct(field.ty, Span::None, &mut scoped, &mut errors);
+
+                        StructField {
+                            ident: field.ident,
+                            ty,
+                        }
+                    })
+                    .collect();
+
+                structs_lookup.insert(hir_module_strct.ident.symbol, hir_module_strct.ty);
+
+                let strct = Struct {
+                    ident: hir_module_strct.ident,
+                    fields,
+                    span: hir_module_strct.span,
+                };
+
+                strct
+            })
+            .collect();
+
+        for (id, constant) in hir_module.constants.iter().enumerate() {
+            constants_lookup.insert(constant.ident.symbol, id as u32);
+        }
+
+        for (id, func) in hir_module.functions.iter().enumerate() {
+            functions_lookup.insert(func.sig.ident.symbol, id as u32);
+        }
+
+        for func in hir_module.functions.iter() {
             let mut scoped = infer_ctx.scoped();
 
             let mut locals = vec![];
@@ -270,18 +340,18 @@ impl Module {
                 infer_ctx: &mut scoped,
                 rodeo,
                 errors: &mut errors,
+                module: &hir_module,
 
                 locals: &mut locals,
                 sig: &func.sig,
                 globals_lookup: &globals_lookup,
-                structs: &hir_module.structs,
-                functions: &hir_module.functions,
-                constants: &hir_module.constants,
+                functions_lookup: &functions_lookup,
+                structs_lookup: &structs_lookup,
+                constants_lookup: &constants_lookup,
                 externs: &hir_module.externs,
             };
 
-            let body = build_block(&func.body, &mut builder, &mut locals_lookup, func.sig.ret)
-                .into_inner();
+            let body = build_block(&func.body, &mut builder, &mut locals_lookup, func.sig.ret);
 
             match scoped.solve_all() {
                 Ok(_) => {},
@@ -302,16 +372,11 @@ impl Module {
 
             let locals = locals
                 .into_iter()
-                .map(|(id, ty)| {
+                .map(|(ident, ty)| {
                     let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors);
 
-                    (id, ty)
+                    Local { ident, ty }
                 })
-                .collect();
-
-            let body = body
-                .into_iter()
-                .map(|sta| sta.into_statement(&mut scoped, &mut errors))
                 .collect();
 
             let sig = FnSig {
@@ -322,10 +387,12 @@ impl Module {
                 span: func.sig.span,
             };
 
-            functions.insert(
-                func.id,
-                SrcNode::new(Function { sig, body, locals }, func.span),
-            );
+            functions.push(Function {
+                sig,
+                body: body.into_block(&mut scoped, &mut errors),
+                locals,
+                span: func.span,
+            });
         }
 
         let entry_points = hir_module
@@ -349,18 +416,18 @@ impl Module {
                     infer_ctx: &mut scoped,
                     rodeo,
                     errors: &mut errors,
+                    module: &hir_module,
 
                     locals: &mut locals,
                     sig: &sig,
                     globals_lookup: &globals_lookup,
-                    structs: &hir_module.structs,
-                    functions: &hir_module.functions,
-                    constants: &hir_module.constants,
+                    functions_lookup: &functions_lookup,
+                    structs_lookup: &structs_lookup,
+                    constants_lookup: &constants_lookup,
                     externs: &hir_module.externs,
                 };
 
-                let body =
-                    build_block(&func.body, &mut builder, &mut locals_lookup, ret).into_inner();
+                let body = build_block(&func.body, &mut builder, &mut locals_lookup, ret);
 
                 match scoped.solve_all() {
                     Ok(_) => {},
@@ -368,60 +435,29 @@ impl Module {
                 };
 
                 let locals = locals
-                    .iter()
-                    .map(|(id, ty)| {
-                        let ty = reconstruct(*ty, Span::None, &mut scoped, &mut errors);
-
-                        (*id, ty)
-                    })
-                    .collect();
-
-                let body = body
                     .into_iter()
-                    .map(|sta| sta.into_statement(&mut scoped, &mut errors))
-                    .collect();
+                    .map(|(ident, ty)| {
+                        let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors);
 
-                SrcNode::new(
-                    EntryPoint {
-                        name: func.ident,
-                        sig_span: func.header_span,
-                        stage: func.stage,
-                        body,
-                        locals,
-                    },
-                    func.span,
-                )
-            })
-            .collect();
-
-        let structs = hir_module
-            .structs
-            .iter()
-            .map(|(key, hir_module_strct)| {
-                let mut scoped = infer_ctx.scoped();
-                let fields = hir_module_strct
-                    .fields
-                    .iter()
-                    .map(|(key, (pos, ty))| {
-                        let ty = reconstruct(*ty, Span::None, &mut scoped, &mut errors);
-
-                        (*key, (*pos, ty))
+                        Local { ident, ty }
                     })
                     .collect();
 
-                let strct = Struct { name: *key, fields };
-
-                (
-                    hir_module_strct.id,
-                    SrcNode::new(strct, hir_module_strct.span),
-                )
+                EntryPoint {
+                    ident: func.ident,
+                    sig_span: func.header_span,
+                    stage: func.stage,
+                    body: body.into_block(&mut scoped, &mut errors),
+                    locals,
+                    span: func.span,
+                }
             })
             .collect();
 
         let constants = hir_module
             .constants
             .iter()
-            .map(|(key, hir_module_const)| {
+            .map(|hir_module_const| {
                 let mut scoped = infer_ctx.scoped();
 
                 let mut locals = vec![];
@@ -436,13 +472,14 @@ impl Module {
                     infer_ctx: &mut scoped,
                     rodeo,
                     errors: &mut errors,
+                    module: &hir_module,
 
                     locals: &mut locals,
                     sig: &sig,
                     globals_lookup: &FastHashMap::default(),
-                    structs: &FastHashMap::default(),
-                    functions: &FastHashMap::default(),
-                    constants: &hir_module.constants,
+                    structs_lookup: &FastHashMap::default(),
+                    functions_lookup: &FastHashMap::default(),
+                    constants_lookup: &constants_lookup,
                     externs: &FastHashMap::default(),
                 };
 
@@ -453,9 +490,8 @@ impl Module {
                     hir_module_const.ty,
                 );
 
-                match scoped.unify(expr.type_id(), hir_module_const.ty) {
-                    Ok(_) => {},
-                    Err(e) => errors.push(e),
+                if let Err(e) = scoped.unify(expr.ty, hir_module_const.ty) {
+                    errors.push(e)
                 }
 
                 let ty = reconstruct(
@@ -465,16 +501,12 @@ impl Module {
                     &mut errors,
                 );
 
-                let constant = Constant {
-                    name: *key,
+                Constant {
+                    ident: hir_module_const.ident,
                     ty,
                     expr: expr.into_expr(&mut scoped, &mut errors),
-                };
-
-                (
-                    hir_module_const.id,
-                    SrcNode::new(constant, hir_module_const.span),
-                )
+                    span: hir_module_const.span,
+                }
             })
             .collect();
 
@@ -492,45 +524,39 @@ impl Module {
     }
 }
 
-fn build_hir_ty(
-    ty: &ast::Ty,
-    errors: &mut Vec<Error>,
-    structs: &FastHashMap<Symbol, hir::Struct>,
-    infer_ctx: &mut InferContext,
-) -> TypeId {
+fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
     let ty = match ty.kind {
         ast::TypeKind::ScalarType(scalar) => {
-            let base = infer_ctx.add_scalar(scalar);
-            infer_ctx.insert(base, ty.span)
+            let base = ctx.infer_ctx.add_scalar(scalar);
+            ctx.infer_ctx.insert(base, ty.span)
         },
         ast::TypeKind::Named(name) => {
-            if let Some(ty) = structs.get(&name) {
-                ty.ty
+            if let Some(ty) = ctx.structs_lookup.get(&name) {
+                *ty
             } else {
-                errors.push(Error::custom(String::from("Not defined")).with_span(ty.span));
+                ctx.errors
+                    .push(Error::custom(String::from("Not defined")).with_span(ty.span));
 
-                infer_ctx.insert(TypeInfo::Empty, ty.span)
+                ctx.infer_ctx.insert(TypeInfo::Empty, ty.span)
             }
         },
         ast::TypeKind::Tuple(ref types) => {
-            let types = types
-                .iter()
-                .map(|ty| build_hir_ty(ty, errors, structs, infer_ctx))
-                .collect();
+            let types = types.iter().map(|ty| build_hir_ty(ty, ctx)).collect();
 
-            infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
+            ctx.infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
         },
         ast::TypeKind::Vector(size, base) => {
-            let base = infer_ctx.add_scalar(base);
-            let size = infer_ctx.add_size(size);
+            let base = ctx.infer_ctx.add_scalar(base);
+            let size = ctx.infer_ctx.add_size(size);
 
-            infer_ctx.insert(TypeInfo::Vector(base, size), ty.span)
+            ctx.infer_ctx.insert(TypeInfo::Vector(base, size), ty.span)
         },
         ast::TypeKind::Matrix { columns, rows } => {
-            let columns = infer_ctx.add_size(columns);
-            let rows = infer_ctx.add_size(rows);
+            let columns = ctx.infer_ctx.add_size(columns);
+            let rows = ctx.infer_ctx.add_size(rows);
 
-            infer_ctx.insert(TypeInfo::Matrix { columns, rows }, ty.span)
+            ctx.infer_ctx
+                .insert(TypeInfo::Matrix { columns, rows }, ty.span)
         },
     };
 
@@ -541,13 +567,14 @@ struct StatementBuilderCtx<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     rodeo: &'a Rodeo,
     errors: &'a mut Vec<Error>,
+    module: &'a hir::Module<'a>,
 
-    locals: &'a mut Vec<(u32, TypeId)>,
+    locals: &'a mut Vec<(Ident, TypeId)>,
     sig: &'a hir::FnSig,
     globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
-    structs: &'a FastHashMap<Symbol, hir::Struct>,
-    functions: &'a FastHashMap<Symbol, hir::Function<'a>>,
-    constants: &'a FastHashMap<Symbol, hir::Constant<'a>>,
+    functions_lookup: &'a FastHashMap<Symbol, u32>,
+    structs_lookup: &'a FastHashMap<Symbol, TypeId>,
+    constants_lookup: &'a FastHashMap<Symbol, u32>,
     externs: &'a FastHashMap<Symbol, hir::FnSig>,
 }
 
@@ -556,7 +583,7 @@ fn build_block<'a, 'b>(
     ctx: &mut StatementBuilderCtx<'a, 'b>,
     locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
     out: TypeId,
-) -> SrcNode<Vec<Statement<(TypeId, Span)>>> {
+) -> Block<TypeId> {
     let mut locals_lookup = locals_lookup.clone();
 
     let stmts = block
@@ -565,7 +592,10 @@ fn build_block<'a, 'b>(
         .map(|stmt| build_stmt(stmt, ctx, &mut locals_lookup, out))
         .collect();
 
-    SrcNode::new(stmts, block.span)
+    Block {
+        stmts,
+        span: block.span,
+    }
 }
 
 fn build_stmt<'a, 'b>(
@@ -573,43 +603,47 @@ fn build_stmt<'a, 'b>(
     ctx: &mut StatementBuilderCtx<'a, 'b>,
     locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
     out: TypeId,
-) -> Statement<(TypeId, Span)> {
-    match stmt.kind {
+) -> Stmt<TypeId> {
+    let kind = match stmt.kind {
         ast::StmtKind::Expr(ref expr) => {
-            use std::mem::discriminant;
-
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
-            if discriminant(&Expr::Return(None)) != discriminant(expr.inner()) {
-                if let Err(e) = ctx.infer_ctx.unify(expr.type_id(), out) {
+            if expr.is_return() {
+                if let Err(e) = ctx.infer_ctx.unify(expr.ty, out) {
                     ctx.errors.push(e)
                 }
             }
 
-            Statement::Expr(expr)
+            StmtKind::Expr(expr)
         },
         ast::StmtKind::ExprSemi(ref expr) => {
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
-            Statement::ExprSemi(expr)
+            StmtKind::ExprSemi(expr)
         },
         ast::StmtKind::Local(ref local) => {
             let expr = build_expr(&local.init, ctx, locals_lookup, out);
 
             if let Some(ref ty) = local.ty {
-                let id = build_hir_ty(ty, ctx.errors, ctx.structs, ctx.infer_ctx);
+                let id = build_hir_ty(ty, ctx);
 
-                if let Err(e) = ctx.infer_ctx.unify(expr.type_id(), id) {
+                if let Err(e) = ctx.infer_ctx.unify(expr.ty, id) {
                     ctx.errors.push(e)
                 }
             }
 
             let local_id = ctx.locals.len() as u32;
 
-            ctx.locals.push((local_id, expr.type_id()));
-            locals_lookup.insert(local.ident.symbol, (local_id, expr.type_id()));
+            ctx.locals.push((local.ident, expr.ty));
+            locals_lookup.insert(local.ident.symbol, (local_id, expr.ty));
 
-            Statement::Assign(SrcNode::new(AssignTarget::Local(local_id), stmt.span), expr)
+            StmtKind::Assign(
+                Spanned {
+                    node: AssignTarget::Local(local_id),
+                    span: local.ident.span,
+                },
+                expr,
+            )
         },
         ast::StmtKind::Assignment { ident, ref expr } => {
             let expr = build_expr(expr, ctx, locals_lookup, out);
@@ -624,17 +658,28 @@ fn build_stmt<'a, 'b>(
 
                 let local_id = ctx.locals.len() as u32;
 
-                ctx.locals.push((local_id, expr.type_id()));
-                locals_lookup.insert(ctx.rodeo.get_or_intern("Error"), (local_id, expr.type_id()));
-                (AssignTarget::Local(local_id), expr.type_id())
+                ctx.locals.push((ident, expr.ty));
+                locals_lookup.insert(*ident, (local_id, expr.ty));
+                (AssignTarget::Local(local_id), expr.ty)
             };
 
-            if let Err(e) = ctx.infer_ctx.unify(id, expr.type_id()) {
+            if let Err(e) = ctx.infer_ctx.unify(id, expr.ty) {
                 ctx.errors.push(e)
             };
 
-            Statement::Assign(SrcNode::new(tgt, ident.span), expr)
+            StmtKind::Assign(
+                Spanned {
+                    node: tgt,
+                    span: ident.span,
+                },
+                expr,
+            )
         },
+    };
+
+    Stmt {
+        kind,
+        span: stmt.span,
     }
 }
 
@@ -643,39 +688,36 @@ fn build_expr<'a, 'b>(
     ctx: &mut StatementBuilderCtx<'a, 'b>,
     locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
     out: TypeId,
-) -> InferNode {
+) -> Expr<TypeId> {
     let empty = ctx.infer_ctx.insert(TypeInfo::Empty, expr.span);
 
-    match expr.kind {
+    let (kind, ty) = match expr.kind {
         ast::ExprKind::BinaryOp {
             ref left,
             op,
             ref right,
         } => {
-            let left = build_expr(left, ctx, locals_lookup, out);
-            let right = build_expr(right, ctx, locals_lookup, out);
+            let left = Box::new(build_expr(left, ctx, locals_lookup, out));
+            let right = Box::new(build_expr(right, ctx, locals_lookup, out));
 
             let out = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
             ctx.infer_ctx.add_constraint(Constraint::Binary {
-                a: left.type_id(),
+                a: left.ty,
                 op,
-                b: right.type_id(),
+                b: right.ty,
                 out,
             });
 
-            InferNode::new(Expr::BinaryOp { left, op, right }, (out, expr.span))
+            (ExprKind::BinaryOp { left, op, right }, out)
         },
         ast::ExprKind::UnaryOp { ref tgt, op } => {
-            let tgt = build_expr(tgt, ctx, locals_lookup, out);
+            let tgt = Box::new(build_expr(tgt, ctx, locals_lookup, out));
 
             let out = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
-            ctx.infer_ctx.add_constraint(Constraint::Unary {
-                a: tgt.type_id(),
-                op,
-                out,
-            });
+            ctx.infer_ctx
+                .add_constraint(Constraint::Unary { a: tgt.ty, op, out });
 
-            InferNode::new(Expr::UnaryOp { tgt, op }, (out, expr.span))
+            (ExprKind::UnaryOp { tgt, op }, out)
         },
         ast::ExprKind::Constructor {
             ty,
@@ -706,36 +748,36 @@ fn build_expr<'a, 'b>(
 
             ctx.infer_ctx.add_constraint(Constraint::Constructor {
                 out,
-                elements: elements.iter().map(|e| e.type_id()).collect(),
+                elements: elements.iter().map(|e| e.ty).collect(),
             });
 
-            InferNode::new(Expr::Constructor { elements }, (out, expr.span))
+            (ExprKind::Constructor { elements }, out)
         },
         ast::ExprKind::Call { ref fun, ref args } => {
-            let fun = build_expr(fun, ctx, locals_lookup, out);
+            let fun = Box::new(build_expr(fun, ctx, locals_lookup, out));
             let args: Vec<_> = args
                 .iter()
                 .map(|arg| build_expr(arg, ctx, locals_lookup, out))
                 .collect();
 
-            let out_ty = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
+            let ret = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
 
             ctx.infer_ctx.add_constraint(Constraint::Call {
-                fun: fun.type_id(),
-                args: args.iter().map(InferNode::type_id).collect(),
-                ret: out_ty,
+                fun: fun.ty,
+                args: args.iter().map(|e| e.ty).collect(),
+                ret,
             });
 
-            InferNode::new(Expr::Call { fun, args }, (out_ty, expr.span))
+            (ExprKind::Call { fun, args }, ret)
         },
         ast::ExprKind::Literal(lit) => {
             let base = ctx.infer_ctx.add_scalar(&lit);
             let out = ctx.infer_ctx.insert(base, expr.span);
 
-            InferNode::new(Expr::Literal(lit), (out, expr.span))
+            (ExprKind::Literal(lit), out)
         },
         ast::ExprKind::Access { ref base, field } => {
-            let base = build_expr(base, ctx, locals_lookup, out);
+            let base = Box::new(build_expr(base, ctx, locals_lookup, out));
 
             let symbol = match field.kind {
                 ast::FieldKind::Symbol(symbol) => symbol,
@@ -749,41 +791,44 @@ fn build_expr<'a, 'b>(
 
             let out = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
             ctx.infer_ctx.add_constraint(Constraint::Access {
-                record: base.type_id(),
+                record: base.ty,
                 field,
                 out,
             });
 
-            InferNode::new(Expr::Access { base, field }, (out, expr.span))
+            (ExprKind::Access { base, field }, out)
         },
         ast::ExprKind::Variable(var) => {
             if let Some((var, local)) = locals_lookup.get(&var) {
-                InferNode::new(Expr::Local(*var), (*local, expr.span))
+                (ExprKind::Local(*var), *local)
             } else if let Some((id, ty)) = ctx.sig.args.get(&var) {
-                InferNode::new(Expr::Arg(*id), (*ty, expr.span))
-            } else if let Some(fun) = ctx.functions.get(&var) {
-                let origin = fun.id.into();
+                (ExprKind::Arg(*id), *ty)
+            } else if let Some(fun) = ctx.functions_lookup.get(&var) {
+                let origin = (*fun).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
-                InferNode::new(Expr::Function(origin), (ty, expr.span))
+                (ExprKind::Function(origin), ty)
             } else if let Some((var, ty)) = ctx.globals_lookup.get(&var) {
-                InferNode::new(Expr::Global(*var), (*ty, expr.span))
-            } else if let Some(constant) = ctx.constants.get(&var) {
-                InferNode::new(Expr::Constant(constant.id), (constant.ty, expr.span))
+                (ExprKind::Global(*var), *ty)
+            } else if let Some(constant) = ctx.constants_lookup.get(&var) {
+                (
+                    ExprKind::Constant(*constant),
+                    ctx.module.constants[*constant as usize].ty,
+                )
             } else if let Some(hir::FnSig { ident, .. }) = ctx.externs.get(&var) {
                 let origin = (*ident).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
-                InferNode::new(Expr::Function(origin), (ty, expr.span))
+                (ExprKind::Function(origin), ty)
             } else {
                 ctx.errors
                     .push(Error::custom(String::from("Variable not found")).with_span(var.span));
 
                 let local_id = ctx.locals.len() as u32;
 
-                ctx.locals.push((local_id, empty));
-                locals_lookup.insert(ctx.rodeo.get_or_intern("Error"), (local_id, empty));
-                InferNode::new(Expr::Local(local_id), (empty, expr.span))
+                ctx.locals.push((var, empty));
+                locals_lookup.insert(*var, (local_id, empty));
+                (ExprKind::Local(local_id), empty)
             }
         },
         ast::ExprKind::If {
@@ -800,17 +845,16 @@ fn build_expr<'a, 'b>(
                 expr.span,
             );
 
-            let condition = build_expr(condition, ctx, locals_lookup, out);
+            let condition = Box::new(build_expr(condition, ctx, locals_lookup, out));
 
             let boolean = {
                 let base = ctx
                     .infer_ctx
                     .add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
-                ctx.infer_ctx
-                    .insert(TypeInfo::Scalar(base), condition.span())
+                ctx.infer_ctx.insert(TypeInfo::Scalar(base), condition.span)
             };
 
-            if let Err(e) = ctx.infer_ctx.unify(condition.type_id(), boolean) {
+            if let Err(e) = ctx.infer_ctx.unify(condition.ty, boolean) {
                 ctx.errors.push(e)
             };
 
@@ -818,46 +862,45 @@ fn build_expr<'a, 'b>(
 
             let reject = build_block(reject, ctx, locals_lookup, out);
 
-            InferNode::new(
-                Expr::If {
+            (
+                ExprKind::If {
                     condition,
                     accept,
                     reject,
                 },
-                (out, expr.span),
+                out,
             )
         },
         ast::ExprKind::Return(ref ret_expr) => {
             let ret_expr = ret_expr
                 .as_ref()
-                .map(|e| build_expr(e, ctx, locals_lookup, out));
+                .map(|e| Box::new(build_expr(e, ctx, locals_lookup, out)));
 
             if let Err(e) = ctx.infer_ctx.unify(
                 ctx.sig.ret,
-                ret_expr.as_ref().map(|e| e.type_id()).unwrap_or(empty),
+                ret_expr.as_ref().map(|e| e.ty).unwrap_or(empty),
             ) {
                 ctx.errors.push(e)
             };
 
-            InferNode::new(Expr::Return(ret_expr), (empty, expr.span))
+            (ExprKind::Return(ret_expr), empty)
         },
         ast::ExprKind::Index {
             ref base,
             ref index,
         } => {
-            let base = build_expr(base, ctx, locals_lookup, out);
-
-            let index = build_expr(index, ctx, locals_lookup, out);
+            let base = Box::new(build_expr(base, ctx, locals_lookup, out));
+            let index = Box::new(build_expr(index, ctx, locals_lookup, out));
 
             let out = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
 
             ctx.infer_ctx.add_constraint(Constraint::Index {
                 out,
-                base: base.type_id(),
-                index: index.type_id(),
+                base: base.ty,
+                index: index.ty,
             });
 
-            InferNode::new(Expr::Index { base, index }, (out, expr.span))
+            (ExprKind::Index { base, index }, out)
         },
         ast::ExprKind::TupleConstructor(ref elements) => {
             let elements: Vec<_> = elements
@@ -865,17 +908,23 @@ fn build_expr<'a, 'b>(
                 .map(|arg| build_expr(arg, ctx, locals_lookup, out))
                 .collect();
 
-            let ids = elements.iter().map(|ele| ele.type_id()).collect();
+            let ids = elements.iter().map(|ele| ele.ty).collect();
 
             let out = ctx.infer_ctx.insert(TypeInfo::Tuple(ids), expr.span);
 
-            InferNode::new(Expr::Constructor { elements }, (out, expr.span))
+            (ExprKind::Constructor { elements }, out)
         },
         ast::ExprKind::Block(ref block) => {
             let block = build_block(block, ctx, locals_lookup, out);
 
-            InferNode::new(Expr::Block(block), (out, expr.span))
+            (ExprKind::Block(block), out)
         },
+    };
+
+    Expr {
+        kind,
+        ty,
+        span: expr.span,
     }
 }
 

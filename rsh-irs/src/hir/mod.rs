@@ -17,7 +17,6 @@ pub struct Global {
 
 #[derive(Debug)]
 pub struct Constant<'a> {
-    pub id: u32,
     pub ident: Ident,
     pub init: &'a ast::Expr,
     pub ty: TypeId,
@@ -26,7 +25,6 @@ pub struct Constant<'a> {
 
 #[derive(Debug)]
 pub struct Function<'a> {
-    pub id: u32,
     pub generics: Vec<(Ident, TraitBound)>,
     pub sig: FnSig,
     pub body: &'a Block,
@@ -53,19 +51,25 @@ pub struct EntryPoint<'a> {
 
 #[derive(Debug)]
 pub struct Struct {
-    pub id: u32,
     pub ident: Ident,
-    pub fields: FastHashMap<Symbol, (u32, TypeId)>,
+    pub fields: Vec<StructField>,
     pub ty: TypeId,
     pub span: Span,
 }
 
 #[derive(Debug)]
+pub struct StructField {
+    pub ident: Ident,
+    pub ty: TypeId,
+    pub span: Span,
+}
+
+#[derive(Debug, Default)]
 pub struct Module<'a> {
-    pub structs: FastHashMap<Symbol, Struct>,
-    pub globals: FastHashMap<Symbol, Global>,
-    pub functions: FastHashMap<Symbol, Function<'a>>,
-    pub constants: FastHashMap<Symbol, Constant<'a>>,
+    pub structs: Vec<Struct>,
+    pub globals: Vec<Global>,
+    pub functions: Vec<Function<'a>>,
+    pub constants: Vec<Constant<'a>>,
     pub externs: FastHashMap<Symbol, FnSig>,
 
     pub entry_points: Vec<EntryPoint<'a>>,
@@ -79,17 +83,10 @@ impl<'a> Module<'a> {
         let mut errors = vec![];
 
         let mut infer_ctx = InferContext::new(rodeo);
+        let mut module = Module::default();
 
-        let mut globals = FastHashMap::default();
-        let mut structs = FastHashMap::default();
-        let mut functions = FastHashMap::default();
-        let mut constants = FastHashMap::default();
-        let mut externs = FastHashMap::default();
+        let mut structs_lookup = FastHashMap::default();
         let mut names = FastHashMap::default();
-        let mut entry_points = Vec::new();
-
-        let mut struct_id = 0;
-        let mut func_id = 0;
 
         for item in items {
             if let Some(span) = names.get(&item.ident.symbol) {
@@ -106,11 +103,11 @@ impl<'a> Module<'a> {
                 infer_ctx: &mut infer_ctx,
                 rodeo,
                 errors: &mut errors,
+                module: &mut module,
 
-                struct_id: &mut struct_id,
                 generics: &[],
                 items,
-                structs: &mut structs,
+                structs_lookup: &mut structs_lookup,
             };
 
             match item.kind {
@@ -133,7 +130,7 @@ impl<'a> Module<'a> {
                         }
                     }
 
-                    globals.insert(item.ident.symbol, Global {
+                    module.globals.push(Global {
                         ident: item.ident,
                         modifier: binding,
                         ty,
@@ -146,11 +143,11 @@ impl<'a> Module<'a> {
                         infer_ctx: &mut infer_ctx,
                         rodeo,
                         errors: &mut errors,
+                        module: &mut module,
 
-                        struct_id: &mut struct_id,
                         generics: &generics.params,
                         items,
-                        structs: &mut structs,
+                        structs_lookup: &mut structs_lookup,
                     };
 
                     let ret = sig
@@ -196,12 +193,10 @@ impl<'a> Module<'a> {
                         span: Span::Range(item_start.into(), sig_end.into()),
                     };
 
-                    func_id += 1;
+                    let id = module.functions.len() as u32;
+                    infer_ctx.add_function(FunctionOrigin::Local(id), sig.clone());
 
-                    infer_ctx.add_function(FunctionOrigin::Local(func_id), sig.clone());
-
-                    functions.insert(item.ident.symbol, Function {
-                        id: func_id,
+                    module.functions.push(Function {
                         generics,
                         sig,
                         body: &fun.body,
@@ -209,11 +204,9 @@ impl<'a> Module<'a> {
                     });
                 },
                 ast::ItemKind::Const(ref constant) => {
-                    let id = constants.len() as u32;
                     let ty = build_ast_ty(&constant.ty, &mut ctx, 0);
 
-                    constants.insert(item.ident.symbol, Constant {
-                        id,
+                    module.constants.push(Constant {
                         ident: item.ident,
                         ty,
                         init: &constant.init,
@@ -224,7 +217,7 @@ impl<'a> Module<'a> {
                     let item_start = item.span.as_range().map(|range| range.start).unwrap_or(0);
                     let sig_end = fun.sig.span.as_range().map(|range| range.end).unwrap_or(0);
 
-                    entry_points.push(EntryPoint {
+                    module.entry_points.push(EntryPoint {
                         ident: item.ident,
                         stage,
                         header_span: Span::Range(item_start.into(), sig_end.into()),
@@ -260,24 +253,13 @@ impl<'a> Module<'a> {
 
                     infer_ctx.add_function(FunctionOrigin::External(item.ident), sig.clone());
 
-                    externs.insert(item.ident.symbol, sig);
+                    module.externs.insert(item.ident.symbol, sig);
                 },
             }
         }
 
         if errors.is_empty() {
-            Ok((
-                Module {
-                    functions,
-                    globals,
-                    structs,
-                    constants,
-                    externs,
-
-                    entry_points,
-                },
-                infer_ctx,
-            ))
+            Ok((module, infer_ctx))
         } else {
             Err(errors)
         }
@@ -289,9 +271,9 @@ struct TypeBuilderCtx<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
     items: &'a [ast::Item],
     errors: &'a mut Vec<Error>,
+    module: &'a mut Module<'b>,
 
-    structs: &'a mut FastHashMap<Symbol, Struct>,
-    struct_id: &'a mut u32,
+    structs_lookup: &'a mut FastHashMap<Symbol, u32>,
     generics: &'a [ast::GenericParam],
 }
 
@@ -327,51 +309,58 @@ fn build_struct<'a, 'b>(
         return ctx.infer_ctx.insert(TypeInfo::Empty, span);
     }
 
-    if let Some(ty) = ctx.structs.get(&ident) {
-        return ty.ty;
+    if let Some(id) = ctx.structs_lookup.get(&ident).copied() {
+        return ctx.module.structs[id as usize].ty;
     }
 
-    let mut resolved_fields = FastHashMap::default();
+    let mut resolved_fields = Vec::new();
 
     match kind {
         ast::StructKind::Struct(fields) => {
-            for (pos, field) in fields.iter().enumerate() {
+            for field in fields.iter() {
                 let ty = build_ast_ty(&field.ty, ctx, iter + 1);
 
-                resolved_fields.insert(field.ident.symbol, (pos as u32, ty));
+                resolved_fields.push(StructField {
+                    ident: field.ident,
+                    ty,
+                    span: field.span,
+                });
             }
         },
         ast::StructKind::Tuple(fields) => {
-            for (pos, ty) in fields.iter().enumerate() {
-                let ty = build_ast_ty(&ty, ctx, iter + 1);
+            for (pos, field) in fields.iter().enumerate() {
+                let ty = build_ast_ty(&field, ctx, iter + 1);
 
                 let symbol = ctx.rodeo.get_or_intern(&pos.to_string());
-                resolved_fields.insert(symbol, (pos as u32, ty));
+                resolved_fields.push(StructField {
+                    ident: Ident {
+                        symbol,
+                        span: field.span,
+                    },
+                    ty,
+                    span: field.span,
+                });
             }
         },
         ast::StructKind::Unit => {},
     }
 
-    let id = *ctx.struct_id;
+    let id = ctx.module.structs.len() as u32;
     let ty = ctx.infer_ctx.insert(TypeInfo::Struct(id), span);
     ctx.infer_ctx.add_struct(
         id,
         resolved_fields
-            .clone()
-            .into_iter()
-            .map(|(name, (_, ty))| (name, ty))
+            .iter()
+            .map(|field| (field.ident.symbol, field.ty))
             .collect(),
     );
 
-    ctx.structs.insert(ident.symbol, Struct {
+    ctx.module.structs.push(Struct {
         ident,
         fields: resolved_fields,
         ty,
-        id,
         span,
     });
-
-    *ctx.struct_id += 1;
 
     ty
 }
@@ -397,8 +386,8 @@ fn build_ast_ty<'a, 'b>(ty: &ast::Ty, ctx: &mut TypeBuilderCtx<'a, 'b>, iter: us
 
                 ctx.infer_ctx
                     .insert(TypeInfo::Generic(pos as u32, bound), gen.span)
-            } else if let Some(ty) = ctx.structs.get(&name) {
-                ty.ty
+            } else if let Some(id) = ctx.structs_lookup.get(&name).copied() {
+                ctx.module.structs[id as usize].ty
             } else if let Some((kind, ident, span)) =
                 ctx.items.iter().find_map(|item| match item.kind {
                     ast::ItemKind::Struct(ref kind) if item.ident == name => {

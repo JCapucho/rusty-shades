@@ -1,25 +1,30 @@
 use crate::{
-    common::{src::Span, FastHashMap},
-    node::SrcNode,
-    thir::{Function, TypedNode},
+    common::src::Span,
+    thir::{Expr, Function},
     ty::{Type, TypeKind},
 };
 
 pub fn collect(
-    hir_functions: &FastHashMap<u32, SrcNode<Function>>,
+    hir_functions: &Vec<Function>,
     called_fun: &Type,
     ret: &Type,
-    args: &[TypedNode],
+    args: &[Expr<Type>],
     generics: &[Type],
 ) -> Vec<Type> {
-    let origin = match instantiate_ty(called_fun, generics).kind {
-        TypeKind::FnDef(origin) => origin,
-        _ => unreachable!(),
+    let origin = match instantiate_ty(called_fun, generics) {
+        Type {
+            kind: TypeKind::FnDef(origin),
+            ..
+        } => origin,
+        ref ty => {
+            println!("Not a function: {:?}", ty);
+            unreachable!()
+        },
     };
 
     match origin {
         rsh_common::FunctionOrigin::Local(id) => {
-            let called_fun = hir_functions.get(&id).unwrap();
+            let called_fun = &hir_functions[*id as usize];
 
             let mut called_generics = vec![
                 Type {
@@ -31,7 +36,7 @@ pub fn collect(
 
             for (a, b) in called_fun.sig.args.iter().zip(args.iter()) {
                 if let TypeKind::Generic(pos) = a.kind {
-                    called_generics[pos as usize] = instantiate_ty(b.ty(), generics).clone();
+                    called_generics[pos as usize] = instantiate_ty(&b.ty, generics).clone();
                 }
             }
 
