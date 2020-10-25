@@ -9,7 +9,7 @@ use crate::{
     hir,
     infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo},
     node::{Node, SrcNode},
-    ty::Type,
+    ty::{Type, TypeKind},
     AssignTarget,
 };
 
@@ -67,7 +67,7 @@ pub struct Global {
 #[derive(Debug)]
 pub struct Struct {
     pub name: Symbol,
-    pub fields: FastHashMap<Symbol, (u32, SrcNode<Type>)>,
+    pub fields: FastHashMap<Symbol, (u32, Type)>,
 }
 
 #[derive(Debug)]
@@ -221,7 +221,7 @@ impl InferNode {
             )),
         };
 
-        let ty = reconstruct(ty, span, infer_ctx, errors).into_inner();
+        let ty = reconstruct(ty, span, infer_ctx, errors);
 
         TypedNode::new(node, (ty, span))
     }
@@ -251,8 +251,7 @@ impl Module {
                     Global {
                         name: *name,
                         modifier: global.modifier,
-                        ty: reconstruct(global.ty, global.span, &mut scoped, &mut errors)
-                            .into_inner(),
+                        ty: reconstruct(global.ty, global.span, &mut scoped, &mut errors),
                     },
                     global.span,
                 );
@@ -289,7 +288,7 @@ impl Module {
                 Err(e) => errors.push(e),
             };
 
-            let ret = reconstruct(func.sig.ret, func.span, &mut scoped, &mut errors).into_inner();
+            let ret = reconstruct(func.sig.ret, func.span, &mut scoped, &mut errors);
 
             let args = {
                 let mut sorted: Vec<_> = func.sig.args.values().collect();
@@ -297,16 +296,14 @@ impl Module {
 
                 sorted
                     .into_iter()
-                    .map(|(_, ty)| {
-                        reconstruct(*ty, Span::None, &mut scoped, &mut errors).into_inner()
-                    })
+                    .map(|(_, ty)| reconstruct(*ty, Span::None, &mut scoped, &mut errors))
                     .collect()
             };
 
             let locals = locals
                 .into_iter()
                 .map(|(id, ty)| {
-                    let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors).into_inner();
+                    let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors);
 
                     (id, ty)
                 })
@@ -373,8 +370,7 @@ impl Module {
                 let locals = locals
                     .iter()
                     .map(|(id, ty)| {
-                        let ty =
-                            reconstruct(*ty, Span::None, &mut scoped, &mut errors).into_inner();
+                        let ty = reconstruct(*ty, Span::None, &mut scoped, &mut errors);
 
                         (*id, ty)
                     })
@@ -471,7 +467,7 @@ impl Module {
 
                 let constant = Constant {
                     name: *key,
-                    ty: ty.into_inner(),
+                    ty,
                     expr: expr.into_expr(&mut scoped, &mut errors),
                 };
 
@@ -888,12 +884,15 @@ fn reconstruct(
     span: Span,
     infer_ctx: &mut InferContext,
     errors: &mut Vec<Error>,
-) -> SrcNode<Type> {
+) -> Type {
     match infer_ctx.reconstruct(ty, span) {
         Ok(t) => t,
         Err(e) => {
             errors.push(e);
-            SrcNode::new(Type::Empty, infer_ctx.span(ty))
+            Type {
+                kind: TypeKind::Empty,
+                span: infer_ctx.span(ty),
+            }
         },
     }
 }

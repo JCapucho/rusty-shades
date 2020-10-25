@@ -3,7 +3,7 @@ use crate::{
     ir::ConstantInner,
     node::SrcNode,
     thir::{Expr, Statement, TypedNode},
-    ty::Type,
+    ty::{Type, TypeKind},
     AssignTarget,
 };
 
@@ -75,9 +75,9 @@ impl TypedNode {
             Expr::Call { .. } => unreachable!(),
             Expr::Literal(lit) => Ok(ConstantInner::Scalar(*lit)),
             Expr::Access { base, field } => {
-                let fields: Vec<_> = match base.ty() {
-                    Type::Struct(_) | Type::Tuple(_) => todo!(),
-                    Type::Vector(_, _) => {
+                let fields: Vec<_> = match base.ty().kind {
+                    TypeKind::Struct(_) | TypeKind::Tuple(_) => todo!(),
+                    TypeKind::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
                         rodeo
@@ -111,11 +111,11 @@ impl TypedNode {
             Expr::Constructor { elements } => {
                 let elements: Vec<_> = elements
                     .iter()
-                    .map(|ele| Ok((ele.solve(get_constant, locals, rodeo)?, ele.ty())))
+                    .map(|ele| Ok((ele.solve(get_constant, locals, rodeo)?, &ele.ty().kind)))
                     .collect::<Result<_, Error>>()?;
 
-                Ok(match self.ty() {
-                    Type::Vector(_, _) => {
+                Ok(match self.ty().kind {
+                    TypeKind::Vector(_, _) => {
                         if elements.len() == 1 {
                             match elements[0].0 {
                                 ConstantInner::Scalar(lit) => {
@@ -133,7 +133,7 @@ impl TypedNode {
                                         data[index] = lit;
                                         index += 1;
                                     },
-                                    (ConstantInner::Vector(vector), Type::Vector(_, size)) => {
+                                    (ConstantInner::Vector(vector), TypeKind::Vector(_, size)) => {
                                         data[index..(*size as usize + index)]
                                             .clone_from_slice(&vector[..*size as usize]);
                                         index += *size as usize;
@@ -145,7 +145,7 @@ impl TypedNode {
                             ConstantInner::Vector(data)
                         }
                     },
-                    Type::Matrix { .. } => {
+                    TypeKind::Matrix { .. } => {
                         if elements.len() == 1 {
                             match elements[0].0 {
                                 ConstantInner::Vector(data) => ConstantInner::Matrix([
@@ -161,12 +161,15 @@ impl TypedNode {
 
                             for ele in elements.into_iter() {
                                 match ele {
-                                    (ConstantInner::Vector(vector), Type::Vector(_, size)) => {
+                                    (ConstantInner::Vector(vector), TypeKind::Vector(_, size)) => {
                                         data[index..(*size as usize + index)]
                                             .clone_from_slice(&vector[..*size as usize]);
                                         index += *size as usize;
                                     },
-                                    (ConstantInner::Matrix(matrix), Type::Matrix { rows, .. }) => {
+                                    (
+                                        ConstantInner::Matrix(matrix),
+                                        TypeKind::Matrix { rows, .. },
+                                    ) => {
                                         for i in 0..*rows as usize {
                                             data[index + i * 4] = matrix[i];
                                             data[index + i * 4 + 1] = matrix[i + 1];

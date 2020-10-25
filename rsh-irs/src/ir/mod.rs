@@ -5,7 +5,7 @@ use crate::{
     },
     node::{Node, SrcNode},
     thir,
-    ty::Type,
+    ty::{Type, TypeKind},
     AssignTarget,
 };
 use petgraph::graph::NodeIndex as GraphIndex;
@@ -347,10 +347,7 @@ impl thir::Struct {
 
         Struct {
             name: self.name,
-            fields: fields
-                .into_iter()
-                .map(|(_, name, ty)| (name, ty.into_inner()))
-                .collect(),
+            fields: fields.into_iter().map(|(_, name, ty)| (name, ty)).collect(),
         }
     }
 }
@@ -416,8 +413,8 @@ impl SrcNode<thir::Function> {
             .args
             .into_iter()
             .map(|ty| monomorphize::instantiate_ty(&ty, &generics).clone())
-            .filter(|ty| match ty {
-                Type::Empty | Type::FnDef(_) => false,
+            .filter(|ty| match ty.kind {
+                TypeKind::Empty | TypeKind::FnDef(_) => false,
                 _ => true,
             })
             .collect();
@@ -571,17 +568,17 @@ impl thir::TypedNode {
                 let mut constructed_args = vec![];
 
                 for arg in args {
-                    match arg.ty() {
-                        Type::Empty | Type::Generic(_) | Type::FnDef(_) => continue,
+                    match arg.ty().kind {
+                        TypeKind::Empty | TypeKind::Generic(_) | TypeKind::FnDef(_) => continue,
                         _ => {},
                     }
 
                     constructed_args.push(arg.build_ir(node, ctx, sta_builder, body, nested)?);
                 }
 
-                match monomorphize::instantiate_ty(fun.ty(), sta_builder.generics) {
-                    Type::FnDef(origin) => {
-                        let origin = (*origin).map_local(|id| {
+                match monomorphize::instantiate_ty(fun.ty(), sta_builder.generics).kind {
+                    TypeKind::FnDef(origin) => {
+                        let origin = origin.map_local(|id| {
                             let (id, called_node) = ctx
                                 .hir_functions
                                 .get(&id)
@@ -614,12 +611,12 @@ impl thir::TypedNode {
             },
             thir::Expr::Literal(lit) => Expr::Literal(lit),
             thir::Expr::Access { base, field } => {
-                let fields = match base.ty() {
-                    Type::Struct(id) => {
-                        vec![ctx.structs.get(id).unwrap().fields.get(&field).unwrap().0]
+                let fields = match base.ty().kind {
+                    TypeKind::Struct(id) => {
+                        vec![ctx.structs.get(&id).unwrap().fields.get(&field).unwrap().0]
                     },
-                    Type::Tuple(_) => vec![ctx.rodeo.resolve(&field).parse().unwrap()],
-                    Type::Vector(_, _) => {
+                    TypeKind::Tuple(_) => vec![ctx.rodeo.resolve(&field).parse().unwrap()],
+                    TypeKind::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
                         ctx.rodeo
@@ -649,8 +646,8 @@ impl thir::TypedNode {
                     )?);
                 }
 
-                match ty {
-                    Type::Vector(_, size) => {
+                match ty.kind {
+                    TypeKind::Vector(_, size) => {
                         if constructed_elements.len() == 1 {
                             // # Small optimization
                             // previously a single value constructor would get the expression
@@ -679,9 +676,9 @@ impl thir::TypedNode {
                             let mut tmp = vec![];
 
                             for ele in constructed_elements.into_iter() {
-                                match *ele.attr() {
-                                    Type::Scalar(_) => tmp.push(ele),
-                                    Type::Vector(scalar, size) => {
+                                match ele.attr().kind {
+                                    TypeKind::Scalar(_) => tmp.push(ele),
+                                    TypeKind::Vector(scalar, size) => {
                                         // see Small optimization
                                         let local = sta_builder.locals.len() as u32;
                                         let ty = ele.attr().clone();
@@ -701,7 +698,10 @@ impl thir::TypedNode {
                                                     ),
                                                     fields: vec![i as u32],
                                                 },
-                                                Type::Scalar(scalar),
+                                                Type {
+                                                    kind: TypeKind::Scalar(scalar),
+                                                    span: Span::None,
+                                                },
                                             ))
                                         }
                                     },
@@ -712,7 +712,7 @@ impl thir::TypedNode {
                             constructed_elements = tmp;
                         }
                     },
-                    Type::Matrix { rows, .. } => {
+                    TypeKind::Matrix { rows, .. } => {
                         if constructed_elements.len() == 1 {
                             // Small optimization
                             // see the comment on the vector
@@ -733,9 +733,9 @@ impl thir::TypedNode {
                             let mut tmp = vec![];
 
                             for ele in constructed_elements.into_iter() {
-                                match *ele.attr() {
-                                    Type::Vector(_, _) => tmp.push(ele),
-                                    Type::Matrix { rows, columns } => {
+                                match ele.attr().kind {
+                                    TypeKind::Vector(_, _) => tmp.push(ele),
+                                    TypeKind::Matrix { rows, columns } => {
                                         // see the small optimization on vec
                                         let local = sta_builder.locals.len() as u32;
                                         let ty = ele.attr().clone();
@@ -755,7 +755,13 @@ impl thir::TypedNode {
                                                     ),
                                                     fields: vec![i as u32],
                                                 },
-                                                Type::Vector(ScalarType::Float, columns),
+                                                Type {
+                                                    kind: TypeKind::Vector(
+                                                        ScalarType::Float,
+                                                        columns,
+                                                    ),
+                                                    span: Span::None,
+                                                },
                                             ))
                                         }
                                     },
@@ -766,7 +772,7 @@ impl thir::TypedNode {
                             constructed_elements = tmp;
                         }
                     },
-                    Type::Tuple(_) => {},
+                    TypeKind::Tuple(_) => {},
                     _ => unreachable!(),
                 }
 
@@ -932,5 +938,5 @@ fn block_returns(block: &[thir::Statement<(Type, Span)>], ty: &Type) -> bool {
         }
     }
 
-    *ty == Type::Empty
+    ty.kind == TypeKind::Empty
 }

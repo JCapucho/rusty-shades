@@ -1,5 +1,5 @@
 use super::{Constant, EntryPoint, Expr, Function, Global, Module, Statement, Struct, TypedNode};
-use crate::ty::Type;
+use crate::ty::{Type, TypeKind};
 use rsh_common::{src::Span, Rodeo};
 use std::fmt;
 
@@ -27,7 +27,7 @@ impl<'a> HirPrettyPrinter<'a> {
                         "   {}|{}: {},",
                         self.rodeo.resolve(field),
                         pos,
-                        ty.inner().display(self.rodeo)
+                        ty.display(self.rodeo)
                     )?;
                 }
 
@@ -229,10 +229,10 @@ impl<'a> HirPrettyPrinter<'a> {
                         self.printer.rodeo.resolve(field)
                     )?,
                     Expr::Constructor { elements } => {
-                        match self.expr.ty() {
-                            crate::ty::Type::Vector(_, size) => write!(f, "v{}(", *size as u8)?,
-                            crate::ty::Type::Matrix { rows, .. } => write!(f, "m{}(", *rows as u8)?,
-                            crate::ty::Type::Tuple(_) => write!(f, "(")?,
+                        match self.expr.ty().kind {
+                            TypeKind::Vector(_, size) => write!(f, "v{}(", size)?,
+                            TypeKind::Matrix { rows, .. } => write!(f, "m{}(", rows)?,
+                            TypeKind::Tuple(_) => write!(f, "(")?,
                             _ => unreachable!(),
                         }
 

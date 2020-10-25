@@ -6,8 +6,7 @@ use crate::{
         VectorSize,
     },
     hir::FnSig,
-    node::SrcNode,
-    ty::Type,
+    ty::{Type, TypeKind},
 };
 use std::fmt;
 
@@ -748,11 +747,7 @@ impl<'a> InferContext<'a> {
         })
     }
 
-    fn reconstruct_inner(
-        &self,
-        iter: usize,
-        id: TypeId,
-    ) -> Result<SrcNode<Type>, ReconstructError> {
+    fn reconstruct_inner(&self, iter: usize, id: TypeId) -> Result<Type, ReconstructError> {
         const MAX_RECONSTRUCTION_DEPTH: usize = 1024;
         if iter > MAX_RECONSTRUCTION_DEPTH {
             return Err(ReconstructError::Recursive);
@@ -761,20 +756,20 @@ impl<'a> InferContext<'a> {
         use TypeInfo::*;
         let ty = match self.get(id) {
             Unknown => return Err(ReconstructError::Unknown(id)),
-            Ref(id) => self.reconstruct_inner(iter + 1, id)?.into_inner(),
-            Empty => Type::Empty,
-            Scalar(a) => Type::Scalar(
+            Ref(id) => self.reconstruct_inner(iter + 1, id)?.kind,
+            Empty => TypeKind::Empty,
+            Scalar(a) => TypeKind::Scalar(
                 self.reconstruct_scalar(a)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
-            Struct(id) => Type::Struct(id),
-            TypeInfo::Vector(scalar, size) => Type::Vector(
+            Struct(id) => TypeKind::Struct(id),
+            TypeInfo::Vector(scalar, size) => TypeKind::Vector(
                 self.reconstruct_scalar(scalar)
                     .map_err(|_| ReconstructError::Unknown(id))?,
                 self.reconstruct_size(size)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             ),
-            Matrix { columns, rows } => Type::Matrix {
+            Matrix { columns, rows } => TypeKind::Matrix {
                 columns: self
                     .reconstruct_size(columns)
                     .map_err(|_| ReconstructError::Unknown(id))?,
@@ -782,19 +777,22 @@ impl<'a> InferContext<'a> {
                     .reconstruct_size(rows)
                     .map_err(|_| ReconstructError::Unknown(id))?,
             },
-            Tuple(ids) => Type::Tuple(
+            Tuple(ids) => TypeKind::Tuple(
                 ids.into_iter()
                     .map(|id| self.reconstruct_inner(iter + 1, id))
                     .collect::<Result<_, _>>()?,
             ),
-            Generic(gen, _) => Type::Generic(gen),
-            FnDef(origin) => Type::FnDef(origin),
+            Generic(gen, _) => TypeKind::Generic(gen),
+            FnDef(origin) => TypeKind::FnDef(origin),
         };
 
-        Ok(SrcNode::new(ty, self.span(id)))
+        Ok(Type {
+            kind: ty,
+            span: self.span(id),
+        })
     }
 
-    pub fn reconstruct(&self, id: TypeId, span: Span) -> Result<SrcNode<Type>, Error> {
+    pub fn reconstruct(&self, id: TypeId, span: Span) -> Result<Type, Error> {
         self.reconstruct_inner(0, id).map_err(|err| match err {
             ReconstructError::Recursive => {
                 Error::custom(String::from("Recursive type")).with_span(self.span(id))

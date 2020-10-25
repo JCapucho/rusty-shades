@@ -7,7 +7,7 @@ use naga::{
 use rsh_common::{EntryPointStage, Rodeo};
 use rsh_irs::{
     ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
-    ty::Type,
+    ty::TypeKind,
     AssignTarget,
 };
 
@@ -71,8 +71,8 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
 
         let inner = match constant.inner {
             ir::ConstantInner::Scalar(scalar) => scalar.into(),
-            ir::ConstantInner::Vector(vec) => match constant.ty {
-                Type::Vector(base, size) => {
+            ir::ConstantInner::Vector(vec) => match constant.ty.kind {
+                TypeKind::Vector(base, size) => {
                     let mut elements = Vec::with_capacity(size as usize);
                     let ty = ctx.types.fetch_or_append(NagaType {
                         name: None,
@@ -92,8 +92,8 @@ pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
                 },
                 _ => unreachable!(),
             },
-            ir::ConstantInner::Matrix(mat) => match constant.ty {
-                Type::Matrix { rows, columns } => {
+            ir::ConstantInner::Matrix(mat) => match constant.ty.kind {
+                TypeKind::Matrix { rows, columns } => {
                     let mut elements = Vec::with_capacity(rows as usize * columns as usize);
                     let ty = ctx.types.fetch_or_append(NagaType {
                         name: None,
@@ -178,8 +178,8 @@ fn build_fn<'a>(
 
     let parameter_types = fun.args.iter().map(|ty| build_ty(ty, ctx).0).collect();
 
-    let return_type = match fun.ret {
-        Type::Empty => None,
+    let return_type = match fun.ret.kind {
+        TypeKind::Empty => None,
         ref ty => Some(build_ty(ty, ctx).0),
     };
 
@@ -308,10 +308,10 @@ fn build_struct(strct: &Struct, name: String, ctx: &mut BuilderContext) -> (Naga
     )
 }
 
-fn build_ty(ty: &Type, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) {
+fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) {
     match ty {
-        Type::Empty | Type::FnDef(_) | Type::Generic(_) => unreachable!(),
-        Type::Scalar(scalar) => {
+        TypeKind::Empty | TypeKind::FnDef(_) | TypeKind::Generic(_) => unreachable!(),
+        TypeKind::Scalar(scalar) => {
             let (kind, width) = scalar.naga_kind_width();
 
             (
@@ -322,7 +322,7 @@ fn build_ty(ty: &Type, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) {
                 width as u32,
             )
         },
-        Type::Vector(scalar, size) => {
+        TypeKind::Vector(scalar, size) => {
             let (kind, width) = scalar.naga_kind_width();
 
             (
@@ -337,7 +337,7 @@ fn build_ty(ty: &Type, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) {
                 width as u32,
             )
         },
-        Type::Matrix { columns, rows } => (
+        TypeKind::Matrix { columns, rows } => (
             ctx.types.fetch_or_append(NagaType {
                 name: None,
                 inner: TypeInner::Matrix {
@@ -349,8 +349,8 @@ fn build_ty(ty: &Type, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) {
             }),
             4,
         ),
-        Type::Struct(id) => *ctx.structs_lookup.get(id).unwrap(),
-        Type::Tuple(ids) => {
+        TypeKind::Struct(id) => *ctx.structs_lookup.get(id).unwrap(),
+        TypeKind::Tuple(ids) => {
             let mut offset = 0;
             let mut members = Vec::with_capacity(ids.len());
 
