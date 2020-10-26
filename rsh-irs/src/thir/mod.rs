@@ -3,8 +3,8 @@ use crate::{
     common::{
         error::Error,
         src::{Span, Spanned},
-        BinaryOp, EntryPointStage, FastHashMap, FunctionOrigin, GlobalBinding, Ident, Literal,
-        Rodeo, ScalarType, Symbol, UnaryOp,
+        BinaryOp, EntryPointStage, FastHashMap, Field, FunctionOrigin, GlobalBinding, Ident,
+        Literal, ScalarType, Symbol, UnaryOp,
     },
     hir,
     infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo},
@@ -58,13 +58,13 @@ pub struct Global {
 #[derive(Debug)]
 pub struct Struct {
     pub ident: Ident,
-    pub fields: Vec<StructField>,
+    pub members: Vec<StructMember>,
     pub span: Span,
 }
 
 #[derive(Debug)]
-pub struct StructField {
-    pub ident: Ident,
+pub struct StructMember {
+    pub field: Field,
     pub ty: Type,
 }
 
@@ -140,7 +140,7 @@ pub enum ExprKind<M> {
     Literal(Literal),
     Access {
         base: Box<Expr<M>>,
-        field: Ident,
+        field: Field,
     },
     Constructor {
         elements: Vec<Expr<M>>,
@@ -263,7 +263,6 @@ impl Module {
     pub fn build<'a>(
         hir_module: &hir::Module<'a>,
         infer_ctx: &InferContext<'a>,
-        rodeo: &Rodeo,
     ) -> Result<Module, Vec<Error>> {
         let mut errors = vec![];
 
@@ -300,11 +299,11 @@ impl Module {
                 let fields = hir_module_strct
                     .fields
                     .iter()
-                    .map(|field| {
-                        let ty = reconstruct(field.ty, Span::None, &mut scoped, &mut errors);
+                    .map(|member| {
+                        let ty = reconstruct(member.ty, Span::None, &mut scoped, &mut errors);
 
-                        StructField {
-                            ident: field.ident,
+                        StructMember {
+                            field: member.field,
                             ty,
                         }
                     })
@@ -314,7 +313,7 @@ impl Module {
 
                 let strct = Struct {
                     ident: hir_module_strct.ident,
-                    fields,
+                    members: fields,
                     span: hir_module_strct.span,
                 };
 
@@ -338,7 +337,6 @@ impl Module {
 
             let mut builder = StatementBuilderCtx {
                 infer_ctx: &mut scoped,
-                rodeo,
                 errors: &mut errors,
                 module: &hir_module,
 
@@ -414,7 +412,6 @@ impl Module {
 
                 let mut builder = StatementBuilderCtx {
                     infer_ctx: &mut scoped,
-                    rodeo,
                     errors: &mut errors,
                     module: &hir_module,
 
@@ -470,7 +467,6 @@ impl Module {
 
                 let mut const_builder = StatementBuilderCtx {
                     infer_ctx: &mut scoped,
-                    rodeo,
                     errors: &mut errors,
                     module: &hir_module,
 
@@ -565,7 +561,6 @@ fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
 
 struct StatementBuilderCtx<'a, 'b> {
     infer_ctx: &'a mut InferContext<'b>,
-    rodeo: &'a Rodeo,
     errors: &'a mut Vec<Error>,
     module: &'a hir::Module<'a>,
 
@@ -778,16 +773,6 @@ fn build_expr<'a, 'b>(
         },
         ast::ExprKind::Access { ref base, field } => {
             let base = Box::new(build_expr(base, ctx, locals_lookup, out));
-
-            let symbol = match field.kind {
-                ast::FieldKind::Symbol(symbol) => symbol,
-                ast::FieldKind::Uint(pos) => ctx.rodeo.get_or_intern(&pos.to_string()),
-            };
-
-            let field = Ident {
-                symbol,
-                span: field.span,
-            };
 
             let out = ctx.infer_ctx.insert(TypeInfo::Unknown, expr.span);
             ctx.infer_ctx.add_constraint(Constraint::Access {

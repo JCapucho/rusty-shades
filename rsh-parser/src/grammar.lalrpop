@@ -1,15 +1,15 @@
 use rsh_ast::*;
 use rsh_common::{
     src::{Loc, Span, Spanned},
-    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
-    VectorSize,
+    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
+    VectorSize, Field, FieldKind
 };
 use rsh_lexer::{Token, LexerError};
 
 // TODO: Error recovery
 
 #[LALR]
-grammar<'a>(rodeo: &'a Rodeo);
+grammar;
 
 extern {
     type Location = Loc;
@@ -283,10 +283,7 @@ Ident: Ident = <l: @L> <symbol: Symbol> <r: @R> => Ident {
         span: Span::range(l,r)
     };
 
-Symbol: Symbol = {
-    "identifier" => <>,
-    "position" => rodeo.get_or_intern_static("position")
-}
+Symbol: Symbol = "identifier" => <>;
 
 GlobalBinding: GlobalBinding = {
     "position" => GlobalBinding::Position,
@@ -458,8 +455,8 @@ Field: Field = <l: @L> <kind: FieldKind> <r: @R>
     };
 
 FieldKind: FieldKind = {
-    Symbol => FieldKind::Symbol(<>),
-    Uint => FieldKind::Uint(<>),
+    Symbol => FieldKind::Named(<>),
+    Location => FieldKind::Uint(<>),
 }
 
 Call: Expr = {

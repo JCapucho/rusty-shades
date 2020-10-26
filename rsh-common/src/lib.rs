@@ -1,4 +1,6 @@
-use lasso::{Spur, ThreadedRodeo};
+pub use lasso::RodeoResolver;
+
+use lasso::{Rodeo as LassoRodeo, Spur};
 use std::{
     collections::HashMap,
     fmt,
@@ -12,7 +14,7 @@ mod naga;
 pub mod src;
 
 pub type Symbol = Spur;
-pub type Rodeo = ThreadedRodeo<Symbol, fxhash::FxBuildHasher>;
+pub type Rodeo = LassoRodeo<Symbol, fxhash::FxBuildHasher>;
 pub type Hasher = fxhash::FxBuildHasher;
 pub type FastHashMap<K, V> = HashMap<K, V, Hasher>;
 
@@ -212,10 +214,10 @@ impl FunctionOrigin {
         }
     }
 
-    pub fn display<'a>(&'a self, rodeo: &'a Rodeo) -> impl fmt::Display + 'a {
+    pub fn display<'a>(&'a self, rodeo: &'a RodeoResolver) -> impl fmt::Display + 'a {
         struct OriginDisplay<'a> {
             origin: &'a FunctionOrigin,
-            rodeo: &'a Rodeo,
+            rodeo: &'a RodeoResolver,
         }
 
         impl<'a> fmt::Display for OriginDisplay<'a> {
@@ -266,4 +268,56 @@ pub enum Binding {
     BuiltIn(BuiltIn),
     Location(u32),
     Resource { group: u32, binding: u32 },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct Field {
+    pub kind: FieldKind,
+    pub span: src::Span,
+}
+
+impl std::ops::Deref for Field {
+    type Target = FieldKind;
+
+    fn deref(&self) -> &Self::Target { &self.kind }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum FieldKind {
+    Uint(u32),
+    Named(Symbol),
+}
+
+impl FieldKind {
+    pub fn named(&self) -> Option<Symbol> {
+        match self {
+            FieldKind::Uint(_) => None,
+            FieldKind::Named(symbol) => Some(*symbol),
+        }
+    }
+
+    pub fn uint(&self) -> Option<u32> {
+        match self {
+            FieldKind::Uint(uint) => Some(*uint),
+            FieldKind::Named(_) => None,
+        }
+    }
+
+    pub fn display<'a>(&'a self, rodeo: &'a RodeoResolver) -> impl fmt::Display + 'a {
+        struct FieldDisplay<'a> {
+            field: &'a FieldKind,
+            rodeo: &'a RodeoResolver,
+        }
+
+        impl<'a> fmt::Display for FieldDisplay<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self.field {
+                    FieldKind::Uint(uint) => write!(f, "{}", uint),
+                    FieldKind::Named(ref symbol) => write!(f, "{}", self.rodeo.resolve(symbol)),
+                }
+            }
+        }
+
+        FieldDisplay { field: self, rodeo }
+    }
 }

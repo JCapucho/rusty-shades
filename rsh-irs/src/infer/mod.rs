@@ -2,8 +2,8 @@ use crate::{
     common::{
         error::Error,
         src::{Span, Spanned},
-        BinaryOp, FastHashMap, FunctionOrigin, Ident, Literal, Rodeo, ScalarType, Symbol, UnaryOp,
-        VectorSize,
+        BinaryOp, FastHashMap, Field, FieldKind, FunctionOrigin, Literal, RodeoResolver,
+        ScalarType, UnaryOp, VectorSize,
     },
     hir::FnSig,
     ty::{Type, TypeKind},
@@ -107,7 +107,7 @@ pub enum Constraint {
     Access {
         out: TypeId,
         record: TypeId,
-        field: Ident,
+        field: Field,
     },
     Index {
         out: TypeId,
@@ -134,7 +134,7 @@ pub enum TraitBound {
 #[derive(Debug)]
 pub struct InferContext<'a> {
     parent: Option<&'a Self>,
-    rodeo: &'a Rodeo,
+    rodeo: &'a RodeoResolver,
 
     scalars_id_counter: ScalarIdCounter,
     scalars: FastHashMap<ScalarId, ScalarInfo>,
@@ -149,12 +149,12 @@ pub struct InferContext<'a> {
     constraint_id_counter: ConstraintIdCounter,
     constraints: FastHashMap<ConstraintId, Constraint>,
 
-    structs: FastHashMap<u32, Vec<(Symbol, TypeId)>>,
+    structs: FastHashMap<u32, Vec<(FieldKind, TypeId)>>,
     functions: FastHashMap<FunctionOrigin, FnSig>,
 }
 
 impl<'a> InferContext<'a> {
-    pub fn new(rodeo: &'a Rodeo) -> Self {
+    pub fn new(rodeo: &'a RodeoResolver) -> Self {
         Self {
             parent: None,
             rodeo,
@@ -225,11 +225,11 @@ impl<'a> InferContext<'a> {
         id
     }
 
-    pub fn add_struct(&mut self, id: u32, fields: Vec<(Symbol, TypeId)>) {
+    pub fn add_struct(&mut self, id: u32, fields: Vec<(FieldKind, TypeId)>) {
         self.structs.insert(id, fields);
     }
 
-    pub fn get_struct(&self, id: u32) -> &Vec<(Symbol, TypeId)> {
+    pub fn get_struct(&self, id: u32) -> &Vec<(FieldKind, TypeId)> {
         self.structs
             .get(&id)
             .or_else(|| self.parent.map(|p| p.get_struct(id)))
@@ -438,9 +438,13 @@ impl<'a> InferContext<'a> {
                             "{}",
                             fields
                                 .iter()
-                                .map(|(name, ty)| format!(
+                                .map(|(field, ty)| format!(
                                     "{}: {}",
-                                    self.ctx.rodeo.resolve(name),
+                                    match field {
+                                        FieldKind::Uint(uint) => uint.to_string(),
+                                        FieldKind::Named(name) =>
+                                            self.ctx.rodeo.resolve(name).to_string(),
+                                    },
                                     self.with_id(*ty)
                                 ))
                                 .collect::<Vec<_>>()

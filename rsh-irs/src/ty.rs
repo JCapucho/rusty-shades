@@ -1,4 +1,4 @@
-use rsh_common::{src::Span, FunctionOrigin, Rodeo, ScalarType, VectorSize};
+use rsh_common::{src::Span, FunctionOrigin, RodeoResolver, ScalarType, VectorSize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -27,10 +27,10 @@ impl Type {
         matches!(self.kind,TypeKind::Scalar(_) | TypeKind::Vector(_, _))
     }
 
-    pub fn display<'a>(&'a self, rodeo: &'a Rodeo) -> impl fmt::Display + 'a {
+    pub fn display<'a>(&'a self, rodeo: &'a RodeoResolver) -> impl fmt::Display + 'a {
         struct TypeDisplay<'a> {
             ty: &'a TypeKind,
-            rodeo: &'a Rodeo,
+            rodeo: &'a RodeoResolver,
         }
 
         impl<'a> TypeDisplay<'a> {

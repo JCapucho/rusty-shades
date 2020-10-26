@@ -1,7 +1,7 @@
 use logos::{Lexer as LogosLexer, Logos};
 use rsh_common::{
     src::{Loc, Span},
-    EntryPointStage, Rodeo, ScalarType, Symbol,
+    EntryPointStage, Rodeo, RodeoResolver, ScalarType, Symbol,
 };
 use std::fmt;
 
@@ -51,7 +51,7 @@ pub struct LexerError {
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Logos)]
-#[logos(extras = &'s Rodeo)]
+#[logos(extras = &'s mut Rodeo)]
 pub enum Token {
     #[regex(r"\p{XID_Start}\p{XID_Continue}*", ident)]
     Identifier(Symbol),
@@ -205,10 +205,10 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn display<'a>(&'a self, rodeo: &'a Rodeo) -> impl fmt::Display + 'a {
+    pub fn display<'a>(&'a self, rodeo: &'a RodeoResolver) -> impl fmt::Display + 'a {
         struct TokenDisplay<'a> {
             tok: &'a Token,
-            rodeo: &'a Rodeo,
+            rodeo: &'a RodeoResolver,
         }
 
         impl<'a> fmt::Display for TokenDisplay<'a> {
@@ -313,7 +313,7 @@ impl Token {
 pub struct Lexer<'a>(LogosLexer<'a, Token>);
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str, rodeo: &'a Rodeo) -> Lexer<'a> {
+    pub fn new(input: &'a str, rodeo: &'a mut Rodeo) -> Lexer<'a> {
         Lexer(Token::lexer_with_extras(input, rodeo))
     }
 }

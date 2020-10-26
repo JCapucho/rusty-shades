@@ -1,6 +1,6 @@
 use rsh_common::{
     src::{Span, Spanned},
-    BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
+    BinaryOp, EntryPointStage, Field, GlobalBinding, Ident, Literal, ScalarType, UnaryOp,
     VectorSize,
 };
 
@@ -149,18 +149,6 @@ pub enum ExprKind {
         elements: Vec<Expr>,
     },
     TupleConstructor(Vec<Expr>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Field {
-    pub kind: FieldKind,
-    pub span: Span,
-}
-
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-pub enum FieldKind {
-    Symbol(Symbol),
-    Uint(u64),
 }
 
 #[derive(Clone, Debug, PartialEq)]

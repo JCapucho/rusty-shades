@@ -4,7 +4,7 @@ use naga::{
     MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
     StorageAccess, StructMember, Type as NagaType, TypeInner,
 };
-use rsh_common::{EntryPointStage, FastHashMap, Rodeo};
+use rsh_common::{EntryPointStage, FastHashMap, RodeoResolver};
 use rsh_irs::{
     ir::{self, EntryPoint, Expr, Function, Module, Statement, Struct, TypedExpr},
     ty::TypeKind,
@@ -20,7 +20,7 @@ pub enum GlobalLookup {
     },
 }
 
-pub fn build(module: &Module, rodeo: &Rodeo) -> NagaModule {
+pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
     let mut structs_lookup = FastHashMap::default();
 
     let mut types = Arena::new();
@@ -163,7 +163,7 @@ struct BuilderContext<'a> {
     functions: &'a Vec<Function>,
     structs_lookup: &'a mut FastHashMap<u32, (Handle<NagaType>, u32)>,
     constants_lookup: &'a mut FastHashMap<u32, Handle<Constant>>,
-    rodeo: &'a Rodeo,
+    rodeo: &'a RodeoResolver,
 }
 
 fn build_fn<'a>(
@@ -291,11 +291,11 @@ fn build_struct(strct: &Struct, name: String, ctx: &mut BuilderContext) -> (Naga
     let mut offset = 0;
     let mut members = vec![];
 
-    for member in strct.fields.iter() {
+    for member in strct.members.iter() {
         let (ty, size) = build_ty(&member.ty, ctx);
 
         members.push(StructMember {
-            name: Some(ctx.rodeo.resolve(&member.name).to_string()),
+            name: Some(member.field.display(ctx.rodeo).to_string()),
             origin: MemberOrigin::Offset(offset),
             ty,
         });

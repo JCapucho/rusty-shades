@@ -1,8 +1,8 @@
 use crate::{
     ast::{self, Block},
     common::{
-        error::Error, src::Span, EntryPointStage, FastHashMap, FunctionOrigin, GlobalBinding,
-        Ident, Rodeo, ScalarType, Symbol, VectorSize,
+        error::Error, src::Span, EntryPointStage, FastHashMap, Field, FieldKind, FunctionOrigin,
+        GlobalBinding, Ident, RodeoResolver, ScalarType, Symbol, VectorSize,
     },
     infer::{InferContext, TraitBound, TypeId, TypeInfo},
 };
@@ -52,14 +52,14 @@ pub struct EntryPoint<'a> {
 #[derive(Debug)]
 pub struct Struct {
     pub ident: Ident,
-    pub fields: Vec<StructField>,
+    pub fields: Vec<StructMember>,
     pub ty: TypeId,
     pub span: Span,
 }
 
 #[derive(Debug)]
-pub struct StructField {
-    pub ident: Ident,
+pub struct StructMember {
+    pub field: Field,
     pub ty: TypeId,
     pub span: Span,
 }
@@ -78,7 +78,7 @@ pub struct Module<'a> {
 impl<'a> Module<'a> {
     pub fn build(
         items: &'a [ast::Item],
-        rodeo: &'a Rodeo,
+        rodeo: &'a RodeoResolver,
     ) -> Result<(Module<'a>, InferContext<'a>), Vec<Error>> {
         let mut errors = vec![];
 
@@ -101,7 +101,6 @@ impl<'a> Module<'a> {
 
             let mut ctx = TypeBuilderCtx {
                 infer_ctx: &mut infer_ctx,
-                rodeo,
                 errors: &mut errors,
                 module: &mut module,
 
@@ -141,7 +140,6 @@ impl<'a> Module<'a> {
                     let sig = &fun.sig;
                     let mut ctx = TypeBuilderCtx {
                         infer_ctx: &mut infer_ctx,
-                        rodeo,
                         errors: &mut errors,
                         module: &mut module,
 
@@ -267,7 +265,6 @@ impl<'a> Module<'a> {
 }
 
 struct TypeBuilderCtx<'a, 'b> {
-    rodeo: &'a Rodeo,
     infer_ctx: &'a mut InferContext<'b>,
     items: &'a [ast::Item],
     errors: &'a mut Vec<Error>,
@@ -320,8 +317,11 @@ fn build_struct<'a, 'b>(
             for field in fields.iter() {
                 let ty = build_ast_ty(&field.ty, ctx, iter + 1);
 
-                resolved_fields.push(StructField {
-                    ident: field.ident,
+                resolved_fields.push(StructMember {
+                    field: Field {
+                        kind: FieldKind::Named(field.ident.symbol),
+                        span: field.span,
+                    },
                     ty,
                     span: field.span,
                 });
@@ -331,10 +331,9 @@ fn build_struct<'a, 'b>(
             for (pos, field) in fields.iter().enumerate() {
                 let ty = build_ast_ty(&field, ctx, iter + 1);
 
-                let symbol = ctx.rodeo.get_or_intern(&pos.to_string());
-                resolved_fields.push(StructField {
-                    ident: Ident {
-                        symbol,
+                resolved_fields.push(StructMember {
+                    field: Field {
+                        kind: FieldKind::Uint(pos as u32),
                         span: field.span,
                     },
                     ty,
@@ -351,7 +350,7 @@ fn build_struct<'a, 'b>(
         id,
         resolved_fields
             .iter()
-            .map(|field| (field.ident.symbol, field.ty))
+            .map(|field| (field.field.kind, field.ty))
             .collect(),
     );
 

@@ -2,33 +2,35 @@ use super::{
     Constant, EntryPoint, Expr, ExprKind, Function, Global, Module, Stmt, StmtKind, Struct,
 };
 use crate::ty::{Type, TypeKind};
-use rsh_common::Rodeo;
+use rsh_common::RodeoResolver;
 use std::fmt;
 
 pub struct HirPrettyPrinter<'a> {
     module: &'a Module,
-    rodeo: &'a Rodeo,
+    rodeo: &'a RodeoResolver,
 }
 
 impl<'a> HirPrettyPrinter<'a> {
-    pub fn new(module: &'a Module, rodeo: &'a Rodeo) -> Self { HirPrettyPrinter { module, rodeo } }
+    pub fn new(module: &'a Module, rodeo: &'a RodeoResolver) -> Self {
+        HirPrettyPrinter { module, rodeo }
+    }
 
     fn struct_fmt<'b>(&'b self, strct: &'b Struct) -> impl fmt::Display + 'b {
         struct StructFmt<'c> {
             strct: &'c Struct,
-            rodeo: &'c Rodeo,
+            rodeo: &'c RodeoResolver,
         }
 
         impl<'c> fmt::Display for StructFmt<'c> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 writeln!(f, "struct {} {{", self.rodeo.resolve(&self.strct.ident))?;
 
-                for field in self.strct.fields.iter() {
+                for member in self.strct.members.iter() {
                     writeln!(
                         f,
                         "   {}: {},",
-                        self.rodeo.resolve(&field.ident),
-                        field.ty.display(self.rodeo)
+                        member.field.display(self.rodeo),
+                        member.ty.display(self.rodeo)
                     )?;
                 }
 
@@ -69,7 +71,7 @@ impl<'a> HirPrettyPrinter<'a> {
     fn global_fmt<'b>(&'b self, global: &'b Global) -> impl fmt::Display + 'b {
         struct GlobalFmt<'c> {
             global: &'c Global,
-            rodeo: &'c Rodeo,
+            rodeo: &'c RodeoResolver,
         }
 
         impl<'c> fmt::Display for GlobalFmt<'c> {
@@ -232,7 +234,7 @@ impl<'a> HirPrettyPrinter<'a> {
                         f,
                         "{}.{}",
                         self.scoped(base),
-                        self.printer.rodeo.resolve(field)
+                        field.display(self.printer.rodeo)
                     )?,
                     ExprKind::Constructor { ref elements } => {
                         match self.expr.ty.kind {

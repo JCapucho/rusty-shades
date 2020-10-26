@@ -12,27 +12,6 @@ pub mod node;
 pub mod thir;
 pub mod ty;
 
-// use naga::back::spv;
-
-// #[cfg(feature = "spirv")]
-// pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
-//     let rodeo = Rodeo::with_hasher(Hasher::default());
-//     let lexer = lexer::Lexer::new(code, &rodeo);
-
-//     let ast = parser::parse(lexer, &rodeo)?;
-
-//     let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
-//     let module = thir::Module::build(&module, &infer_ctx, &rodeo)?;
-//     let module = module.build_ir(&rodeo)?;
-
-//     let naga_ir = backends::naga::build(&module, &rodeo);
-
-//     let spirv = spv::Writer::new(&naga_ir.header,
-// spv::WriterFlags::DEBUG).write(&naga_ir);
-
-//     Ok(spirv)
-// }
-
 #[derive(Debug, Copy, Clone)]
 pub enum AssignTarget {
     Local(u32),

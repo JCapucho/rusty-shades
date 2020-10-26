@@ -1,4 +1,6 @@
-use super::{Constraint, InferContext, ScalarInfo, SizeInfo, TraitBound, TypeId, TypeInfo};
+use super::{
+    Constraint, Field, FieldKind, InferContext, ScalarInfo, SizeInfo, TraitBound, TypeId, TypeInfo,
+};
 use rsh_common::error::Error;
 
 mod access;

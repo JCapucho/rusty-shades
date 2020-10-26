@@ -1,43 +1,38 @@
 use lalrpop_util::ParseError;
 use rsh_ast::Item;
 use rsh_common::{
-    error::Error,
+    error::Error as CommonError,
     src::{Loc, Span},
-    Rodeo,
+    RodeoResolver,
 };
-use rsh_lexer::{LexerError, Token};
+use rsh_lexer::{Lexer, LexerError, Token};
 use std::fmt;
 
 #[allow(clippy::all)]
 #[rustfmt::skip]
 mod grammar;
 
+pub type Error = ParseError<Loc, Token, LexerError>;
+
 // TODO: Return multiple errors
-pub fn parse<Tokens>(tokens: Tokens, rodeo: &Rodeo) -> Result<Vec<Item>, Vec<Error>>
-where
-    Tokens: Iterator<Item = Result<(Loc, Token, Loc), LexerError>>,
-{
-    grammar::ProgramParser::new()
-        .parse(rodeo, tokens)
-        .map_err(|e| vec![error_from_parser_error(e, rodeo)])
+pub fn parse(lexer: Lexer) -> Result<Vec<Item>, Error> {
+    grammar::ProgramParser::new().parse(lexer)
 }
 
-fn error_from_parser_error(e: ParseError<Loc, Token, LexerError>, rodeo: &Rodeo) -> Error {
+pub fn common_error_from_parser_error(
+    e: ParseError<Loc, Token, LexerError>,
+    rodeo: &RodeoResolver,
+) -> CommonError {
     match e {
-        ParseError::InvalidToken { location } => Error::custom(String::from(
-            "Invalid
-    token",
-        ))
-        .with_span(Span::single(location)),
+        ParseError::InvalidToken { location } => {
+            CommonError::custom(String::from("Invalid token")).with_span(Span::single(location))
+        },
         ParseError::UnrecognizedEOF { location, expected } => {
             if expected.is_empty() {
-                Error::custom(String::from(
-                    "Unexpected
-    EOF",
-                ))
-                .with_span(Span::single(location))
+                CommonError::custom(String::from("Unexpected EOF"))
+                    .with_span(Span::single(location))
             } else {
-                Error::custom(format!(
+                CommonError::custom(format!(
                     "expected one of {}, found EOF",
                     display_expected(expected)
                 ))
@@ -49,10 +44,10 @@ fn error_from_parser_error(e: ParseError<Loc, Token, LexerError>, rodeo: &Rodeo)
             expected,
         } => {
             if expected.is_empty() {
-                Error::custom(format!("Unexpected token: \"{}\"", tok.display(rodeo)))
+                CommonError::custom(format!("Unexpected token: \"{}\"", tok.display(rodeo)))
                     .with_span(Span::range(start, end))
             } else {
-                Error::custom(format!(
+                CommonError::custom(format!(
                     "expected one of {}, found \"{}\"",
                     display_expected(expected),
                     tok.display(rodeo)
@@ -62,10 +57,11 @@ fn error_from_parser_error(e: ParseError<Loc, Token, LexerError>, rodeo: &Rodeo)
         },
         ParseError::ExtraToken {
             token: (start, tok, end),
-        } => Error::custom(format!("Unexpected token: \"{}\"", tok.display(rodeo)))
+        } => CommonError::custom(format!("Unexpected token: \"{}\"", tok.display(rodeo)))
             .with_span(Span::range(start, end)),
         ParseError::User { error } => {
-            Error::custom(format!("Unexpected token: \"{}\"", error.text)).with_span(error.span)
+            CommonError::custom(format!("Unexpected token: \"{}\"", error.text))
+                .with_span(error.span)
         },
     }
 }

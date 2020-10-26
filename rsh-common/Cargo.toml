@@ -7,8 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26", optional = true }
-lasso = { git = "https://github.com/Kixiron/lasso.git", rev = "ccafec656171f78e4f46fbc266dc90a91b1fb949", features = [
-    "multi-threaded"
-] }
+lasso = { git = "https://github.com/Kixiron/lasso.git", rev = "ccafec656171f78e4f46fbc266dc90a91b1fb949" }
 fxhash = "0.2"
 codespan-reporting = { version = "0.9", optional = true }

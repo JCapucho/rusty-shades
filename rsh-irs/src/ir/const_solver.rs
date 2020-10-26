@@ -1,5 +1,5 @@
 use crate::{
-    common::{error::Error, BinaryOp, FastHashMap, Literal, Rodeo, UnaryOp},
+    common::{error::Error, BinaryOp, FastHashMap, Literal, RodeoResolver, UnaryOp},
     ir::ConstantInner,
     thir::{Block, Expr, ExprKind, StmtKind},
     ty::{Type, TypeKind},
@@ -11,7 +11,7 @@ impl Expr<Type> {
         &self,
         get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
         locals: &mut FastHashMap<u32, ConstantInner>,
-        rodeo: &Rodeo,
+        rodeo: &RodeoResolver,
     ) -> Result<ConstantInner, Error> {
         match self.kind {
             ExprKind::BinaryOp {
@@ -87,7 +87,7 @@ impl Expr<Type> {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
                         rodeo
-                            .resolve(&field)
+                            .resolve(&field.kind.named().unwrap())
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u64)
                             .collect()
@@ -238,7 +238,7 @@ impl Block<Type> {
         &self,
         get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
         locals: &mut FastHashMap<u32, ConstantInner>,
-        rodeo: &Rodeo,
+        rodeo: &RodeoResolver,
     ) -> Result<ConstantInner, Error> {
         for sta in self.stmts.iter() {
             match sta.kind {

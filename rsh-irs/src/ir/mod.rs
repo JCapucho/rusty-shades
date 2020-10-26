@@ -1,7 +1,8 @@
 use crate::{
     common::{
         error::Error, src::Span, BinaryOp, Binding, BuiltIn, EntryPointStage, FastHashMap,
-        FunctionOrigin, GlobalBinding, Literal, Rodeo, ScalarType, StorageClass, Symbol, UnaryOp,
+        FieldKind, FunctionOrigin, GlobalBinding, Literal, RodeoResolver, ScalarType, StorageClass,
+        Symbol, UnaryOp,
     },
     node::Node,
     thir,
@@ -44,12 +45,12 @@ impl Global {
 #[derive(Debug)]
 pub struct Struct {
     pub name: Symbol,
-    pub fields: Vec<StructMember>,
+    pub members: Vec<StructMember>,
 }
 
 #[derive(Debug)]
 pub struct StructMember {
-    pub name: Symbol,
+    pub field: FieldKind,
     pub ty: Type,
 }
 
@@ -151,7 +152,7 @@ enum GlobalLookup {
 }
 
 impl thir::Module {
-    pub fn build_ir(self, rodeo: &Rodeo) -> Result<Module, Vec<Error>> {
+    pub fn build_ir(self, rodeo: &RodeoResolver) -> Result<Module, Vec<Error>> {
         let mut errors = vec![];
 
         let mut global_lookups = FastHashMap::default();
@@ -245,7 +246,7 @@ impl thir::Module {
         fn get_constant_inner(
             id: u32,
             constants: &Vec<thir::Constant>,
-            rodeo: &Rodeo,
+            rodeo: &RodeoResolver,
         ) -> Result<ConstantInner, Error> {
             constants[id as usize].expr.solve(
                 &|id| get_constant_inner(id, constants, rodeo),
@@ -344,18 +345,18 @@ impl thir::Module {
 
 impl thir::Struct {
     fn build_ir(self) -> Struct {
-        let fields: Vec<_> = self
-            .fields
+        let members: Vec<_> = self
+            .members
             .into_iter()
-            .map(|field| StructMember {
-                name: field.ident.symbol,
-                ty: field.ty,
+            .map(|member| StructMember {
+                field: member.field.kind,
+                ty: member.ty,
             })
             .collect();
 
         Struct {
             name: self.ident.symbol,
-            fields,
+            members,
         }
     }
 }
@@ -370,7 +371,7 @@ struct FunctionBuilderCtx<'a> {
     structs: &'a Vec<thir::Struct>,
     functions: &'a mut Vec<Function>,
     instances_map: &'a mut FastHashMap<(u32, Vec<Type>), (u32, GraphIndex)>,
-    rodeo: &'a Rodeo,
+    rodeo: &'a RodeoResolver,
 }
 
 struct StatementBuilder<'a> {
@@ -634,21 +635,24 @@ impl thir::Expr<Type> {
                 }
             },
             thir::ExprKind::Literal(lit) => Expr::Literal(lit),
-            thir::ExprKind::Access { ref base, field } => {
+            thir::ExprKind::Access {
+                ref base,
+                ref field,
+            } => {
                 let fields = match base.ty.kind {
                     TypeKind::Struct(id) => vec![
                         ctx.structs[id as usize]
-                            .fields
+                            .members
                             .iter()
-                            .position(|member| member.ident == field)
+                            .position(|member| member.field.kind == field.kind)
                             .unwrap() as u32,
                     ],
-                    TypeKind::Tuple(_) => vec![ctx.rodeo.resolve(&field).parse().unwrap()],
+                    TypeKind::Tuple(_) => vec![field.kind.uint().unwrap()],
                     TypeKind::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
                         ctx.rodeo
-                            .resolve(&field)
+                            .resolve(&field.kind.named().unwrap())
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
                             .collect()

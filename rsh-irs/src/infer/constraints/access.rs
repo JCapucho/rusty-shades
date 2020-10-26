@@ -1,21 +1,27 @@
-use super::{InferContext, SizeInfo, TypeId, TypeInfo};
-use rsh_common::{error::Error, src::Span, Ident, VectorSize};
+use super::{Field, FieldKind, InferContext, SizeInfo, TypeId, TypeInfo};
+use rsh_common::{error::Error, src::Span, VectorSize};
 
 impl<'a> InferContext<'a> {
     pub(super) fn solve_access(
         &mut self,
         out: TypeId,
         record: TypeId,
-        field: Ident,
+        field: Field,
     ) -> Result<bool, Error> {
-        let field_str = self.rodeo.resolve(&field);
+        let field_str = match field.kind {
+            FieldKind::Uint(uint) => uint.to_string(),
+            FieldKind::Named(name) => self.rodeo.resolve(&name).to_string(),
+        };
 
         match self.get(self.get_base(record)) {
             TypeInfo::Unknown => Ok(false), // Can't infer yet
             TypeInfo::Struct(id) => {
                 let fields = self.get_struct(id);
 
-                if let Some((_, ty)) = fields.iter().find(|(name, _)| *name == *field) {
+                if let Some((_, ty)) = fields
+                    .iter()
+                    .find(|(struct_field, _)| field.kind == *struct_field)
+                {
                     let ty = *ty;
                     self.unify(out, ty)?;
                     Ok(true)
