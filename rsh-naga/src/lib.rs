@@ -1,8 +1,8 @@
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
     Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
-    MemberOrigin, Module as NagaModule, ScalarKind, ShaderStage, Statement as NagaStatement,
-    StorageAccess, StructMember, Type as NagaType, TypeInner,
+    MemberOrigin, Module as NagaModule, ScalarKind, Statement as NagaStatement, StorageAccess,
+    StructMember, Type as NagaType, TypeInner,
 };
 use rsh_common::{EntryPointStage, FastHashMap, RodeoResolver};
 use rsh_irs::{
@@ -20,41 +20,38 @@ pub enum GlobalLookup {
     },
 }
 
-pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
-    let mut structs_lookup = FastHashMap::default();
+pub fn build(hir_module: &Module, rodeo: &RodeoResolver) -> NagaModule {
+    let mut module = NagaModule::from_header(Header {
+        version: (1, 0, 0),
+        generator: 0x72757374,
+    });
 
-    let mut types = Arena::new();
-    let mut constants = Arena::new();
-    let mut globals = Arena::new();
-    let mut functions = Arena::new();
+    let mut structs_lookup = FastHashMap::default();
 
     let mut globals_lookup = FastHashMap::default();
     let mut constants_lookup = FastHashMap::default();
 
     let mut ctx = BuilderContext {
-        constants: &mut constants,
-        functions: &module.functions,
-        functions_arena: &mut functions,
+        module: &mut module,
+        functions: &hir_module.functions,
         functions_lookup: FastHashMap::default(),
-        globals: &mut globals,
         globals_lookup: &mut globals_lookup,
-        types: &mut types,
         structs_lookup: &mut structs_lookup,
         constants_lookup: &mut constants_lookup,
         rodeo,
     };
 
-    for (id, strct) in module.structs.iter().enumerate() {
+    for (id, strct) in hir_module.structs.iter().enumerate() {
         let (ty, offset) = build_struct(strct, rodeo.resolve(&strct.name).to_string(), &mut ctx);
 
         ctx.structs_lookup
-            .insert(id as u32, (ctx.types.append(ty), offset));
+            .insert(id as u32, (ctx.module.types.append(ty), offset));
     }
 
-    for (id, global) in module.globals.iter().enumerate() {
+    for (id, global) in hir_module.globals.iter().enumerate() {
         let ty = build_ty(&global.ty, &mut ctx).0;
 
-        let handle = ctx.globals.append(GlobalVariable {
+        let handle = ctx.module.global_variables.append(GlobalVariable {
             name: Some(rodeo.resolve(&global.name).to_string()),
             class: global.storage.into(),
             binding: Some(global.binding.into()),
@@ -66,7 +63,7 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
         ctx.globals_lookup.insert(id as u32, handle);
     }
 
-    for (id, constant) in module.constants.iter().enumerate() {
+    for (id, constant) in hir_module.constants.iter().enumerate() {
         let ty = build_ty(&constant.ty, &mut ctx).0;
 
         let inner = match constant.inner {
@@ -74,13 +71,13 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
             ir::ConstantInner::Vector(vec) => match constant.ty.kind {
                 TypeKind::Vector(base, size) => {
                     let mut elements = Vec::with_capacity(size as usize);
-                    let ty = ctx.types.fetch_or_append(NagaType {
+                    let ty = ctx.module.types.fetch_or_append(NagaType {
                         name: None,
                         inner: base.into(),
                     });
 
                     for item in vec.iter().take(size as usize) {
-                        elements.push(ctx.constants.fetch_or_append(Constant {
+                        elements.push(ctx.module.constants.fetch_or_append(Constant {
                             name: None,
                             specialization: None,
                             ty,
@@ -95,7 +92,7 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
             ir::ConstantInner::Matrix(mat) => match constant.ty.kind {
                 TypeKind::Matrix { rows, columns } => {
                     let mut elements = Vec::with_capacity(rows as usize * columns as usize);
-                    let ty = ctx.types.fetch_or_append(NagaType {
+                    let ty = ctx.module.types.fetch_or_append(NagaType {
                         name: None,
                         inner: TypeInner::Scalar {
                             kind: ScalarKind::Float,
@@ -105,7 +102,7 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
 
                     for x in 0..rows as usize {
                         for y in 0..columns as usize {
-                            elements.push(ctx.constants.fetch_or_append(Constant {
+                            elements.push(ctx.module.constants.fetch_or_append(Constant {
                                 name: None,
                                 specialization: None,
                                 ty,
@@ -120,7 +117,7 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
             },
         };
 
-        let handle = ctx.constants.append(Constant {
+        let handle = ctx.module.constants.append(Constant {
             name: Some(rodeo.resolve(&constant.name).to_string()),
             specialization: None,
             ty,
@@ -130,35 +127,20 @@ pub fn build(module: &Module, rodeo: &RodeoResolver) -> NagaModule {
         ctx.constants_lookup.insert(id as u32, handle);
     }
 
-    for (id, function) in module.functions.iter().enumerate() {
-        build_fn(function, module, id as u32, &mut ctx);
+    for (id, function) in hir_module.functions.iter().enumerate() {
+        build_fn(function, hir_module, id as u32, &mut ctx);
     }
 
-    let entry_points = module
-        .entry_points
-        .iter()
-        .map(|entry| build_entry_point(entry, module, &mut ctx))
-        .collect();
-
-    NagaModule {
-        header: Header {
-            version: (1, 0, 0),
-            generator: 0x72757374,
-        },
-        types,
-        constants,
-        global_variables: globals,
-        functions,
-        entry_points,
+    for entry in hir_module.entry_points.iter() {
+        build_entry_point(entry, hir_module, &mut ctx)
     }
+
+    module
 }
 
 struct BuilderContext<'a> {
-    types: &'a mut Arena<NagaType>,
-    globals: &'a mut Arena<GlobalVariable>,
+    module: &'a mut NagaModule,
     globals_lookup: &'a mut FastHashMap<u32, Handle<GlobalVariable>>,
-    constants: &'a mut Arena<Constant>,
-    functions_arena: &'a mut Arena<NagaFunction>,
     functions_lookup: FastHashMap<u32, Handle<NagaFunction>>,
     functions: &'a Vec<Function>,
     structs_lookup: &'a mut FastHashMap<u32, (Handle<NagaType>, u32)>,
@@ -219,19 +201,15 @@ fn build_fn<'a>(
         local_variables,
     };
 
-    fun.fill_global_use(&ctx.globals);
+    fun.fill_global_use(&ctx.module.global_variables);
 
-    let handle = ctx.functions_arena.append(fun);
+    let handle = ctx.module.functions.append(fun);
 
     ctx.functions_lookup.insert(id, handle);
     handle
 }
 
-fn build_entry_point<'a>(
-    entry_point: &EntryPoint,
-    module: &Module,
-    ctx: &mut BuilderContext<'a>,
-) -> ((ShaderStage, String), NagaEntryPoint) {
+fn build_entry_point<'a>(entry_point: &EntryPoint, module: &Module, ctx: &mut BuilderContext<'a>) {
     let mut local_variables = Arena::new();
     let mut locals_lookup = FastHashMap::default();
 
@@ -268,7 +246,7 @@ fn build_entry_point<'a>(
         local_variables,
     };
 
-    function.fill_global_use(&ctx.globals);
+    function.fill_global_use(&ctx.module.global_variables);
 
     let entry = NagaEntryPoint {
         // TODO
@@ -278,13 +256,13 @@ fn build_entry_point<'a>(
         function,
     };
 
-    (
+    ctx.module.entry_points.insert(
         (
             entry_point.stage.into(),
             ctx.rodeo.resolve(&entry_point.name).to_string(),
         ),
         entry,
-    )
+    );
 }
 
 fn build_struct(strct: &Struct, name: String, ctx: &mut BuilderContext) -> (NagaType, u32) {
@@ -321,7 +299,7 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
             let (kind, width) = scalar.naga_kind_width();
 
             (
-                ctx.types.fetch_or_append(NagaType {
+                ctx.module.types.fetch_or_append(NagaType {
                     name: None,
                     inner: TypeInner::Scalar { kind, width },
                 }),
@@ -332,7 +310,7 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
             let (kind, width) = scalar.naga_kind_width();
 
             (
-                ctx.types.fetch_or_append(NagaType {
+                ctx.module.types.fetch_or_append(NagaType {
                     name: None,
                     inner: TypeInner::Vector {
                         size: (*size).into(),
@@ -344,7 +322,7 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
             )
         },
         TypeKind::Matrix { columns, rows } => (
-            ctx.types.fetch_or_append(NagaType {
+            ctx.module.types.fetch_or_append(NagaType {
                 name: None,
                 inner: TypeInner::Matrix {
                     columns: (*columns).into(),
@@ -373,7 +351,7 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
             }
 
             (
-                ctx.types.fetch_or_append(NagaType {
+                ctx.module.types.fetch_or_append(NagaType {
                     name: None,
                     inner: TypeInner::Struct { members },
                 }),
@@ -509,7 +487,7 @@ fn build_expr<'a>(
         Expr::Literal(literal) => {
             let ty = build_ty(expr.attr(), ctx).0;
 
-            let handle = ctx.constants.fetch_or_append(Constant {
+            let handle = ctx.module.constants.fetch_or_append(Constant {
                 name: None,
                 ty,
                 specialization: None,
