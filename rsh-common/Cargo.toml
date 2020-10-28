@@ -6,7 +6,16 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26", optional = true }
-lasso = { git = "https://github.com/Kixiron/lasso.git", rev = "ccafec656171f78e4f46fbc266dc90a91b1fb949" }
 fxhash = "0.2"
 codespan-reporting = { version = "0.9", optional = true }
+
+# naga is under heavy development and many things aren't in the crates.io release
+[dependencies.naga]
+git = "https://github.com/gfx-rs/naga.git"
+rev = "587dc01a2cc43fdf4637f1bf6d2b75b703e9f681"
+optional = true
+
+# we use a git depedency to prevent hashbrown version duplication
+[dependencies.lasso]
+git = "https://github.com/Kixiron/lasso.git"
+rev = "ccafec656171f78e4f46fbc266dc90a91b1fb949"

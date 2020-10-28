@@ -6,9 +6,9 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
-naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26" }
+rsh-naga = { path = "../rsh-naga" }
 codespan-reporting = { version = "0.9" }
-rusty-shades = { path = "..", features = ["naga", "codespan"] }
+rusty-shades = { path = "..", features = ["codespan"] }
 clap = "2.33"
 ron = { version = "0.6", optional = true }
 serde = { version = "1.0", optional = true }
@@ -18,7 +18,7 @@ goldentests = "0.3"
 
 [features]
 default = ["spirv", "glsl", "msl", "ir"]
-spirv = ["naga/spv-out"]
-glsl = ["naga/glsl-out"]
-msl = ["naga/msl-out"]
-ir = ["naga/serialize", "ron", "serde"]
+spirv = ["rsh-naga/spirv"]
+glsl = ["rsh-naga/glsl"]
+msl = ["rsh-naga/msl"]
+ir = ["rsh-naga/serialize", "ron", "serde"]

@@ -9,13 +9,12 @@ edition = "2018"
 rsh-irs = { path = "./rsh-irs" }
 rsh-lexer = { path = "./rsh-lexer" }
 rsh-parser = { path = "./rsh-parser" }
-rsh-naga = { path = "./rsh-naga" }
-naga = { git = "https://github.com/gfx-rs/naga.git", rev = "b76dff9d9ccb99b5e4f377f99d8b46017a181d26", optional = true }
+rsh-naga = { path = "./rsh-naga", optional = true }
 rsh-common = { path = "./rsh-common" }
 
 [features]
 default = ["spirv"]
-spirv = ["naga", "naga/spv-out"]
+spirv = ["rsh-naga", "rsh-naga/spirv"]
 codespan = ["rsh-common/codespan-reporting"]
 
 [workspace]

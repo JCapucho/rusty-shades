@@ -1,8 +1,10 @@
+pub use naga::{self, back, Module as NagaModule};
+
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
     Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
-    MemberOrigin, Module as NagaModule, ScalarKind, Statement as NagaStatement, StorageAccess,
-    StructMember, Type as NagaType, TypeInner,
+    MemberOrigin, ScalarKind, Statement as NagaStatement, StorageAccess, StructMember,
+    Type as NagaType, TypeInner,
 };
 use rsh_common::{EntryPointStage, FastHashMap, RodeoResolver};
 use rsh_irs::{

@@ -29,8 +29,8 @@ pub fn build_ir(code: &str) -> Result<(IrModule, RodeoResolver), Vec<Error>> {
     Ok((module, rodeo))
 }
 
-#[cfg(feature = "naga")]
-pub fn build_naga_ir(code: &str) -> Result<naga::Module, Vec<Error>> {
+#[cfg(feature = "rsh-naga")]
+pub fn build_naga_ir(code: &str) -> Result<rsh_naga::NagaModule, Vec<Error>> {
     let (module, rodeo) = build_ir(code)?;
 
     Ok(rsh_naga::build(&module, &rodeo))
@@ -38,7 +38,7 @@ pub fn build_naga_ir(code: &str) -> Result<naga::Module, Vec<Error>> {
 
 #[cfg(feature = "spirv")]
 pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
-    use naga::back::spv;
+    use rsh_naga::back::spv;
 
     let naga_ir = build_naga_ir(code)?;
 

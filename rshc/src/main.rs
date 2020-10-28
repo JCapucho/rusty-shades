@@ -169,7 +169,7 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     match target {
         #[cfg(feature = "spirv")]
         "spirv" => {
-            use naga::back::spv::{Writer, WriterFlags};
+            use rsh_naga::back::spv::{Writer, WriterFlags};
             let spirv = Writer::new(&naga_ir.header, WriterFlags::DEBUG).write(&naga_ir);
 
             let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
@@ -181,9 +181,9 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         },
         #[cfg(feature = "glsl")]
         "glsl" => {
-            use naga::{
+            use rsh_naga::{
                 back::glsl::{write, Options, Version},
-                ShaderStage,
+                naga::ShaderStage,
             };
 
             // TODO: Support specifying version and stage
