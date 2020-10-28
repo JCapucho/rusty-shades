@@ -5,12 +5,18 @@ use crate::{
 };
 
 impl<'a> InferContext<'a> {
+    #[tracing::instrument(
+        skip(self,fun,args,ret),
+        fields(fun = self.display_type_info(fun).to_string().as_str())
+    )]
     pub(super) fn solve_call(
         &mut self,
         fun: TypeId,
         args: Vec<TypeId>,
         ret: TypeId,
     ) -> Result<bool, Error> {
+        tracing::trace!("Solving call constraint");
+
         let bound = TraitBound::Fn {
             args: args.clone(),
             ret,
@@ -19,7 +25,7 @@ impl<'a> InferContext<'a> {
         // TODO: better error messages
         match self.check_bound(fun, bound) {
             Some(true) => {
-                let (called_args, called_ret) = match self.get(fun) {
+                let (called_args, mut called_ret) = match self.get(fun) {
                     TypeInfo::FnDef(fun) => {
                         let FnSig { args, ret, .. } = self.get_function(fun);
 
@@ -31,21 +37,17 @@ impl<'a> InferContext<'a> {
 
                 let generics = self.collect(&args, ret, &called_args, called_ret);
 
-                for (a, b) in called_args.iter().zip(args.iter()) {
-                    let a = if let TypeInfo::Generic(pos, _) = self.get(*a) {
-                        generics.get(&pos).unwrap()
-                    } else {
-                        a
-                    };
+                for (mut a, b) in called_args.iter().zip(args.iter()) {
+                    if let TypeInfo::Generic(pos, _) = self.get(*a) {
+                        a = generics.get(&pos).unwrap()
+                    }
 
                     self.unify(*a, *b).unwrap();
                 }
 
-                let called_ret = if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
-                    *generics.get(&pos).unwrap()
-                } else {
-                    called_ret
-                };
+                if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
+                    called_ret = *generics.get(&pos).unwrap()
+                }
 
                 self.unify(called_ret, ret).unwrap();
 
@@ -59,8 +61,13 @@ impl<'a> InferContext<'a> {
                     .collect::<Vec<_>>()
                     .join(","),
                 self.display_type_info(ret)
-            ))),
-            None => Ok(false),
+            ))
+            .with_span(self.span(fun))),
+            None => {
+                tracing::debug!("Cannot solve call constraint yet");
+
+                Ok(false)
+            },
         }
     }
 
@@ -74,19 +81,37 @@ impl<'a> InferContext<'a> {
         let mut generics = FastHashMap::default();
 
         for (a, b) in called_args.iter().zip(args.iter()) {
-            if let TypeInfo::Generic(pos, _) = self.get(*a) {
-                let ty = *generics.entry(pos).or_insert(*b);
-
-                self.unify_or_check_bounds(ty, *b).unwrap();
-            }
+            self.collect_inner(&mut generics, *b, *a)
         }
 
-        if let TypeInfo::Generic(pos, _) = self.get(called_ret) {
-            let ty = *generics.entry(pos).or_insert(ret);
-
-            self.unify_or_check_bounds(ty, ret).unwrap();
-        }
+        self.collect_inner(&mut generics, ret, called_ret);
 
         generics
+    }
+
+    fn collect_inner(
+        &mut self,
+        generics: &mut FastHashMap<u32, TypeId>,
+        ty: TypeId,
+        called_ty: TypeId,
+    ) {
+        match self.get(called_ty) {
+            TypeInfo::Unknown
+            | TypeInfo::Empty
+            | TypeInfo::Scalar(_)
+            | TypeInfo::Vector(_, _)
+            | TypeInfo::Struct(_)
+            | TypeInfo::Tuple(_)
+            | TypeInfo::Matrix { .. } => {},
+            TypeInfo::Ref(called_ty) => self.collect_inner(generics, ty, called_ty),
+            TypeInfo::FnDef(_) => {
+                //TODO
+            },
+            TypeInfo::Generic(pos, _) => {
+                let gen_ty = *generics.entry(pos).or_insert(ty);
+
+                self.unify_or_check_bounds(gen_ty, ty).unwrap();
+            },
+        }
     }
 }

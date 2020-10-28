@@ -796,12 +796,15 @@ impl<'a> InferContext<'a> {
         })
     }
 
+    #[tracing::instrument(skip(self,id,span), fields(ty = self.display_type_info(id).to_string().as_str()))]
     pub fn reconstruct(&self, id: TypeId, span: Span) -> Result<Type, Error> {
         self.reconstruct_inner(0, id).map_err(|err| match err {
             ReconstructError::Recursive => {
                 Error::custom(String::from("Recursive type")).with_span(self.span(id))
             },
             ReconstructError::Unknown(a) => {
+                tracing::debug!("Cannot infer type");
+
                 let msg = match self.get(self.get_base(id)) {
                     TypeInfo::Unknown => String::from("Cannot infer type"),
                     _ => format!(

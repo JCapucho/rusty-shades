@@ -12,6 +12,7 @@ use std::{
     io::{self, Write},
     path::Path,
 };
+use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 const COLOR: &[&str] = &["auto", "always", "never"];
 const TARGETS: &[&str] = &[
@@ -89,6 +90,10 @@ fn main() -> io::Result<()> {
         "never" => ColorChoice::Never,
         _ => unreachable!(),
     };
+
+    FmtSubscriber::builder()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
 
     match matches.subcommand() {
         ("build", Some(matches)) => build(matches, color),
