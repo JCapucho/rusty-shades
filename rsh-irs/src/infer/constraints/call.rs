@@ -5,10 +5,7 @@ use crate::{
 };
 
 impl<'a> InferContext<'a> {
-    #[tracing::instrument(
-        skip(self,fun,args,ret),
-        fields(fun = self.display_type_info(fun).to_string().as_str())
-    )]
+    #[tracing::instrument(skip(self, fun, args, ret))]
     pub(super) fn solve_call(
         &mut self,
         fun: TypeId,

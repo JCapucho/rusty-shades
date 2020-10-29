@@ -87,6 +87,10 @@ pub enum TypeInfo {
     Generic(u32, TraitBound),
 }
 
+impl From<TypeId> for TypeInfo {
+    fn from(ty: TypeId) -> Self { TypeInfo::Ref(ty) }
+}
+
 impl From<ScalarId> for TypeInfo {
     fn from(scalar: ScalarId) -> Self { TypeInfo::Scalar(scalar) }
 }
@@ -710,7 +714,10 @@ impl<'a> InferContext<'a> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn solve_all(&mut self) -> Result<(), Error> {
+        tracing::debug!("Starting constraint solver loop");
+
         'solver: loop {
             let constraints = self.constraints.keys().copied().collect::<Vec<_>>();
 
@@ -796,14 +803,18 @@ impl<'a> InferContext<'a> {
         })
     }
 
-    #[tracing::instrument(skip(self,id,span), fields(ty = self.display_type_info(id).to_string().as_str()))]
+    #[tracing::instrument(skip(self, id, span))]
     pub fn reconstruct(&self, id: TypeId, span: Span) -> Result<Type, Error> {
+        tracing::trace!("Reconstructing type");
+
         self.reconstruct_inner(0, id).map_err(|err| match err {
             ReconstructError::Recursive => {
+                tracing::warn!("Recursive type");
+
                 Error::custom(String::from("Recursive type")).with_span(self.span(id))
             },
             ReconstructError::Unknown(a) => {
-                tracing::debug!("Cannot infer type");
+                tracing::warn!("Cannot infer type");
 
                 let msg = match self.get(self.get_base(id)) {
                     TypeInfo::Unknown => String::from("Cannot infer type"),
@@ -813,6 +824,7 @@ impl<'a> InferContext<'a> {
                         self.display_type_info(id)
                     ),
                 };
+
                 Error::custom(msg)
                     .with_span(span)
                     .with_span(self.span(id))

@@ -28,14 +28,15 @@ pub struct Module {
 pub struct Function {
     pub sig: FnSig,
     pub body: Block<Type>,
-    pub locals: Vec<Local>,
+    pub locals: Vec<Local<Type>>,
     pub span: Span,
 }
 
 #[derive(Debug)]
-pub struct Local {
+pub struct Local<T> {
     pub ident: Ident,
-    pub ty: Type,
+    pub ty: T,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -82,21 +83,21 @@ pub struct EntryPoint {
     pub stage: EntryPointStage,
     pub sig_span: Span,
     pub body: Block<Type>,
-    pub locals: Vec<Local>,
+    pub locals: Vec<Local<Type>>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Stmt<M> {
-    pub kind: StmtKind<M>,
+pub struct Stmt<T> {
+    pub kind: StmtKind<T>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum StmtKind<M> {
-    Expr(Expr<M>),
-    ExprSemi(Expr<M>),
-    Assign(Spanned<AssignTarget>, Expr<M>),
+pub enum StmtKind<T> {
+    Expr(Expr<T>),
+    ExprSemi(Expr<T>),
+    Assign(Spanned<AssignTarget>, Expr<T>),
 }
 
 impl Stmt<TypeId> {
@@ -115,50 +116,50 @@ impl Stmt<TypeId> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Expr<M> {
-    pub kind: ExprKind<M>,
-    pub ty: M,
+pub struct Expr<T> {
+    pub kind: ExprKind<T>,
+    pub ty: T,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprKind<M> {
-    Block(Block<M>),
+pub enum ExprKind<T> {
+    Block(Block<T>),
     BinaryOp {
-        left: Box<Expr<M>>,
+        left: Box<Expr<T>>,
         op: Spanned<BinaryOp>,
-        right: Box<Expr<M>>,
+        right: Box<Expr<T>>,
     },
     UnaryOp {
-        tgt: Box<Expr<M>>,
+        tgt: Box<Expr<T>>,
         op: Spanned<UnaryOp>,
     },
     Call {
-        fun: Box<Expr<M>>,
-        args: Vec<Expr<M>>,
+        fun: Box<Expr<T>>,
+        args: Vec<Expr<T>>,
     },
     Literal(Literal),
     Access {
-        base: Box<Expr<M>>,
+        base: Box<Expr<T>>,
         field: Field,
     },
     Constructor {
-        elements: Vec<Expr<M>>,
+        elements: Vec<Expr<T>>,
     },
     Arg(u32),
     Local(u32),
     Global(u32),
     Constant(u32),
     Function(FunctionOrigin),
-    Return(Option<Box<Expr<M>>>),
+    Return(Option<Box<Expr<T>>>),
     If {
-        condition: Box<Expr<M>>,
-        accept: Block<M>,
-        reject: Block<M>,
+        condition: Box<Expr<T>>,
+        accept: Block<T>,
+        reject: Block<T>,
     },
     Index {
-        base: Box<Expr<M>>,
-        index: Box<Expr<M>>,
+        base: Box<Expr<T>>,
+        index: Box<Expr<T>>,
     },
 }
 
@@ -237,8 +238,8 @@ impl Expr<TypeId> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Block<M> {
-    pub stmts: Vec<Stmt<M>>,
+pub struct Block<T> {
+    pub stmts: Vec<Stmt<T>>,
     pub span: Span,
 }
 
@@ -267,10 +268,7 @@ impl Module {
         let mut errors = vec![];
 
         let mut functions = Vec::new();
-        let mut globals_lookup = FastHashMap::default();
-        let mut functions_lookup = FastHashMap::default();
-        let mut constants_lookup = FastHashMap::default();
-        let mut structs_lookup = FastHashMap::default();
+        let mut scope = Scope::default();
 
         let globals = hir_module
             .globals
@@ -279,7 +277,9 @@ impl Module {
             .map(|(key, global)| {
                 let mut scoped = infer_ctx.scoped();
 
-                globals_lookup.insert(global.ident.symbol, (key as u32, global.ty));
+                scope
+                    .globals_lookup
+                    .insert(global.ident.symbol, (key as u32, global.ty));
 
                 Global {
                     ident: global.ident,
@@ -309,7 +309,9 @@ impl Module {
                     })
                     .collect();
 
-                structs_lookup.insert(hir_module_strct.ident.symbol, hir_module_strct.ty);
+                scope
+                    .structs_lookup
+                    .insert(hir_module_strct.ident.symbol, hir_module_strct.ty);
 
                 let strct = Struct {
                     ident: hir_module_strct.ident,
@@ -322,131 +324,42 @@ impl Module {
             .collect();
 
         for (id, constant) in hir_module.constants.iter().enumerate() {
-            constants_lookup.insert(constant.ident.symbol, id as u32);
+            scope
+                .constants_lookup
+                .insert(constant.ident.symbol, id as u32);
         }
 
-        for (id, func) in hir_module.functions.iter().enumerate() {
-            functions_lookup.insert(func.sig.ident.symbol, id as u32);
+        for (id, fun) in hir_module.functions.iter().enumerate() {
+            scope
+                .functions_lookup
+                .insert(fun.sig.ident.symbol, id as u32);
         }
 
-        for func in hir_module.functions.iter() {
-            let mut scoped = infer_ctx.scoped();
+        for fun in hir_module.functions.iter() {
+            let span = tracing::trace_span!("building THIR function");
+            let _enter = span.enter();
 
-            let mut locals = vec![];
-            let mut locals_lookup = FastHashMap::default();
+            let fun = build_fn(fun, infer_ctx, &mut errors, hir_module, &scope);
 
-            let mut builder = StatementBuilderCtx {
-                infer_ctx: &mut scoped,
-                errors: &mut errors,
-                module: &hir_module,
-
-                locals: &mut locals,
-                sig: &func.sig,
-                globals_lookup: &globals_lookup,
-                functions_lookup: &functions_lookup,
-                structs_lookup: &structs_lookup,
-                constants_lookup: &constants_lookup,
-                externs: &hir_module.externs,
-            };
-
-            let body = build_block(&func.body, &mut builder, &mut locals_lookup, func.sig.ret);
-
-            match scoped.solve_all() {
-                Ok(_) => {},
-                Err(e) => errors.push(e),
-            };
-
-            let ret = reconstruct(func.sig.ret, func.span, &mut scoped, &mut errors);
-
-            let args = {
-                let mut sorted: Vec<_> = func.sig.args.values().collect();
-                sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-                sorted
-                    .into_iter()
-                    .map(|(_, ty)| reconstruct(*ty, Span::None, &mut scoped, &mut errors))
-                    .collect()
-            };
-
-            let locals = locals
-                .into_iter()
-                .map(|(ident, ty)| {
-                    let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors);
-
-                    Local { ident, ty }
-                })
-                .collect();
-
-            let sig = FnSig {
-                ident: func.sig.ident,
-                generics: func.generics.iter().map(|(name, _)| *name).collect(),
-                args,
-                ret,
-                span: func.sig.span,
-            };
-
-            functions.push(Function {
-                sig,
-                body: body.into_block(&mut scoped, &mut errors),
-                locals,
-                span: func.span,
-            });
+            functions.push(fun);
         }
 
         let entry_points = hir_module
             .entry_points
             .iter()
-            .map(|func| {
-                let mut scoped = infer_ctx.scoped();
+            .map(|entry| {
+                let span = tracing::trace_span!("building THIR entry point");
+                let _enter = span.enter();
 
-                let mut locals = vec![];
-                let mut locals_lookup = FastHashMap::default();
-
-                let ret = scoped.insert(TypeInfo::Empty, Span::None);
-                let sig = hir::FnSig {
-                    ident: func.ident,
-                    args: FastHashMap::default(),
-                    ret,
-                    span: func.header_span,
-                };
-
-                let mut builder = StatementBuilderCtx {
-                    infer_ctx: &mut scoped,
-                    errors: &mut errors,
-                    module: &hir_module,
-
-                    locals: &mut locals,
-                    sig: &sig,
-                    globals_lookup: &globals_lookup,
-                    functions_lookup: &functions_lookup,
-                    structs_lookup: &structs_lookup,
-                    constants_lookup: &constants_lookup,
-                    externs: &hir_module.externs,
-                };
-
-                let body = build_block(&func.body, &mut builder, &mut locals_lookup, ret);
-
-                match scoped.solve_all() {
-                    Ok(_) => {},
-                    Err(e) => errors.push(e),
-                };
-
-                let locals = locals
-                    .into_iter()
-                    .map(|(ident, ty)| {
-                        let ty = reconstruct(ty, Span::None, &mut scoped, &mut errors);
-
-                        Local { ident, ty }
-                    })
-                    .collect();
+                let fun = build_fn(&entry.fun, infer_ctx, &mut errors, hir_module, &scope);
 
                 EntryPoint {
-                    ident: func.ident,
-                    sig_span: func.header_span,
-                    stage: func.stage,
-                    body: body.into_block(&mut scoped, &mut errors),
-                    locals,
-                    span: func.span,
+                    ident: fun.sig.ident,
+                    sig_span: fun.sig.span,
+                    stage: entry.stage,
+                    body: fun.body,
+                    locals: fun.locals,
+                    span: fun.span,
                 }
             })
             .collect();
@@ -455,6 +368,9 @@ impl Module {
             .constants
             .iter()
             .map(|hir_module_const| {
+                let span = tracing::trace_span!("building THIR constant");
+                let _enter = span.enter();
+
                 let mut scoped = infer_ctx.scoped();
 
                 let mut locals = vec![];
@@ -472,10 +388,7 @@ impl Module {
 
                     locals: &mut locals,
                     sig: &sig,
-                    globals_lookup: &FastHashMap::default(),
-                    structs_lookup: &FastHashMap::default(),
-                    functions_lookup: &FastHashMap::default(),
-                    constants_lookup: &constants_lookup,
+                    scope: &scope,
                     externs: &FastHashMap::default(),
                 };
 
@@ -520,6 +433,91 @@ impl Module {
     }
 }
 
+#[derive(Default)]
+struct Scope {
+    globals_lookup: FastHashMap<Symbol, (u32, TypeId)>,
+    functions_lookup: FastHashMap<Symbol, u32>,
+    structs_lookup: FastHashMap<Symbol, TypeId>,
+    constants_lookup: FastHashMap<Symbol, u32>,
+}
+
+fn build_fn(
+    fun: &hir::Function,
+    infer_ctx: &InferContext,
+    errors: &mut Vec<Error>,
+    module: &hir::Module<'_>,
+    scope: &Scope,
+) -> Function {
+    let mut scoped = infer_ctx.scoped();
+
+    let mut locals = vec![];
+    let mut locals_lookup = FastHashMap::default();
+
+    let mut builder = StatementBuilderCtx {
+        infer_ctx: &mut scoped,
+        errors,
+        module,
+
+        locals: &mut locals,
+        sig: &fun.sig,
+        scope,
+        externs: &module.externs,
+    };
+
+    let body = build_block(&fun.body, &mut builder, &mut locals_lookup, fun.sig.ret);
+
+    match scoped.solve_all() {
+        Ok(_) => {},
+        Err(e) => errors.push(e),
+    };
+
+    tracing::trace!("Building return");
+
+    let ret = reconstruct(fun.sig.ret, fun.span, &mut scoped, errors);
+
+    let args = {
+        tracing::trace!("Building argument");
+
+        let mut sorted: Vec<_> = fun.sig.args.values().collect();
+        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        sorted
+            .into_iter()
+            .map(|(_, ty)| reconstruct(*ty, Span::None, &mut scoped, errors))
+            .collect()
+    };
+
+    let locals = locals
+        .into_iter()
+        .map(|local| {
+            tracing::trace!("Building local");
+
+            let ty = reconstruct(local.ty, Span::None, &mut scoped, errors);
+
+            Local {
+                ident: local.ident,
+                ty,
+                span: local.span,
+            }
+        })
+        .collect();
+
+    let sig = FnSig {
+        ident: fun.sig.ident,
+        generics: fun.generics.iter().map(|(name, _)| *name).collect(),
+        args,
+        ret,
+        span: fun.sig.span,
+    };
+
+    Function {
+        sig,
+        body: body.into_block(&mut scoped, errors),
+        locals,
+        span: fun.span,
+    }
+}
+
 fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
     let ty = match ty.kind {
         ast::TypeKind::ScalarType(scalar) => {
@@ -527,7 +525,7 @@ fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
             ctx.infer_ctx.insert(base, ty.span)
         },
         ast::TypeKind::Named(name) => {
-            if let Some(ty) = ctx.structs_lookup.get(&name) {
+            if let Some(ty) = ctx.scope.structs_lookup.get(&name) {
                 *ty
             } else {
                 ctx.errors
@@ -564,18 +562,15 @@ struct StatementBuilderCtx<'a, 'b> {
     errors: &'a mut Vec<Error>,
     module: &'a hir::Module<'a>,
 
-    locals: &'a mut Vec<(Ident, TypeId)>,
+    locals: &'a mut Vec<Local<TypeId>>,
     sig: &'a hir::FnSig,
-    globals_lookup: &'a FastHashMap<Symbol, (u32, TypeId)>,
-    functions_lookup: &'a FastHashMap<Symbol, u32>,
-    structs_lookup: &'a FastHashMap<Symbol, TypeId>,
-    constants_lookup: &'a FastHashMap<Symbol, u32>,
+    scope: &'a Scope,
     externs: &'a FastHashMap<Symbol, hir::FnSig>,
 }
 
-fn build_block<'a, 'b>(
+fn build_block(
     block: &ast::Block,
-    ctx: &mut StatementBuilderCtx<'a, 'b>,
+    ctx: &mut StatementBuilderCtx,
     locals_lookup: &mut FastHashMap<Symbol, (u32, TypeId)>,
     out: TypeId,
 ) -> Block<TypeId> {
@@ -629,13 +624,26 @@ fn build_stmt<'a, 'b>(
 
             let local_id = ctx.locals.len() as u32;
 
-            ctx.locals.push((local.ident, expr.ty));
-            locals_lookup.insert(local.ident.symbol, (local_id, expr.ty));
+            let span = local
+                .ty
+                .as_ref()
+                .map(|ty| ty.span)
+                .unwrap_or(Span::None)
+                .union(local.ident.span);
+
+            let ty = ctx.infer_ctx.insert(expr.ty, span);
+
+            ctx.locals.push(Local {
+                ident: local.ident,
+                ty,
+                span,
+            });
+            locals_lookup.insert(local.ident.symbol, (local_id, ty));
 
             StmtKind::Assign(
                 Spanned {
                     node: AssignTarget::Local(local_id),
-                    span: local.ident.span,
+                    span,
                 },
                 expr,
             )
@@ -645,17 +653,13 @@ fn build_stmt<'a, 'b>(
 
             let (tgt, id) = if let Some((location, id)) = locals_lookup.get(&ident) {
                 (AssignTarget::Local(*location), *id)
-            } else if let Some((location, id)) = ctx.globals_lookup.get(&ident) {
+            } else if let Some((location, id)) = ctx.scope.globals_lookup.get(&ident) {
                 (AssignTarget::Global(*location), *id)
             } else {
                 ctx.errors
                     .push(Error::custom(String::from("Not a variable")).with_span(ident.span));
 
-                let local_id = ctx.locals.len() as u32;
-
-                ctx.locals.push((ident, expr.ty));
-                locals_lookup.insert(*ident, (local_id, expr.ty));
-                (AssignTarget::Local(local_id), expr.ty)
+                (AssignTarget::Local(0), expr.ty)
             };
 
             if let Err(e) = ctx.infer_ctx.unify(id, expr.ty) {
@@ -788,14 +792,14 @@ fn build_expr<'a, 'b>(
                 (ExprKind::Local(*var), *local)
             } else if let Some((id, ty)) = ctx.sig.args.get(&var) {
                 (ExprKind::Arg(*id), *ty)
-            } else if let Some(fun) = ctx.functions_lookup.get(&var) {
+            } else if let Some(fun) = ctx.scope.functions_lookup.get(&var) {
                 let origin = (*fun).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);
 
                 (ExprKind::Function(origin), ty)
-            } else if let Some((var, ty)) = ctx.globals_lookup.get(&var) {
+            } else if let Some((var, ty)) = ctx.scope.globals_lookup.get(&var) {
                 (ExprKind::Global(*var), *ty)
-            } else if let Some(constant) = ctx.constants_lookup.get(&var) {
+            } else if let Some(constant) = ctx.scope.constants_lookup.get(&var) {
                 (
                     ExprKind::Constant(*constant),
                     ctx.module.constants[*constant as usize].ty,
@@ -809,11 +813,7 @@ fn build_expr<'a, 'b>(
                 ctx.errors
                     .push(Error::custom(String::from("Variable not found")).with_span(var.span));
 
-                let local_id = ctx.locals.len() as u32;
-
-                ctx.locals.push((var, empty));
-                locals_lookup.insert(*var, (local_id, empty));
-                (ExprKind::Local(local_id), empty)
+                (ExprKind::Local(0), empty)
             }
         },
         ast::ExprKind::If {

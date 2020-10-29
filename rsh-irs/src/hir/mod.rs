@@ -43,10 +43,7 @@ pub struct FnSig {
 #[derive(Debug)]
 pub struct EntryPoint<'a> {
     pub stage: EntryPointStage,
-    pub ident: Ident,
-    pub header_span: Span,
-    pub body: &'a Block,
-    pub span: Span,
+    pub fun: Function<'a>,
 }
 
 #[derive(Debug)]
@@ -215,13 +212,21 @@ impl<'a> Module<'a> {
                     let item_start = item.span.as_range().map(|range| range.start).unwrap_or(0);
                     let sig_end = fun.sig.span.as_range().map(|range| range.end).unwrap_or(0);
 
-                    module.entry_points.push(EntryPoint {
-                        ident: item.ident,
-                        stage,
-                        header_span: Span::Range(item_start.into(), sig_end.into()),
+                    let empty = infer_ctx.insert(TypeInfo::Empty, Span::None);
+
+                    let fun = Function {
+                        generics: Vec::new(),
+                        sig: FnSig {
+                            ident: item.ident,
+                            args: FastHashMap::default(),
+                            ret: empty,
+                            span: Span::Range(item_start.into(), sig_end.into()),
+                        },
                         body: &fun.body,
                         span: item.span,
-                    })
+                    };
+
+                    module.entry_points.push(EntryPoint { stage, fun })
                 },
                 ast::ItemKind::Extern(ref sig) => {
                     let args: FastHashMap<_, _> = sig
