@@ -376,7 +376,8 @@ impl Module {
                 let mut locals = vec![];
                 let sig = hir::FnSig {
                     ident: hir_module_const.ident,
-                    args: FastHashMap::default(),
+                    args_lookup: FastHashMap::default(),
+                    args: Vec::new(),
                     ret: hir_module_const.ty,
                     span: hir_module_const.span,
                 };
@@ -466,26 +467,22 @@ fn build_fn(
 
     let body = build_block(&fun.body, &mut builder, &mut locals_lookup, fun.sig.ret);
 
-    match scoped.solve_all() {
-        Ok(_) => {},
-        Err(e) => errors.push(e),
-    };
+    if let Err(ref mut e) = scoped.solve_all() {
+        errors.append(e)
+    }
 
     tracing::trace!("Building return");
 
     let ret = reconstruct(fun.sig.ret, fun.span, &mut scoped, errors);
 
-    let args = {
-        tracing::trace!("Building argument");
+    tracing::trace!("Building arguments");
 
-        let mut sorted: Vec<_> = fun.sig.args.values().collect();
-        sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-        sorted
-            .into_iter()
-            .map(|(_, ty)| reconstruct(*ty, Span::None, &mut scoped, errors))
-            .collect()
-    };
+    let args = fun
+        .sig
+        .args
+        .iter()
+        .map(|ty| reconstruct(*ty, Span::None, &mut scoped, errors))
+        .collect();
 
     let locals = locals
         .into_iter()
@@ -790,8 +787,8 @@ fn build_expr<'a, 'b>(
         ast::ExprKind::Variable(var) => {
             if let Some((var, local)) = locals_lookup.get(&var) {
                 (ExprKind::Local(*var), *local)
-            } else if let Some((id, ty)) = ctx.sig.args.get(&var) {
-                (ExprKind::Arg(*id), *ty)
+            } else if let Some(id) = ctx.sig.args_lookup.get(&var).copied() {
+                (ExprKind::Arg(id), ctx.sig.args[id as usize])
             } else if let Some(fun) = ctx.scope.functions_lookup.get(&var) {
                 let origin = (*fun).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);

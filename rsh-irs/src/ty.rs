@@ -56,7 +56,7 @@ impl Type {
                         write!(f, "(")?;
 
                         for ele in elements {
-                            write!(f, "{}", self.scoped(&ele.kind))?;
+                            write!(f, "{}, ", self.scoped(&ele.kind))?;
                         }
 
                         write!(f, ")")

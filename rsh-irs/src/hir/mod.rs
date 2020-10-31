@@ -34,8 +34,8 @@ pub struct Function<'a> {
 #[derive(Debug, Clone)]
 pub struct FnSig {
     pub ident: Ident,
-    // TODO: Make this a vec
-    pub args: FastHashMap<Symbol, (u32, TypeId)>,
+    pub args_lookup: FastHashMap<Symbol, u32>,
+    pub args: Vec<TypeId>,
     pub ret: TypeId,
     pub span: Span,
 }
@@ -151,16 +151,17 @@ impl<'a> Module<'a> {
                         .map(|r| build_ast_ty(r, &mut ctx, 0))
                         .unwrap_or_else(|| ctx.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
-                    let args: FastHashMap<_, _> = sig
+                    let args_lookup = sig
                         .args
                         .iter()
                         .enumerate()
-                        .map(|(pos, arg)| {
-                            (
-                                arg.ident.symbol,
-                                (pos as u32, build_ast_ty(&arg.ty, &mut ctx, 0)),
-                            )
-                        })
+                        .map(|(pos, arg)| (arg.ident.symbol, pos as u32))
+                        .collect();
+
+                    let args = sig
+                        .args
+                        .iter()
+                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
                         .collect();
 
                     let generics = generics
@@ -183,6 +184,7 @@ impl<'a> Module<'a> {
 
                     let sig = FnSig {
                         ident: item.ident,
+                        args_lookup,
                         args,
                         ret,
                         span: Span::Range(item_start.into(), sig_end.into()),
@@ -218,7 +220,8 @@ impl<'a> Module<'a> {
                         generics: Vec::new(),
                         sig: FnSig {
                             ident: item.ident,
-                            args: FastHashMap::default(),
+                            args_lookup: FastHashMap::default(),
+                            args: Vec::new(),
                             ret: empty,
                             span: Span::Range(item_start.into(), sig_end.into()),
                         },
@@ -229,16 +232,10 @@ impl<'a> Module<'a> {
                     module.entry_points.push(EntryPoint { stage, fun })
                 },
                 ast::ItemKind::Extern(ref sig) => {
-                    let args: FastHashMap<_, _> = sig
+                    let args = sig
                         .args
                         .iter()
-                        .enumerate()
-                        .map(|(pos, arg)| {
-                            (
-                                arg.ident.symbol,
-                                (pos as u32, build_ast_ty(&arg.ty, &mut ctx, 0)),
-                            )
-                        })
+                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
                         .collect();
 
                     let ret = sig
@@ -249,6 +246,7 @@ impl<'a> Module<'a> {
 
                     let sig = FnSig {
                         ident: item.ident,
+                        args_lookup: FastHashMap::default(),
                         args,
                         ret,
                         span: item.span,

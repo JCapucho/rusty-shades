@@ -223,7 +223,7 @@ impl FunctionOrigin {
         impl<'a> fmt::Display for OriginDisplay<'a> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.origin {
-                    FunctionOrigin::Local(id) => write!(f, "Function({})", id),
+                    FunctionOrigin::Local(id) => write!(f, "FnDef({})", id),
                     FunctionOrigin::External(ident) => write!(f, "{}", self.rodeo.resolve(&ident)),
                 }
             }

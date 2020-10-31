@@ -474,8 +474,8 @@ impl<'a> InferContext<'a> {
                             f,
                             "{}fn({}) -> {} {{ {} }}",
                             if origin.is_extern() { "extern " } else { "" },
-                            args.values()
-                                .map(|(_, id)| format!("{}", self.with_id(*id)))
+                            args.iter()
+                                .map(|id| format!("{}", self.with_id(*id)))
                                 .collect::<Vec<_>>()
                                 .join(", "),
                             self.with_id(*ret),
@@ -654,6 +654,15 @@ impl<'a> InferContext<'a> {
                 .with_span(self.span(a))),
                 _ => Ok(()),
             },
+            (TypeInfo::Tuple(a_types), TypeInfo::Tuple(b_types))
+                if a_types.len() == b_types.len() =>
+            {
+                for (a, b) in a_types.into_iter().zip(b_types) {
+                    self.unify_or_check_bounds(a, b)?
+                }
+
+                Ok(())
+            }
             _ => self.unify(a, b),
         }
     }
@@ -676,8 +685,8 @@ impl<'a> InferContext<'a> {
                         return Some(false);
                     }
 
-                    for (a, b) in args.iter().zip(fn_args.values().map(|(_, id)| *id)) {
-                        if scoped.unify_or_check_bounds(*a, b).is_err() {
+                    for (call, def) in args.iter().zip(fn_args) {
+                        if scoped.unify_or_check_bounds(*call, def).is_err() {
                             return Some(false);
                         }
                     }
@@ -715,28 +724,45 @@ impl<'a> InferContext<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn solve_all(&mut self) -> Result<(), Error> {
+    pub fn solve_all(&mut self) -> Result<(), Vec<Error>> {
         tracing::debug!("Starting constraint solver loop");
+
+        let mut errors = Vec::new();
 
         'solver: loop {
             let constraints = self.constraints.keys().copied().collect::<Vec<_>>();
 
             // All constraints have been resolved
             if constraints.is_empty() {
-                break Ok(());
+                break;
             }
 
             for c in constraints {
-                if self.solve_inner(self.constraints[&c].clone())? {
-                    self.constraints.remove(&c);
-                    continue 'solver;
+                match self.solve_inner(self.constraints[&c].clone()) {
+                    Ok(true) => {
+                        self.constraints.remove(&c);
+                        continue 'solver;
+                    },
+                    Ok(false) => {},
+                    Err(e) => {
+                        self.constraints.remove(&c);
+                        errors.push(e)
+                    },
                 }
             }
 
-            break Err(Error::custom(format!(
+            errors.push(Error::custom(format!(
                 "{:?}",
                 self.constraints.values().next()
             )));
+
+            break;
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
         }
     }
 

@@ -254,7 +254,9 @@ impl<'a> HirPrettyPrinter<'a> {
                     ExprKind::Local(local) => write!(f, "Local({})", local)?,
                     ExprKind::Global(global) => write!(f, "Global({})", global)?,
                     ExprKind::Constant(constant) => write!(f, "Const({})", constant)?,
-                    ExprKind::Function(fun) => write!(f, "{}", fun.display(self.printer.rodeo))?,
+                    ExprKind::Function(fun) => {
+                        write!(f, "Function({})", fun.display(self.printer.rodeo))?
+                    },
                     ExprKind::Return(ref expr) => {
                         write!(f, "return")?;
 

@@ -428,14 +428,13 @@ impl thir::Function {
             .sig
             .args
             .iter()
-            .map(|ty| monomorphize::instantiate_ty(&ty, &generics).clone())
-            .filter(|ty| match ty.kind {
-                TypeKind::Empty | TypeKind::FnDef(_) => false,
-                _ => true,
-            })
+            .filter_map(|ty| clean_ty(ty, &generics))
             .collect();
 
-        let ret = monomorphize::instantiate_ty(&self.sig.ret, &generics).clone();
+        let ret = clean_ty(&self.sig.ret, &generics).unwrap_or_else(|| Type {
+            kind: TypeKind::Empty,
+            span: self.sig.ret.span,
+        });
 
         let fun = Function {
             name: self.sig.ident.symbol,
@@ -449,6 +448,31 @@ impl thir::Function {
         ctx.functions.push(fun);
 
         (id, node)
+    }
+}
+
+/// Instantiates generics and removes empty and function types
+fn clean_ty(ty: &Type, generics: &[Type]) -> Option<Type> {
+    let ty = monomorphize::instantiate_ty(ty, generics);
+
+    match ty.kind {
+        TypeKind::Tuple(ref types) => {
+            let mut types: Vec<_> = types
+                .iter()
+                .filter_map(|ty| clean_ty(ty, generics).clone())
+                .collect();
+
+            match types.len() {
+                0 => None,
+                1 => Some(types.remove(0)),
+                _ => Some(Type {
+                    kind: TypeKind::Tuple(types),
+                    span: ty.span,
+                }),
+            }
+        },
+        TypeKind::Empty | TypeKind::FnDef(_) => None,
+        _ => Some(ty.clone()),
     }
 }
 
@@ -589,8 +613,8 @@ impl thir::Expr<Type> {
                 let generics = monomorphize::collect(
                     ctx.hir_functions,
                     &fun.ty,
-                    &ty,
                     &args,
+                    &ty,
                     sta_builder.generics,
                 );
 
@@ -816,7 +840,12 @@ impl thir::Expr<Type> {
                             constructed_elements = tmp;
                         }
                     },
-                    TypeKind::Tuple(_) => {},
+                    TypeKind::Tuple(_) => {
+                        constructed_elements = constructed_elements
+                            .into_iter()
+                            .filter(|expr| clean_ty(expr.attr(), sta_builder.generics).is_some())
+                            .collect()
+                    },
                     _ => unreachable!(),
                 }
 
@@ -952,7 +981,8 @@ impl thir::Expr<Type> {
 
                 Expr::Local(local)
             },
-            thir::ExprKind::Function(_) => unreachable!(),
+            // Dummy local
+            thir::ExprKind::Function(_) => Expr::Local(!0),
         };
 
         Some(TypedExpr::new(expr, ty))

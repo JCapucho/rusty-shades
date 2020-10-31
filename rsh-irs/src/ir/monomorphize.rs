@@ -6,47 +6,59 @@ use crate::{
 
 pub fn collect(
     hir_functions: &Vec<Function>,
-    called_fun: &Type,
-    ret: &Type,
-    args: &[Expr<Type>],
+    fun: &Type,
+    call_args: &[Expr<Type>],
+    call_ret: &Type,
     generics: &[Type],
 ) -> Vec<Type> {
-    let origin = match instantiate_ty(called_fun, generics) {
+    let origin = match instantiate_ty(fun, generics) {
         Type {
             kind: TypeKind::FnDef(origin),
             ..
         } => origin,
         ref ty => {
-            println!("Not a function: {:?}", ty);
+            tracing::error!("Not a function: {:?}", ty);
             unreachable!()
         },
     };
 
     match origin {
         rsh_common::FunctionOrigin::Local(id) => {
-            let called_fun = &hir_functions[*id as usize];
+            let fun = &hir_functions[*id as usize];
 
-            let mut called_generics = vec![
+            let mut call_generics = vec![
                 Type {
                     kind: TypeKind::Empty,
                     span: Span::None
                 };
-                called_fun.sig.generics.len()
+                fun.sig.generics.len()
             ];
 
-            for (a, b) in called_fun.sig.args.iter().zip(args.iter()) {
-                if let TypeKind::Generic(pos) = a.kind {
-                    called_generics[pos as usize] = instantiate_ty(&b.ty, generics).clone();
-                }
+            for (def, call) in fun.sig.args.iter().zip(call_args.iter()) {
+                collect_inner(&mut call_generics, def, &call.ty)
             }
 
-            if let TypeKind::Generic(pos) = called_fun.sig.ret.kind {
-                called_generics[pos as usize] = instantiate_ty(ret, &called_generics).clone();
-            }
+            collect_inner(&mut call_generics, call_ret, &fun.sig.ret);
 
-            called_generics
+            call_generics
         },
         rsh_common::FunctionOrigin::External(_) => Vec::new(),
+    }
+}
+
+fn collect_inner(call_generics: &mut [Type], def: &Type, call: &Type) {
+    match def.kind {
+        TypeKind::Tuple(ref def_types) => {
+            if let TypeKind::Tuple(ref call_types) = call.kind {
+                for (def, call) in def_types.iter().zip(call_types.iter()) {
+                    collect_inner(call_generics, def, call)
+                }
+            }
+        },
+        TypeKind::Generic(pos) => {
+            call_generics[pos as usize] = instantiate_ty(&call, &call_generics).clone();
+        },
+        _ => {},
     }
 }
 
