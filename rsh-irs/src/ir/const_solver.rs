@@ -1,28 +1,56 @@
 use crate::{
     common::{error::Error, BinaryOp, FastHashMap, Literal, RodeoResolver, UnaryOp},
     ir::ConstantInner,
-    thir::{Block, Expr, ExprKind, StmtKind},
+    thir::{Block, Constant, Expr, ExprKind, StmtKind},
     ty::{Type, TypeKind},
     AssignTarget,
 };
 
-impl Expr<Type> {
-    pub(super) fn solve(
-        &self,
-        get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
+pub struct ConstSolver<'a> {
+    constants: &'a [Constant],
+    rodeo: &'a RodeoResolver,
+    errors: &'a mut Vec<Error>,
+
+    cache: FastHashMap<u32, ConstantInner>,
+}
+
+impl<'a> ConstSolver<'a> {
+    pub fn new(
+        constants: &'a [Constant],
+        rodeo: &'a RodeoResolver,
+        errors: &'a mut Vec<Error>,
+    ) -> Self {
+        ConstSolver {
+            constants,
+            rodeo,
+            errors,
+
+            cache: FastHashMap::default(),
+        }
+    }
+
+    pub fn solve(&mut self, id: u32) -> ConstantInner {
+        let mut locals = FastHashMap::default();
+        let res = self.solve_expr(&self.constants[id as usize].expr, &mut locals);
+        self.cache.insert(id, res.clone());
+        res
+    }
+
+    fn solve_expr(
+        &mut self,
+        expr: &Expr<Type>,
         locals: &mut FastHashMap<u32, ConstantInner>,
-        rodeo: &RodeoResolver,
-    ) -> Result<ConstantInner, Error> {
-        match self.kind {
+    ) -> ConstantInner {
+        match expr.kind {
             ExprKind::BinaryOp {
                 ref left,
                 op,
                 ref right,
             } => {
-                let left = left.solve(get_constant, locals, rodeo)?;
-                let right = right.solve(get_constant, locals, rodeo)?;
+                let left = self.solve_expr(left, locals);
+                let right = self.solve_expr(right, locals);
 
-                Ok(match (left, right) {
+                match (left, right) {
                     (ConstantInner::Scalar(a), ConstantInner::Scalar(b)) => {
                         ConstantInner::Scalar(apply_binary_op(a, op.node, b))
                     },
@@ -55,12 +83,12 @@ impl Expr<Type> {
                         ConstantInner::Matrix(b)
                     },
                     _ => unreachable!(),
-                })
+                }
             },
             ExprKind::UnaryOp { ref tgt, op } => {
-                let tgt = tgt.solve(get_constant, locals, rodeo)?;
+                let tgt = self.solve_expr(tgt, locals);
 
-                Ok(match tgt {
+                match tgt {
                     ConstantInner::Scalar(a) => ConstantInner::Scalar(apply_unary_op(a, op.node)),
                     ConstantInner::Vector(mut a) => {
                         a.iter_mut().for_each(|a| *a = apply_unary_op(*a, op.node));
@@ -72,11 +100,9 @@ impl Expr<Type> {
 
                         ConstantInner::Matrix(a)
                     },
-                })
+                }
             },
-            // TODO: const functions when?
-            ExprKind::Call { .. } => unreachable!(),
-            ExprKind::Literal(lit) => Ok(ConstantInner::Scalar(lit)),
+            ExprKind::Literal(lit) => ConstantInner::Scalar(lit),
             ExprKind::Access {
                 ref base,
                 ref field,
@@ -86,7 +112,7 @@ impl Expr<Type> {
                     TypeKind::Vector(_, _) => {
                         const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
 
-                        rodeo
+                        self.rodeo
                             .resolve(&field.kind.named().unwrap())
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u64)
@@ -94,9 +120,9 @@ impl Expr<Type> {
                     },
                     _ => unreachable!(),
                 };
-                let base = base.solve(get_constant, locals, rodeo)?;
+                let base = self.solve_expr(base, locals);
 
-                Ok(if fields.len() == 1 {
+                if fields.len() == 1 {
                     base.index(&ConstantInner::Scalar(Literal::Uint(fields[0])))
                 } else {
                     let mut data = [Literal::Uint(0); 4];
@@ -112,15 +138,15 @@ impl Expr<Type> {
                     }
 
                     ConstantInner::Vector(data)
-                })
+                }
             },
             ExprKind::Constructor { ref elements } => {
                 let elements: Vec<_> = elements
                     .iter()
-                    .map(|ele| Ok((ele.solve(get_constant, locals, rodeo)?, &ele.ty.kind)))
-                    .collect::<Result<_, Error>>()?;
+                    .map(|ele| (self.solve_expr(ele, locals), &ele.ty.kind))
+                    .collect();
 
-                Ok(match self.ty.kind {
+                match expr.ty.kind {
                     TypeKind::Vector(_, _) => {
                         if elements.len() == 1 {
                             match elements[0].0 {
@@ -192,68 +218,70 @@ impl Expr<Type> {
                         }
                     },
                     _ => unreachable!(),
-                })
+                }
             },
-            ExprKind::Local(id) => Ok(locals.get(&id).unwrap().clone()),
-            ExprKind::Constant(id) => get_constant(id),
+            ExprKind::Local(id) => locals.get(&id).unwrap().clone(),
+            ExprKind::Constant(id) => self.solve(id),
             ExprKind::Return(_) => {
-                Err(Error::custom(String::from("Cannot return in a constant")).with_span(self.span))
+                self.errors.push(
+                    Error::custom(String::from("Cannot return in a constant")).with_span(expr.span),
+                );
+                ConstantInner::Scalar(Literal::Boolean(false))
             },
             ExprKind::If {
                 ref condition,
                 ref accept,
                 ref reject,
             } => {
-                let condition = condition.solve(get_constant, locals, rodeo)?;
+                let condition = self.solve_expr(condition, locals);
                 let condition = match condition {
                     ConstantInner::Scalar(Literal::Boolean(val)) => val,
                     _ => unreachable!(),
                 };
 
                 if condition {
-                    accept.solve(get_constant, locals, rodeo)
+                    self.solve_block(accept, locals)
                 } else {
-                    reject.solve(get_constant, locals, rodeo)
+                    self.solve_block(reject, locals)
                 }
             },
             ExprKind::Index {
                 ref base,
                 ref index,
             } => {
-                let base = base.solve(get_constant, locals, rodeo)?;
-                let index = index.solve(get_constant, locals, rodeo)?;
+                let base = self.solve_expr(base, locals);
+                let index = self.solve_expr(index, locals);
 
-                Ok(base.index(&index))
+                base.index(&index)
             },
-            ExprKind::Block(ref block) => block.solve(get_constant, locals, rodeo),
-            ExprKind::Arg(_) => unreachable!(),
+            ExprKind::Block(ref block) => self.solve_block(block, locals),
+            // TODO: const functions when?
+            ExprKind::Call { .. } => unreachable!(),
             ExprKind::Function(_) => unreachable!(),
             ExprKind::Global(_) => unreachable!(),
+            ExprKind::Arg(_) => unreachable!(),
         }
     }
-}
 
-impl Block<Type> {
-    fn solve(
-        &self,
-        get_constant: &impl Fn(u32) -> Result<ConstantInner, Error>,
+    fn solve_block(
+        &mut self,
+        block: &Block<Type>,
         locals: &mut FastHashMap<u32, ConstantInner>,
-        rodeo: &RodeoResolver,
-    ) -> Result<ConstantInner, Error> {
-        for sta in self.stmts.iter() {
+    ) -> ConstantInner {
+        for sta in block.stmts.iter() {
             match sta.kind {
                 StmtKind::Expr(ref expr) => {
-                    return expr.solve(get_constant, locals, rodeo);
+                    return self.solve_expr(expr, locals);
                 },
                 StmtKind::ExprSemi(ref expr) => {
-                    expr.solve(get_constant, locals, rodeo)?;
+                    self.solve_expr(expr, locals);
                 },
                 StmtKind::Assign(tgt, ref expr) => {
                     let local = match tgt.node {
                         AssignTarget::Local(local) => local,
                         AssignTarget::Global(_) => unreachable!(),
                     };
-                    let val = expr.solve(get_constant, locals, rodeo)?;
+                    let val = self.solve_expr(expr, locals);
 
                     locals.insert(local, val);
                 },

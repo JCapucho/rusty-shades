@@ -2,7 +2,7 @@ pub use rsh_common::error::Error;
 pub use rsh_irs::thir::pretty::HirPrettyPrinter;
 
 use rsh_common::{Hasher, Rodeo, RodeoResolver};
-use rsh_irs::{hir, ir::Module as IrModule, thir, thir::Module as HirModule};
+use rsh_irs::{hir, ir::Module as IrModule, thir::Module as HirModule};
 
 pub fn build_hir(code: &str) -> Result<(HirModule, RodeoResolver), Vec<Error>> {
     let mut rodeo = Rodeo::with_hasher(Hasher::default());
@@ -16,7 +16,7 @@ pub fn build_hir(code: &str) -> Result<(HirModule, RodeoResolver), Vec<Error>> {
     let ast = ast_res.map_err(|e| vec![rsh_parser::common_error_from_parser_error(e, &rodeo)])?;
 
     let (module, infer_ctx) = hir::Module::build(&ast, &rodeo)?;
-    let module = thir::Module::build(&module, &infer_ctx)?;
+    let module = HirModule::build(&module, &infer_ctx)?;
 
     Ok((module, rodeo))
 }
@@ -24,7 +24,7 @@ pub fn build_hir(code: &str) -> Result<(HirModule, RodeoResolver), Vec<Error>> {
 pub fn build_ir(code: &str) -> Result<(IrModule, RodeoResolver), Vec<Error>> {
     let (module, rodeo) = build_hir(code)?;
 
-    let module = module.build_ir(&rodeo)?;
+    let module = IrModule::build(&module, &rodeo)?;
 
     Ok((module, rodeo))
 }

@@ -1,4 +1,3 @@
-use rsh_common::src::Span;
 use std::{
     cmp::{Eq, PartialEq},
     fmt,
@@ -7,7 +6,7 @@ use std::{
 };
 
 #[derive(Clone)]
-pub struct Node<T, U = Span>(Box<T>, U);
+pub struct Node<T, U>(Box<T>, U);
 
 impl<T, U> Node<T, U> {
     pub fn new(item: T, attr: U) -> Self { Self(Box::new(item), attr) }
@@ -70,9 +69,3 @@ impl<T: Hash, U: Hash> Hash for Node<T, U> {
 }
 
 impl<T: Eq, U> Eq for Node<T, U> {}
-
-pub type SrcNode<T> = Node<T, Span>;
-
-impl<T> SrcNode<T> {
-    pub fn span(&self) -> Span { *self.attr() }
-}
