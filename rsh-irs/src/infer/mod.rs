@@ -305,7 +305,7 @@ impl<'a> InferContext<'a> {
         }
     }
 
-    pub fn link(&mut self, a: TypeId, b: TypeId) {
+    fn link(&mut self, a: TypeId, b: TypeId) {
         if self.get_base(a) != self.get_base(b) {
             self.types.insert(a, TypeInfo::Ref(b));
         }

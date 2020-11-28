@@ -168,22 +168,25 @@ fn build_fn<'a>(
     };
 
     let mut local_variables = Arena::new();
-    let mut locals_lookup = FastHashMap::default();
+    let locals_lookup = fun
+        .locals
+        .iter()
+        .enumerate()
+        .map(|(id, local)| {
+            let ty = build_ty(&local.ty, ctx).0;
 
-    for (id, local) in fun.locals.iter().enumerate() {
-        let ty = build_ty(&local.ty, ctx).0;
+            let handle = local_variables.append(LocalVariable {
+                name: local
+                    .name
+                    .as_ref()
+                    .map(|symbol| ctx.rodeo.resolve(symbol).to_string()),
+                ty,
+                init: None,
+            });
 
-        let handle = local_variables.append(LocalVariable {
-            name: local
-                .name
-                .as_ref()
-                .map(|symbol| ctx.rodeo.resolve(symbol).to_string()),
-            ty,
-            init: None,
-        });
-
-        locals_lookup.insert(id as u32, handle);
-    }
+            (id as u32, handle)
+        })
+        .collect();
 
     let mut expressions = Arena::new();
 
@@ -372,6 +375,10 @@ fn build_stmt<'a>(
     builder: &mut BuilderContext<'a>,
 ) -> NagaStatement {
     match stmt {
+        Statement::Expr(_) => {
+            /* TODO: https://github.com/gfx-rs/naga/issues/152 */
+            NagaStatement::Kill
+        },
         Statement::Assign(tgt, expr) => {
             let pointer = expressions.append(match tgt {
                 AssignTarget::Local(id) => {

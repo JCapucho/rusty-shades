@@ -36,8 +36,4 @@ fn gen_tuple<T, W>(tuple: (T, W)) -> T {
     tuple.0
 }
 
-fn gen_fn_tuple<T: Fn() -> W, W>(tuple: (T, W)) -> T {
-    tuple.0
-}
-
-// args: --color never check
+// args: --color never build --target=glsl

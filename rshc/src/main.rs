@@ -25,6 +25,7 @@ const TARGETS: &[&str] = &[
     #[cfg(feature = "ir")]
     "ron",
     "hir",
+    "ir",
 ];
 
 fn main() -> io::Result<()> {
@@ -163,6 +164,20 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         return Ok(());
     }
 
+    if target == "ir" {
+        let (module, _) = handle_errors(build_ir(&code), &files, file_id, color)?;
+
+        let mut output = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(output)?;
+
+        write!(output, "{:#?}", module)?;
+
+        return Ok(());
+    }
+
     let naga_ir = handle_errors(build_naga_ir(&code), &files, file_id, color)?;
 
     let mut output = OpenOptions::new()
@@ -222,7 +237,8 @@ fn prefix(tgt: &str) -> &str {
         "glsl" => "glsl",
         "msl" => "msl",
         "ron" => "ron",
-        "hir" => ".rsh.debug",
+        "hir" => "hir.rsh.debug",
+        "ir" => "ir.rsh.debug",
         _ => unreachable!(),
     }
 }

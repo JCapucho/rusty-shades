@@ -14,4 +14,4 @@ fn vertex vertex_main() {
 	gl_position = scalar * v_position;
 }
 
-// args: --color never check
+// args: --color never build --target=glsl

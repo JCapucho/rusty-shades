@@ -29,14 +29,6 @@ pub struct Global {
 }
 
 impl Global {
-    fn is_readable(&self) -> bool {
-        match self.storage {
-            StorageClass::Input => true,
-            StorageClass::Output => false,
-            StorageClass::Uniform => true,
-        }
-    }
-
     fn is_writeable(&self) -> bool {
         match self.storage {
             StorageClass::Input => false,
@@ -68,6 +60,7 @@ pub enum Statement {
         reject: Vec<Statement>,
     },
     Block(Vec<Statement>),
+    Expr(TypedExpr),
 }
 
 #[derive(Debug, Clone)]
@@ -277,7 +270,7 @@ impl Module {
             ctx.module.entry_points.push(entry);
         }
 
-        emit_recursive_errors(&ctx.call_graph, &mut errors, entries);
+        emit_recursive_errors(&ctx.call_graph, &mut errors, &entries);
 
         if errors.is_empty() {
             Ok(module)
@@ -290,17 +283,21 @@ impl Module {
 fn emit_recursive_errors(
     graph: &Graph<Span, Span>,
     errors: &mut Vec<Error>,
-    entries: Vec<GraphIndex>,
+    entries: &[GraphIndex],
 ) {
     let mut nodes = Vec::new();
 
-    depth_first_search::<_, _, _, Control<()>>(&graph, entries, |event| match event {
-        DfsEvent::BackEdge(a, b) => {
-            nodes.push((a, b));
-            Control::Prune
+    depth_first_search::<_, _, _, Control<()>>(
+        &graph,
+        entries.iter().copied(),
+        |event| match event {
+            DfsEvent::BackEdge(a, b) => {
+                nodes.push((a, b));
+                Control::Prune
+            },
+            _ => Control::Continue,
         },
-        _ => Control::Continue,
-    });
+    );
 
     for (a, b) in nodes {
         let mut error = Error::custom(String::from("Recursive function detected"))
@@ -346,10 +343,11 @@ struct FunctionBuilderCtx<'a> {
 struct BlockCtx<'a> {
     node: GraphIndex,
     modifier: Option<EntryPointStage>,
-    locals: &'a mut Vec<Local>,
+    locals: &'a mut Vec<Option<Local>>,
     generics: &'a [Type],
 }
 
+#[tracing::instrument(skip(fun,ctx,generics), fields(name = ctx.rodeo.resolve(&fun.sig.ident)))]
 fn build_fn(
     fun: &thir::Function,
     ctx: &mut FunctionBuilderCtx<'_>,
@@ -360,7 +358,6 @@ fn build_fn(
         return *t;
     }
 
-    let span = fun.span;
     let ir_id = ctx.module.functions.len() as u32;
     let node = ctx.call_graph.add_node(fun.sig.span);
 
@@ -369,15 +366,17 @@ fn build_fn(
 
     if !block_returns(&fun.body, &fun.sig.ret) {
         ctx.errors
-            .push(Error::custom(String::from("Body doesn't return")).with_span(span))
+            .push(Error::custom(String::from("Body doesn't return")).with_span(fun.span))
     }
 
     let mut locals = fun
         .locals
         .iter()
-        .map(|local| Local {
-            name: Some(local.ident.symbol),
-            ty: local.ty.clone(),
+        .map(|local| {
+            Some(Local {
+                name: Some(local.ident.symbol),
+                ty: clean_ty(&local.ty, &generics)?,
+            })
         })
         .collect();
 
@@ -406,12 +405,19 @@ fn build_fn(
         span: fun.sig.ret.span,
     });
 
+    tracing::trace!(
+        "Ret: {} {:?} {}",
+        fun.sig.ret.display(ctx.rodeo),
+        generics,
+        ret.display(ctx.rodeo)
+    );
+
     let fun = Function {
         name: fun.sig.ident.symbol,
         args,
         ret,
         body,
-        locals,
+        locals: locals.into_iter().filter_map(|local| local).collect(),
     };
 
     let id = ctx.module.functions.len() as u32;
@@ -456,9 +462,11 @@ fn build_entry(
     let mut locals = entry
         .locals
         .iter()
-        .map(|local| Local {
-            name: Some(local.ident.symbol),
-            ty: local.ty.clone(),
+        .map(|local| {
+            Some(Local {
+                name: Some(local.ident.symbol),
+                ty: clean_ty(&local.ty, &[])?,
+            })
         })
         .collect();
 
@@ -477,7 +485,7 @@ fn build_entry(
         name: entry.ident.symbol,
         stage: entry.stage,
         body,
-        locals,
+        locals: locals.into_iter().filter_map(|local| local).collect(),
     };
 
     (entry, node)
@@ -496,12 +504,18 @@ fn build_stmt<'a, 'b>(
                 (Some(expr), Some(local)) => {
                     body.push(Statement::Assign(AssignTarget::Local(local), expr))
                 },
-                (Some(expr), None) => body.push(Statement::Return(Some(expr))),
+                (Some(expr), None) => {
+                    if let Some(_) = clean_ty(expr.attr(), block_ctx.generics) {
+                        body.push(Statement::Return(Some(expr)))
+                    }
+                },
                 _ => {},
             }
         },
         thir::StmtKind::ExprSemi(ref expr) => {
-            build_expr(expr, ctx, block_ctx, body, nested);
+            if let Some(expr) = build_expr(expr, ctx, block_ctx, body, nested) {
+                body.push(Statement::Expr(expr))
+            }
         },
         thir::StmtKind::Assign(tgt, ref expr) => {
             let tgt = match tgt.node {
@@ -531,13 +545,19 @@ fn build_stmt<'a, 'b>(
                         );
                     }
 
-                    AssignTarget::Global(id)
+                    Some(AssignTarget::Global(id))
                 },
-                id => id,
+                AssignTarget::Local(id) => block_ctx.locals[id as usize]
+                    .as_ref()
+                    .map(|_| AssignTarget::Local(id)),
             };
 
-            if let Some(expr) = build_expr(expr, ctx, block_ctx, body, nested) {
-                body.push(Statement::Assign(tgt, expr))
+            let expr = build_expr(expr, ctx, block_ctx, body, nested);
+
+            match (expr, tgt) {
+                (Some(expr), None) => body.push(Statement::Expr(expr)),
+                (Some(expr), Some(tgt)) => body.push(Statement::Assign(tgt, expr)),
+                _ => {},
             }
         },
     }
@@ -550,7 +570,7 @@ fn build_expr<'a, 'b>(
     body: &mut Vec<Statement>,
     nested: Option<u32>,
 ) -> Option<TypedExpr> {
-    let ty = monomorphize::instantiate_ty(&stmt.ty, &block_ctx.generics).clone();
+    let mut ty = clean_ty(&stmt.ty, &block_ctx.generics);
     let span = stmt.span;
 
     let expr = match stmt.kind {
@@ -574,54 +594,61 @@ fn build_expr<'a, 'b>(
             Expr::UnaryOp { tgt, op: op.node }
         },
         thir::ExprKind::Call { ref fun, ref args } => {
-            let generics =
-                monomorphize::collect(ctx.functions, &fun.ty, &args, &ty, block_ctx.generics);
+            ty = Some(ty.unwrap_or_else(|| Type {
+                kind: TypeKind::Empty,
+                span: Span::None,
+            }));
+            let unwrap_ty = ty.as_ref().unwrap();
 
-            let mut constructed_args = vec![];
+            let generics = monomorphize::collect(
+                ctx.functions,
+                &fun.ty,
+                &args,
+                &unwrap_ty,
+                block_ctx.generics,
+            );
 
-            for arg in args {
-                if let TypeKind::Empty | TypeKind::Generic(_) | TypeKind::FnDef(_) = arg.ty.kind {
-                    continue;
-                }
-
-                constructed_args.push(build_expr(arg, ctx, block_ctx, body, nested)?);
-            }
-
-            match monomorphize::instantiate_ty(&fun.ty, block_ctx.generics).kind {
-                TypeKind::FnDef(origin) => {
-                    let origin = origin.map_local(|id| {
-                        let (id, called_node) =
-                            build_fn(&ctx.functions[id as usize], ctx, generics, id);
-
-                        ctx.call_graph.add_edge(block_ctx.node, called_node, span);
-
-                        id
-                    });
-
-                    Expr::Call {
-                        origin,
-                        args: constructed_args,
+            let args = args
+                .iter()
+                .filter_map(|arg| {
+                    if let TypeKind::Empty | TypeKind::Generic(_) | TypeKind::FnDef(_) = arg.ty.kind
+                    {
+                        None
+                    } else {
+                        build_expr(arg, ctx, block_ctx, body, nested)
                     }
-                },
+                })
+                .collect();
+
+            let origin = match monomorphize::instantiate_ty(&fun.ty, block_ctx.generics).kind {
+                TypeKind::FnDef(origin) => origin.map_local(|id| {
+                    let (id, called_node) =
+                        build_fn(&ctx.functions[id as usize], ctx, generics, id);
+
+                    ctx.call_graph.add_edge(block_ctx.node, called_node, span);
+
+                    id
+                }),
                 _ => {
                     ctx.errors.push(
                         Error::custom(String::from("Couldn't resolve a function id"))
                             .with_span(span),
                     );
 
-                    Expr::Call {
-                        origin: FunctionOrigin::Local(0),
-                        args: constructed_args,
-                    }
+                    FunctionOrigin::Local(0)
                 },
-            }
+            };
+
+            Expr::Call { origin, args }
         },
         thir::ExprKind::Literal(lit) => Expr::Literal(lit),
         thir::ExprKind::Access {
             ref base,
             ref field,
         } => {
-            let fields = match base.ty.kind {
+            let base = build_expr(base, ctx, block_ctx, body, nested)?;
+
+            let fields = match base.attr().kind {
                 TypeKind::Struct(id) => vec![
                     ctx.structs[id as usize]
                         .members
@@ -639,24 +666,26 @@ fn build_expr<'a, 'b>(
                         .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
                         .collect()
                 },
-                _ => panic!(),
+                TypeKind::Scalar(_) => return Some(base),
+                TypeKind::Empty => return None,
+                _ => {
+                    tracing::error!("{}", ty?.display(ctx.rodeo));
+                    unreachable!()
+                },
             };
 
-            Expr::Access {
-                base: build_expr(base, ctx, block_ctx, body, nested)?,
-                fields,
-            }
+            Expr::Access { base, fields }
         },
         thir::ExprKind::Constructor { ref elements } => {
-            let mut constructed_elements = vec![];
-
-            for ele in elements {
-                constructed_elements.push(build_expr(ele, ctx, block_ctx, body, nested)?);
-            }
+            let ty = ty.as_ref()?;
+            let mut elements: Vec<_> = elements
+                .iter()
+                .map(|ele| build_expr(ele, ctx, block_ctx, body, nested))
+                .collect::<Option<_>>()?;
 
             match ty.kind {
                 TypeKind::Vector(_, size) => {
-                    if constructed_elements.len() == 1 {
+                    if elements.len() == 1 {
                         // # Small optimization
                         // previously a single value constructor would get the expression
                         // multiplied for the number of elements so for example v2(1. * 2.) is
@@ -668,35 +697,34 @@ fn build_expr<'a, 'b>(
                         // v2(local, local)
                         // ```
                         let local = block_ctx.locals.len() as u32;
-                        let ty = constructed_elements[0].attr().clone();
-                        block_ctx.locals.push(Local {
+                        let ty = elements[0].attr().clone();
+                        block_ctx.locals.push(Some(Local {
                             name: None,
                             ty: ty.clone(),
-                        });
+                        }));
 
                         body.push(Statement::Assign(
                             AssignTarget::Local(local),
-                            constructed_elements.remove(0),
+                            elements.remove(0),
                         ));
 
                         for _ in 0..(size as usize - 1) {
-                            constructed_elements
-                                .push(TypedExpr::new(Expr::Local(local), ty.clone()))
+                            elements.push(TypedExpr::new(Expr::Local(local), ty.clone()))
                         }
                     } else {
                         let mut tmp = vec![];
 
-                        for ele in constructed_elements.into_iter() {
+                        for ele in elements.into_iter() {
                             match ele.attr().kind {
                                 TypeKind::Scalar(_) => tmp.push(ele),
                                 TypeKind::Vector(scalar, size) => {
                                     // see Small optimization
                                     let local = block_ctx.locals.len() as u32;
                                     let ty = ele.attr().clone();
-                                    block_ctx.locals.push(Local {
+                                    block_ctx.locals.push(Some(Local {
                                         name: None,
                                         ty: ty.clone(),
-                                    });
+                                    }));
 
                                     body.push(Statement::Assign(AssignTarget::Local(local), ele));
 
@@ -720,43 +748,42 @@ fn build_expr<'a, 'b>(
                             }
                         }
 
-                        constructed_elements = tmp;
+                        elements = tmp;
                     }
                 },
                 TypeKind::Matrix { rows, .. } => {
-                    if constructed_elements.len() == 1 {
+                    if elements.len() == 1 {
                         // Small optimization
                         // see the comment on the vector
                         let local = block_ctx.locals.len() as u32;
-                        let ty = constructed_elements[0].attr().clone();
-                        block_ctx.locals.push(Local {
+                        let ty = elements[0].attr().clone();
+                        block_ctx.locals.push(Some(Local {
                             name: None,
                             ty: ty.clone(),
-                        });
+                        }));
 
                         body.push(Statement::Assign(
                             AssignTarget::Local(local),
-                            constructed_elements.remove(0),
+                            elements.remove(0),
                         ));
 
                         for _ in 0..(rows as usize - 1) {
-                            constructed_elements
-                                .push(TypedExpr::new(Expr::Local(local), ty.clone()))
+                            elements.push(TypedExpr::new(Expr::Local(local), ty.clone()))
                         }
                     } else {
                         let mut tmp = vec![];
 
-                        for ele in constructed_elements.into_iter() {
+                        for ele in elements.into_iter() {
                             match ele.attr().kind {
                                 TypeKind::Vector(_, _) => tmp.push(ele),
                                 TypeKind::Matrix { rows, columns } => {
                                     // see the small optimization on vec
                                     let local = block_ctx.locals.len() as u32;
                                     let ty = ele.attr().clone();
-                                    block_ctx.locals.push(Local {
+                                    block_ctx.locals.push(Some(Local {
                                         name: None,
                                         ty: ty.clone(),
-                                    });
+                                    }));
 
                                     body.push(Statement::Assign(AssignTarget::Local(local), ele));
 
@@ -780,21 +807,19 @@ fn build_expr<'a, 'b>(
                             }
                         }
 
-                        constructed_elements = tmp;
+                        elements = tmp;
                     }
                 },
-                TypeKind::Tuple(_) => {
-                    constructed_elements = constructed_elements
-                        .into_iter()
-                        .filter(|expr| clean_ty(expr.attr(), block_ctx.generics).is_some())
-                        .collect()
+                TypeKind::Tuple(_) => {},
+                TypeKind::Scalar(_) => return Some(elements.remove(0)),
+                TypeKind::Empty => return None,
+                _ => {
+                    tracing::error!("{:?} {:?}", ty, elements);
+                    unreachable!()
                 },
-                _ => unreachable!(),
             }
 
-            Expr::Constructor {
-                elements: constructed_elements,
-            }
+            Expr::Constructor { elements }
         },
         thir::ExprKind::Arg(pos) => Expr::Arg(pos),
         thir::ExprKind::Local(local) => Expr::Local(local),
@@ -817,11 +842,6 @@ fn build_expr<'a, 'b>(
                 },
             };
 
-            if !ctx.module.globals[id as usize].is_readable() {
-                ctx.errors
-                    .push(Error::custom(String::from("Global cannot be read")).with_span(span));
-            }
-
             Expr::Global(id)
         },
         thir::ExprKind::Return(ref expr) => {
@@ -838,51 +858,31 @@ fn build_expr<'a, 'b>(
             ref accept,
             ref reject,
         } => {
-            let local = block_ctx.locals.len() as u32;
-            block_ctx.locals.push(Local {
-                name: None,
-                ty: ty.clone(),
-            });
+            let nested = if let Some(ref ty) = ty {
+                let local = block_ctx.locals.len() as u32;
+                block_ctx.locals.push(Some(Local {
+                    name: None,
+                    ty: ty.clone(),
+                }));
+
+                Some(local)
+            } else {
+                None
+            };
 
             let sta = Statement::If {
                 condition: build_expr(condition, ctx, block_ctx, body, None)?,
-                accept: {
-                    let mut body = vec![];
-
-                    if !block_returns(&accept, &ty) {
-                        ctx.errors.push(
-                            Error::custom(String::from("Block doesn't return"))
-                                .with_span(accept.span),
-                        )
-                    }
-
-                    for stmt in accept.stmts.iter() {
-                        build_stmt(stmt, ctx, block_ctx, &mut body, Some(local));
-                    }
-
-                    body
-                },
-                reject: {
-                    let mut body = vec![];
-
-                    if !block_returns(&reject, &ty) {
-                        ctx.errors.push(
-                            Error::custom(String::from("Block doesn't return"))
-                                .with_span(reject.span),
-                        )
-                    }
-
-                    for stmt in reject.stmts.iter() {
-                        build_stmt(stmt, ctx, block_ctx, &mut body, Some(local));
-                    }
-
-                    body
-                },
+                accept: build_block(accept, ctx, block_ctx, nested, &ty),
+                reject: build_block(reject, ctx, block_ctx, nested, &ty),
             };
 
             body.push(sta);
 
-            Expr::Local(local)
+            if let Some(local) = nested {
+                Expr::Local(local)
+            } else {
+                return None;
+            }
         },
         thir::ExprKind::Index {
             ref base,
@@ -896,37 +896,32 @@ fn build_expr<'a, 'b>(
         },
         thir::ExprKind::Constant(id) => Expr::Constant(id),
         thir::ExprKind::Block(ref block) => {
-            let local = block_ctx.locals.len() as u32;
-            block_ctx.locals.push(Local {
-                name: None,
-                ty: ty.clone(),
-            });
+            let nested = if let Some(ref ty) = ty {
+                let local = block_ctx.locals.len() as u32;
+                block_ctx.locals.push(Some(Local {
+                    name: None,
+                    ty: ty.clone(),
+                }));
 
-            let sta = Statement::Block({
-                let mut body = vec![];
+                Some(local)
+            } else {
+                None
+            };
 
-                if !block_returns(&block, &ty) {
-                    ctx.errors.push(
-                        Error::custom(String::from("Block doesn't return")).with_span(block.span),
-                    )
-                }
+            let block = build_block(block, ctx, block_ctx, nested, &ty);
+            let stmt = Statement::Block(block);
+            body.push(stmt);
 
-                for stmt in block.stmts.iter() {
-                    build_stmt(stmt, ctx, block_ctx, &mut body, Some(local));
-                }
-
-                body
-            });
-
-            body.push(sta);
-
-            Expr::Local(local)
+            if let Some(local) = nested {
+                Expr::Local(local)
+            } else {
+                return None;
+            }
         },
-        // Dummy local
-        thir::ExprKind::Function(_) => Expr::Local(!0),
+        thir::ExprKind::Function(_) => return None,
     };
 
-    Some(TypedExpr::new(expr, ty))
+    Some(TypedExpr::new(expr, ty?))
 }
 
 fn returns(expr: &thir::Expr<Type>) -> bool {
@@ -947,6 +942,29 @@ fn returns(expr: &thir::Expr<Type>) -> bool {
         thir::ExprKind::Return(_) => true,
         _ => false,
     }
+}
+
+fn build_block<'a, 'b>(
+    block: &thir::Block<Type>,
+    ctx: &mut FunctionBuilderCtx<'a>,
+    block_ctx: &mut BlockCtx<'b>,
+    nested: Option<u32>,
+    ty: &Option<Type>,
+) -> Vec<Statement> {
+    let mut body = vec![];
+
+    if let Some(ref ty) = ty {
+        if !block_returns(&block, ty) {
+            ctx.errors
+                .push(Error::custom(String::from("Block doesn't return")).with_span(block.span))
+        }
+    }
+
+    for stmt in block.stmts.iter() {
+        build_stmt(stmt, ctx, block_ctx, &mut body, nested);
+    }
+
+    body
 }
 
 fn block_returns(block: &thir::Block<Type>, ty: &Type) -> bool {

@@ -27,7 +27,7 @@ struct Locals {
     min_max: Vector<2, Float>
 }
 
-fn vertex main() {
+fn vertex vertex_main() {
     v_color = a_color;
     v_normal = a_normal;
         
@@ -35,4 +35,4 @@ fn vertex main() {
     gl_position = globals.view_proj * locals.transform * v4(a_position, 1.0);
 }
 
-// args: --color never check
+// args: --color never build --target=glsl

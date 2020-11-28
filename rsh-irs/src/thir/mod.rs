@@ -595,7 +595,7 @@ fn build_stmt<'a, 'b>(
         ast::StmtKind::Expr(ref expr) => {
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
-            if expr.is_return() {
+            if !expr.is_return() {
                 if let Err(e) = ctx.infer_ctx.unify(expr.ty, out) {
                     ctx.errors.push(e)
                 }
@@ -833,7 +833,7 @@ fn build_expr<'a, 'b>(
                 let base = ctx
                     .infer_ctx
                     .add_scalar(ScalarInfo::Concrete(ScalarType::Bool));
-                ctx.infer_ctx.insert(TypeInfo::Scalar(base), condition.span)
+                ctx.infer_ctx.insert(base, condition.span)
             };
 
             if let Err(e) = ctx.infer_ctx.unify(condition.ty, boolean) {

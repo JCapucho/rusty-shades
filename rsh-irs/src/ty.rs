@@ -1,10 +1,22 @@
 use rsh_common::{src::Span, FunctionOrigin, RodeoResolver, ScalarType, VectorSize};
-use std::fmt;
+use std::{
+    cmp::PartialEq,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Eq)]
 pub struct Type {
     pub kind: TypeKind,
     pub span: Span,
+}
+
+impl Hash for Type {
+    fn hash<H: Hasher>(&self, state: &mut H) { self.kind.hash(state) }
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool { self.kind == other.kind }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

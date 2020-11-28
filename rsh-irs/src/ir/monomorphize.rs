@@ -38,7 +38,7 @@ pub fn collect(
                 collect_inner(&mut call_generics, def, &call.ty)
             }
 
-            collect_inner(&mut call_generics, call_ret, &fun.sig.ret);
+            collect_inner(&mut call_generics, &fun.sig.ret, call_ret);
 
             call_generics
         },
