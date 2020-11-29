@@ -1,6 +1,9 @@
 use crate::src::Span;
+#[cfg(feature = "serde")]
+use serde::Serialize;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct Error {
     msg: String,
     spans: Vec<Span>,

@@ -1,0 +1,168 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/extern-functions.rsh
+---
+Ok(Module(
+  header: Header(
+    version: (1, 0, 0),
+    generator: 1920299892,
+  ),
+  types: [
+    Type(
+      name: None,
+      inner: Vector(
+        size: Quad,
+        kind: Float,
+        width: 4,
+      ),
+    ),
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Float,
+        width: 4,
+      ),
+    ),
+  ],
+  constants: [],
+  global_variables: [
+    GlobalVariable(
+      name: Some("v_position"),
+      class: Input,
+      binding: Some(Location(0)),
+      ty: 1,
+      interpolation: None,
+      storage_access: StorageAccess(
+        bits: 0,
+      ),
+    ),
+    GlobalVariable(
+      name: Some("gl_position"),
+      class: Output,
+      binding: Some(BuiltIn(Position)),
+      ty: 1,
+      interpolation: None,
+      storage_access: StorageAccess(
+        bits: 0,
+      ),
+    ),
+    GlobalVariable(
+      name: Some("gl_position"),
+      class: Input,
+      binding: Some(BuiltIn(Position)),
+      ty: 1,
+      interpolation: None,
+      storage_access: StorageAccess(
+        bits: 0,
+      ),
+    ),
+  ],
+  functions: [],
+  entry_points: {
+    (Vertex, "vertex_main"): EntryPoint(
+      early_depth_test: None,
+      workgroup_size: (0, 0, 0),
+      function: Function(
+        name: None,
+        parameter_types: [],
+        return_type: None,
+        global_usage: [
+          GlobalUse(
+            bits: 1,
+          ),
+          GlobalUse(
+            bits: 2,
+          ),
+          GlobalUse(
+            bits: 0,
+          ),
+        ],
+        local_variables: [
+          LocalVariable(
+            name: Some("a"),
+            ty: 2,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("b"),
+            ty: 2,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("c"),
+            ty: 2,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("scalar"),
+            ty: 2,
+            init: None,
+          ),
+        ],
+        expressions: [
+          LocalVariable(1),
+          GlobalVariable(1),
+          AccessIndex(
+            base: 2,
+            index: 0,
+          ),
+          LocalVariable(2),
+          GlobalVariable(1),
+          AccessIndex(
+            base: 5,
+            index: 1,
+          ),
+          LocalVariable(3),
+          GlobalVariable(1),
+          AccessIndex(
+            base: 8,
+            index: 2,
+          ),
+          LocalVariable(4),
+          LocalVariable(1),
+          LocalVariable(2),
+          LocalVariable(3),
+          Call(
+            origin: External("fclamp"),
+            arguments: [
+              11,
+              12,
+              13,
+            ],
+          ),
+          GlobalVariable(2),
+          LocalVariable(4),
+          GlobalVariable(1),
+          Binary(
+            op: Multiply,
+            left: 16,
+            right: 17,
+          ),
+        ],
+        body: [
+          Store(
+            pointer: 1,
+            value: 3,
+          ),
+          Store(
+            pointer: 4,
+            value: 6,
+          ),
+          Store(
+            pointer: 7,
+            value: 9,
+          ),
+          Store(
+            pointer: 10,
+            value: 14,
+          ),
+          Store(
+            pointer: 15,
+            value: 18,
+          ),
+        ],
+      ),
+    ),
+  },
+))

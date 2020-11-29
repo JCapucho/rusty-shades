@@ -34,5 +34,3 @@ fn vertex vertex_main() {
     v_position = (locals.transform * v4(a_position, 1.0)).xyz;
     gl_position = globals.view_proj * locals.transform * v4(a_position, 1.0);
 }
-
-// args: --color never build --target=glsl

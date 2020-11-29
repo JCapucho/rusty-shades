@@ -1,0 +1,176 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/tuple.rsh
+---
+Ok(Module(
+  header: Header(
+    version: (1, 0, 0),
+    generator: 1920299892,
+  ),
+  types: [
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Sint,
+        width: 4,
+      ),
+    ),
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Float,
+        width: 4,
+      ),
+    ),
+    Type(
+      name: None,
+      inner: Struct(
+        members: [
+          StructMember(
+            name: None,
+            origin: Offset(0),
+            ty: 1,
+          ),
+          StructMember(
+            name: None,
+            origin: Offset(4),
+            ty: 2,
+          ),
+        ],
+      ),
+    ),
+  ],
+  constants: [
+    Constant(
+      name: None,
+      specialization: None,
+      inner: Uint(0),
+      ty: 1,
+    ),
+    Constant(
+      name: None,
+      specialization: None,
+      inner: Float(3),
+      ty: 2,
+    ),
+  ],
+  global_variables: [],
+  functions: [
+    Function(
+      name: Some("not_tuple"),
+      parameter_types: [],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Constant(1),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("tuple"),
+      parameter_types: [],
+      return_type: Some(3),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Constant(1),
+        Constant(2),
+        Compose(
+          ty: 3,
+          components: [
+            1,
+            2,
+          ],
+        ),
+      ],
+      body: [
+        Return(
+          value: Some(3),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("tuple_access"),
+      parameter_types: [],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Call(
+          origin: Local(2),
+          arguments: [],
+        ),
+        AccessIndex(
+          base: 1,
+          index: 0,
+        ),
+      ],
+      body: [
+        Return(
+          value: Some(2),
+        ),
+      ],
+    ),
+  ],
+  entry_points: {
+    (Vertex, "vertex_main"): EntryPoint(
+      early_depth_test: None,
+      workgroup_size: (0, 0, 0),
+      function: Function(
+        name: None,
+        parameter_types: [],
+        return_type: None,
+        global_usage: [],
+        local_variables: [
+          LocalVariable(
+            name: Some("a"),
+            ty: 1,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("b"),
+            ty: 3,
+            init: None,
+          ),
+        ],
+        expressions: [
+          LocalVariable(1),
+          Call(
+            origin: Local(1),
+            arguments: [],
+          ),
+          LocalVariable(2),
+          Call(
+            origin: Local(2),
+            arguments: [],
+          ),
+          LocalVariable(1),
+          Call(
+            origin: Local(3),
+            arguments: [],
+          ),
+        ],
+        body: [
+          Store(
+            pointer: 1,
+            value: 2,
+          ),
+          Store(
+            pointer: 3,
+            value: 4,
+          ),
+          Store(
+            pointer: 5,
+            value: 6,
+          ),
+        ],
+      ),
+    ),
+  },
+))

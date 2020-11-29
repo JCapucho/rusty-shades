@@ -1,0 +1,293 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/generic-infer.rsh
+---
+Ok(Module(
+  header: Header(
+    version: (1, 0, 0),
+    generator: 1920299892,
+  ),
+  types: [
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Sint,
+        width: 4,
+      ),
+    ),
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Float,
+        width: 4,
+      ),
+    ),
+  ],
+  constants: [
+    Constant(
+      name: None,
+      specialization: None,
+      inner: Uint(0),
+      ty: 1,
+    ),
+    Constant(
+      name: None,
+      specialization: None,
+      inner: Float(0),
+      ty: 2,
+    ),
+  ],
+  global_variables: [],
+  functions: [
+    Function(
+      name: Some("pass_trough"),
+      parameter_types: [
+        1,
+      ],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        FunctionParameter(0),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("test_int"),
+      parameter_types: [],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Constant(1),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("generic_function_call"),
+      parameter_types: [],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Call(
+          origin: Local(2),
+          arguments: [],
+        ),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("generic_function_pass_trough"),
+      parameter_types: [],
+      return_type: Some(1),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Call(
+          origin: Local(2),
+          arguments: [],
+        ),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("pass_trough"),
+      parameter_types: [
+        2,
+      ],
+      return_type: Some(2),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        FunctionParameter(0),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("test_float"),
+      parameter_types: [],
+      return_type: Some(2),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Constant(2),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("generic_function_pass_trough"),
+      parameter_types: [],
+      return_type: Some(2),
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        Call(
+          origin: Local(6),
+          arguments: [],
+        ),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+    Function(
+      name: Some("generic_tuple_access"),
+      parameter_types: [
+        2,
+      ],
+      return_type: None,
+      global_usage: [],
+      local_variables: [],
+      expressions: [
+        FunctionParameter(0),
+      ],
+      body: [
+        Return(
+          value: Some(1),
+        ),
+      ],
+    ),
+  ],
+  entry_points: {
+    (Vertex, "vertex_main"): EntryPoint(
+      early_depth_test: None,
+      workgroup_size: (0, 0, 0),
+      function: Function(
+        name: None,
+        parameter_types: [],
+        return_type: None,
+        global_usage: [],
+        local_variables: [
+          LocalVariable(
+            name: Some("a"),
+            ty: 1,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("b"),
+            ty: 2,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("c"),
+            ty: 1,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("e"),
+            ty: 1,
+            init: None,
+          ),
+          LocalVariable(
+            name: Some("f"),
+            ty: 2,
+            init: None,
+          ),
+        ],
+        expressions: [
+          LocalVariable(1),
+          Constant(1),
+          Call(
+            origin: Local(1),
+            arguments: [
+              2,
+            ],
+          ),
+          LocalVariable(1),
+          Call(
+            origin: Local(3),
+            arguments: [],
+          ),
+          LocalVariable(1),
+          Call(
+            origin: Local(4),
+            arguments: [],
+          ),
+          LocalVariable(2),
+          Constant(2),
+          Call(
+            origin: Local(5),
+            arguments: [
+              9,
+            ],
+          ),
+          LocalVariable(3),
+          Call(
+            origin: Local(2),
+            arguments: [],
+          ),
+          LocalVariable(4),
+          Call(
+            origin: Local(4),
+            arguments: [],
+          ),
+          LocalVariable(5),
+          Call(
+            origin: Local(7),
+            arguments: [],
+          ),
+        ],
+        body: [
+          Store(
+            pointer: 1,
+            value: 3,
+          ),
+          Store(
+            pointer: 4,
+            value: 5,
+          ),
+          Store(
+            pointer: 6,
+            value: 7,
+          ),
+          Store(
+            pointer: 8,
+            value: 10,
+          ),
+          Store(
+            pointer: 11,
+            value: 12,
+          ),
+          Store(
+            pointer: 13,
+            value: 14,
+          ),
+          Store(
+            pointer: 15,
+            value: 16,
+          ),
+          Kill,
+          Kill,
+        ],
+      ),
+    ),
+  },
+))

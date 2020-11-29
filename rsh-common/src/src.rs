@@ -1,6 +1,9 @@
+#[cfg(feature = "serde")]
+use serde::Serialize;
 use std::{fmt, ops::Range};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub struct Loc(usize);
 
 impl Loc {
@@ -34,6 +37,7 @@ impl From<u64> for Loc {
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize))]
 pub enum Span {
     None,
     Range(Loc, Loc),

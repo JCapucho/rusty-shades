@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 fxhash = "0.2"
 codespan-reporting = { version = "0.9", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
 
 # naga is under heavy development and many things aren't in the crates.io release
 [dependencies.naga]

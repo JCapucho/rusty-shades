@@ -1,0 +1,16 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/recursive-functions.rsh
+---
+Err([
+  Error(
+    msg: "Recursive function detected",
+    spans: [
+      Range(Loc(48), Loc(54)),
+      Range(Loc(33), Loc(39)),
+      Range(Loc(57), Loc(60)),
+    ],
+    hints: [],
+  ),
+])

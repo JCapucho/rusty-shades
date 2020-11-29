@@ -146,14 +146,14 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     let mut files = SimpleFiles::new();
     let file_id = files.add(input, &code);
 
+    let mut output = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .create(true)
+        .open(output)?;
+
     if target == "hir" {
         let (module, rodeo) = handle_errors(build_hir(&code), &files, file_id, color)?;
-
-        let mut output = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(output)?;
 
         write!(
             output,
@@ -167,24 +167,12 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
     if target == "ir" {
         let (module, _) = handle_errors(build_ir(&code), &files, file_id, color)?;
 
-        let mut output = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(output)?;
-
         write!(output, "{:#?}", module)?;
 
         return Ok(());
     }
 
     let naga_ir = handle_errors(build_naga_ir(&code), &files, file_id, color)?;
-
-    let mut output = OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .create(true)
-        .open(output)?;
 
     match target {
         #[cfg(feature = "spirv")]

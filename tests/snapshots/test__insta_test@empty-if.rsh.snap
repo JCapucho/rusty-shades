@@ -1,0 +1,63 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/empty-if.rsh
+---
+Ok(Module(
+  header: Header(
+    version: (1, 0, 0),
+    generator: 1920299892,
+  ),
+  types: [
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Bool,
+        width: 1,
+      ),
+    ),
+  ],
+  constants: [
+    Constant(
+      name: None,
+      specialization: None,
+      inner: Bool(true),
+      ty: 1,
+    ),
+  ],
+  global_variables: [],
+  functions: [
+    Function(
+      name: Some("test"),
+      parameter_types: [],
+      return_type: None,
+      global_usage: [],
+      local_variables: [],
+      expressions: [],
+      body: [],
+    ),
+  ],
+  entry_points: {
+    (Vertex, "vertex_main"): EntryPoint(
+      early_depth_test: None,
+      workgroup_size: (0, 0, 0),
+      function: Function(
+        name: None,
+        parameter_types: [],
+        return_type: None,
+        global_usage: [],
+        local_variables: [],
+        expressions: [
+          Constant(1),
+        ],
+        body: [
+          If(
+            condition: 1,
+            accept: [],
+            reject: [],
+          ),
+        ],
+      ),
+    ),
+  },
+))

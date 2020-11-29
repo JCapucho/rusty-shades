@@ -1,0 +1,58 @@
+---
+source: tests/test.rs
+expression: res
+input_file: tests/structs.rsh
+---
+Ok(Module(
+  header: Header(
+    version: (1, 0, 0),
+    generator: 1920299892,
+  ),
+  types: [
+    Type(
+      name: None,
+      inner: Scalar(
+        kind: Sint,
+        width: 4,
+      ),
+    ),
+    Type(
+      name: Some("TupleStruct"),
+      inner: Struct(
+        members: [
+          StructMember(
+            name: Some("0"),
+            origin: Offset(0),
+            ty: 1,
+          ),
+          StructMember(
+            name: Some("1"),
+            origin: Offset(4),
+            ty: 1,
+          ),
+        ],
+      ),
+    ),
+    Type(
+      name: Some("NormalStruct"),
+      inner: Struct(
+        members: [
+          StructMember(
+            name: Some("a"),
+            origin: Offset(0),
+            ty: 1,
+          ),
+          StructMember(
+            name: Some("b"),
+            origin: Offset(4),
+            ty: 1,
+          ),
+        ],
+      ),
+    ),
+  ],
+  constants: [],
+  global_variables: [],
+  functions: [],
+  entry_points: {},
+))

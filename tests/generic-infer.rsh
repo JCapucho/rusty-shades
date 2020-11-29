@@ -1,14 +1,14 @@
 fn vertex vertex_main() {
     let a = pass_trough(0);
-    a = pain(test_int);
-    a = pain2(test_int);
+    a = generic_function_call(test_int);
+    a = generic_function_pass_trough(test_int);
 
     let b = pass_trough(0.0);
-    let c = pain(test_int);
-    let e = pain2(test_int);
-    let f = pain2(test_float);
+    let c = generic_function_call(test_int);
+    let e = generic_function_pass_trough(test_int);
+    let f = generic_function_pass_trough(test_float);
 
-    let g = gen_tuple((test_float, 0.0));
+    let g = generic_tuple_access((test_float, 0.0));
     g();
 }
 
@@ -24,16 +24,14 @@ fn pass_trough<T>(t: T) -> T {
     t
 }
 
-fn pain<T: Fn() -> Int>(f: T) -> Int {
+fn generic_function_call<T: Fn() -> Int>(f: T) -> Int {
     f()
 }
 
-fn pain2<T, F: Fn() -> T>(f: F) -> T {
+fn generic_function_pass_trough<T, F: Fn() -> T>(f: F) -> T {
     f()
 }
 
-fn gen_tuple<T, W>(tuple: (T, W)) -> T {
+fn generic_tuple_access<T, W>(tuple: (T, W)) -> T {
     tuple.0
 }
-
-// args: --color never build --target=glsl
