@@ -35,7 +35,7 @@ pub fn collect(
             ];
 
             for (def, call) in fun.sig.args.iter().zip(call_args.iter()) {
-                collect_inner(&mut call_generics, def, &call.ty)
+                collect_inner(&mut call_generics, &def.ty, &call.ty)
             }
 
             collect_inner(&mut call_generics, &fun.sig.ret, call_ret);

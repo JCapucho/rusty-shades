@@ -2,9 +2,9 @@ pub use naga::{self, back, Module as NagaModule};
 
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
-    Function as NagaFunction, FunctionOrigin, GlobalVariable, Handle, Header, LocalVariable,
-    MemberOrigin, ScalarKind, Statement as NagaStatement, StorageAccess, StructMember,
-    Type as NagaType, TypeInner,
+    Function as NagaFunction, FunctionArgument, FunctionOrigin, GlobalVariable, Handle, Header,
+    LocalVariable, MemberOrigin, ScalarKind, Statement as NagaStatement, StorageAccess,
+    StructMember, Type as NagaType, TypeInner,
 };
 use rsh_common::{EntryPointStage, FastHashMap, RodeoResolver};
 use rsh_irs::{
@@ -58,6 +58,7 @@ pub fn build(hir_module: &Module, rodeo: &RodeoResolver) -> NagaModule {
             class: global.storage.into(),
             binding: Some(global.binding.into()),
             ty,
+            init: None,
             interpolation: None,
             storage_access: StorageAccess::empty(),
         });
@@ -160,7 +161,19 @@ fn build_fn<'a>(
         return *handle;
     }
 
-    let parameter_types = fun.args.iter().map(|ty| build_ty(ty, ctx).0).collect();
+    let arguments = fun
+        .args
+        .iter()
+        .map(|arg| {
+            let ty = build_ty(&arg.ty, ctx).0;
+            let name = ctx.rodeo.resolve(&arg.name).to_string();
+
+            FunctionArgument {
+                name: Some(name),
+                ty,
+            }
+        })
+        .collect();
 
     let return_type = match fun.ret.kind {
         TypeKind::Empty => None,
@@ -198,7 +211,7 @@ fn build_fn<'a>(
 
     let mut fun = NagaFunction {
         name: Some(ctx.rodeo.resolve(&fun.name).to_string()),
-        parameter_types,
+        arguments,
         return_type,
         global_usage: Vec::new(),
         expressions,
@@ -243,7 +256,7 @@ fn build_entry_point<'a>(entry_point: &EntryPoint, module: &Module, ctx: &mut Bu
 
     let mut function = NagaFunction {
         name: None,
-        parameter_types: Vec::new(),
+        arguments: Vec::new(),
         return_type: None,
         global_usage: Vec::new(),
         expressions,
@@ -555,7 +568,7 @@ fn build_expr<'a>(
 
             Expression::Access { base, index }
         },
-        Expr::Arg(var) => Expression::FunctionParameter(*var),
+        Expr::Arg(var) => Expression::FunctionArgument(*var),
         Expr::Local(var) => Expression::LocalVariable(*locals_lookup.get(var).unwrap()),
         Expr::Global(var) => Expression::GlobalVariable(*ctx.globals_lookup.get(var).unwrap()),
         Expr::Constant(id) => Expression::Constant(*ctx.constants_lookup.get(id).unwrap()),

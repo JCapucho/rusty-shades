@@ -475,7 +475,7 @@ impl<'a> InferContext<'a> {
                             "{}fn({}) -> {} {{ {} }}",
                             if origin.is_extern() { "extern " } else { "" },
                             args.iter()
-                                .map(|id| format!("{}", self.with_id(*id)))
+                                .map(|arg| format!("{}", self.with_id(arg.ty)))
                                 .collect::<Vec<_>>()
                                 .join(", "),
                             self.with_id(*ret),
@@ -686,7 +686,7 @@ impl<'a> InferContext<'a> {
                     }
 
                     for (call, def) in args.iter().zip(fn_args) {
-                        if scoped.unify_or_check_bounds(*call, def).is_err() {
+                        if scoped.unify_or_check_bounds(*call, def.ty).is_err() {
                             return Some(false);
                         }
                     }

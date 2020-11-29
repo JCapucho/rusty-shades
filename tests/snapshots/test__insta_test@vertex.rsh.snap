@@ -131,6 +131,7 @@ Ok(Module(
       class: Input,
       binding: Some(Location(0)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -141,6 +142,7 @@ Ok(Module(
       class: Input,
       binding: Some(Location(1)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -151,6 +153,7 @@ Ok(Module(
       class: Input,
       binding: Some(Location(2)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -161,6 +164,7 @@ Ok(Module(
       class: Output,
       binding: Some(Location(0)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -171,6 +175,7 @@ Ok(Module(
       class: Output,
       binding: Some(Location(1)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -181,6 +186,7 @@ Ok(Module(
       class: Output,
       binding: Some(Location(2)),
       ty: 2,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -191,6 +197,7 @@ Ok(Module(
       class: Output,
       binding: Some(BuiltIn(Position)),
       ty: 8,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -201,6 +208,7 @@ Ok(Module(
       class: Input,
       binding: Some(BuiltIn(Position)),
       ty: 8,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -214,6 +222,7 @@ Ok(Module(
         binding: 0,
       )),
       ty: 3,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -227,6 +236,7 @@ Ok(Module(
         binding: 0,
       )),
       ty: 5,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -240,7 +250,7 @@ Ok(Module(
       workgroup_size: (0, 0, 0),
       function: Function(
         name: None,
-        parameter_types: [],
+        arguments: [],
         return_type: None,
         global_usage: [
           GlobalUse(

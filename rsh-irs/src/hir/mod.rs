@@ -35,9 +35,15 @@ pub struct Function<'a> {
 pub struct FnSig {
     pub ident: Ident,
     pub args_lookup: FastHashMap<Symbol, u32>,
-    pub args: Vec<TypeId>,
+    pub args: Vec<FunctionArg>,
     pub ret: TypeId,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionArg {
+    pub name: Ident,
+    pub ty: TypeId,
 }
 
 #[derive(Debug)]
@@ -161,7 +167,14 @@ impl<'a> Module<'a> {
                     let args = sig
                         .args
                         .iter()
-                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
+                        .map(|arg| {
+                            let ty = build_ast_ty(&arg.ty, &mut ctx, 0);
+
+                            FunctionArg {
+                                name: arg.ident,
+                                ty,
+                            }
+                        })
                         .collect();
 
                     let generics = generics
@@ -235,7 +248,14 @@ impl<'a> Module<'a> {
                     let args = sig
                         .args
                         .iter()
-                        .map(|arg| build_ast_ty(&arg.ty, &mut ctx, 0))
+                        .map(|arg| {
+                            let ty = build_ast_ty(&arg.ty, &mut ctx, 0);
+
+                            FunctionArg {
+                                name: arg.ident,
+                                ty,
+                            }
+                        })
                         .collect();
 
                     let ret = sig

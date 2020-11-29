@@ -29,7 +29,7 @@ impl<'a> InferContext<'a> {
                     TypeInfo::FnDef(fun) => {
                         let FnSig { args, ret, .. } = self.get_function(fun);
 
-                        (args.clone(), *ret)
+                        (args.iter().map(|arg| arg.ty).collect(), *ret)
                     },
                     TypeInfo::Generic(_, TraitBound::Fn { args, ret }) => (args, ret),
                     _ => {
@@ -126,7 +126,7 @@ impl<'a> InferContext<'a> {
                         let FnSig { args, ret, .. } = self.get_function(fun).clone();
 
                         for (def, call) in def_args.iter().zip(args.iter()) {
-                            self.collect_inner(generics, *call, *def);
+                            self.collect_inner(generics, call.ty, *def);
                         }
 
                         self.collect_inner(generics, ret, def_ret);

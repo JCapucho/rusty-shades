@@ -43,9 +43,15 @@ pub struct Local<T> {
 pub struct FnSig {
     pub ident: Ident,
     pub generics: Vec<Ident>,
-    pub args: Vec<Type>,
+    pub args: Vec<FunctionArg>,
     pub ret: Type,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionArg {
+    pub name: Ident,
+    pub ty: Type,
 }
 
 #[derive(Debug)]
@@ -481,7 +487,11 @@ fn build_fn(
         .sig
         .args
         .iter()
-        .map(|ty| reconstruct(*ty, Span::None, &mut scoped, errors))
+        .map(|arg| {
+            let ty = reconstruct(arg.ty, Span::None, &mut scoped, errors);
+
+            FunctionArg { name: arg.name, ty }
+        })
         .collect();
 
     let locals = locals
@@ -788,7 +798,7 @@ fn build_expr<'a, 'b>(
             if let Some((var, local)) = locals_lookup.get(&var) {
                 (ExprKind::Local(*var), *local)
             } else if let Some(id) = ctx.sig.args_lookup.get(&var).copied() {
-                (ExprKind::Arg(id), ctx.sig.args[id as usize])
+                (ExprKind::Arg(id), ctx.sig.args[id as usize].ty)
             } else if let Some(fun) = ctx.scope.functions_lookup.get(&var) {
                 let origin = (*fun).into();
                 let ty = ctx.infer_ctx.insert(TypeInfo::FnDef(origin), expr.span);

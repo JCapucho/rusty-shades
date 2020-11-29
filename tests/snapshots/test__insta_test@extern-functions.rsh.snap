@@ -32,6 +32,7 @@ Ok(Module(
       class: Input,
       binding: Some(Location(0)),
       ty: 1,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -42,6 +43,7 @@ Ok(Module(
       class: Output,
       binding: Some(BuiltIn(Position)),
       ty: 1,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -52,6 +54,7 @@ Ok(Module(
       class: Input,
       binding: Some(BuiltIn(Position)),
       ty: 1,
+      init: None,
       interpolation: None,
       storage_access: StorageAccess(
         bits: 0,
@@ -65,7 +68,7 @@ Ok(Module(
       workgroup_size: (0, 0, 0),
       function: Function(
         name: None,
-        parameter_types: [],
+        arguments: [],
         return_type: None,
         global_usage: [
           GlobalUse(

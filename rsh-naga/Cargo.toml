@@ -12,7 +12,7 @@ rsh-irs = { path = "../rsh-irs" }
 # naga is under heavy development and many things aren't in the crates.io release
 [dependencies.naga]
 git = "https://github.com/gfx-rs/naga.git"
-rev = "587dc01a2cc43fdf4637f1bf6d2b75b703e9f681"
+rev = "181d8721cc9577fcd6e509eb5c1c6c3e16f95398"
 
 [features]
 spirv = ["naga/spv-out"]

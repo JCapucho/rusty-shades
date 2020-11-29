@@ -190,19 +190,30 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         #[cfg(feature = "glsl")]
         "glsl" => {
             use rsh_naga::{
-                back::glsl::{write, Options, Version},
+                back::glsl::{Options, Version, Writer},
                 naga::ShaderStage,
             };
 
-            // TODO: Support specifying version and stage
-            write(&naga_ir, &mut output, Options {
+            Writer::new(&mut output, &naga_ir, &Options {
                 entry_point: (ShaderStage::Vertex, String::from("vertex_main")),
                 version: Version::Embedded(310),
             })
+            .unwrap()
+            .write()
             .unwrap();
         },
         #[cfg(feature = "msl")]
-        "msl" => todo!(),
+        "msl" => {
+            use rsh_naga::back::msl::{BindingMap, Options, Writer};
+
+            Writer::new(&mut output)
+                .write(&naga_ir, &Options {
+                    lang_version: (1, 0),
+                    spirv_cross_compatibility: false,
+                    binding_map: BindingMap::default(),
+                })
+                .unwrap();
+        },
         #[cfg(feature = "ir")]
         "ron" => {
             use ron::{ser::PrettyConfig, Serializer};

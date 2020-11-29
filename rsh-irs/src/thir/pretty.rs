@@ -144,7 +144,12 @@ impl<'a> HirPrettyPrinter<'a> {
                 write!(f, "(")?;
 
                 for arg in self.func.sig.args.iter() {
-                    write!(f, "{},", arg.display(self.printer.rodeo))?;
+                    write!(
+                        f,
+                        "{}: {},",
+                        self.printer.rodeo.resolve(&arg.name),
+                        arg.ty.display(self.printer.rodeo)
+                    )?;
                 }
 
                 writeln!(

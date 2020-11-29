@@ -99,10 +99,16 @@ pub enum Expr {
 #[derive(Debug)]
 pub struct Function {
     pub name: Symbol,
-    pub args: Vec<Type>,
+    pub args: Vec<FunctionArg>,
     pub ret: Type,
     pub body: Vec<Statement>,
     pub locals: Vec<Local>,
+}
+
+#[derive(Debug)]
+pub struct FunctionArg {
+    pub name: Symbol,
+    pub ty: Type,
 }
 
 #[derive(Debug)]
@@ -397,7 +403,14 @@ fn build_fn(
         .sig
         .args
         .iter()
-        .filter_map(|ty| clean_ty(ty, &generics))
+        .filter_map(|arg| {
+            let ty = clean_ty(&arg.ty, &generics)?;
+
+            Some(FunctionArg {
+                name: *arg.name,
+                ty,
+            })
+        })
         .collect();
 
     let ret = clean_ty(&fun.sig.ret, &generics).unwrap_or_else(|| Type {

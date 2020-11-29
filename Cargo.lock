@@ -607,12 +607,13 @@ checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
 [[package]]
 name = "naga"
 version = "0.2.0"
-source = "git+https://github.com/gfx-rs/naga.git?rev=587dc01a2cc43fdf4637f1bf6d2b75b703e9f681#587dc01a2cc43fdf4637f1bf6d2b75b703e9f681"
+source = "git+https://github.com/gfx-rs/naga.git?rev=181d8721cc9577fcd6e509eb5c1c6c3e16f95398#181d8721cc9577fcd6e509eb5c1c6c3e16f95398"
 dependencies = [
  "bitflags",
  "fxhash",
  "log",
  "num-traits",
+ "petgraph",
  "serde",
  "spirv_headers",
  "thiserror",
