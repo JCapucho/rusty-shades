@@ -28,6 +28,17 @@ Ok(Module(
   global_variables: [],
   functions: [
     Function(
+      name: Some("test"),
+      arguments: [],
+      return_type: None,
+      global_usage: [],
+      local_variables: [],
+      expressions: [],
+      body: [
+        Kill,
+      ],
+    ),
+    Function(
       name: Some("test_int"),
       arguments: [],
       return_type: Some(1),
@@ -40,17 +51,6 @@ Ok(Module(
         Return(
           value: Some(1),
         ),
-      ],
-    ),
-    Function(
-      name: Some("test"),
-      arguments: [],
-      return_type: None,
-      global_usage: [],
-      local_variables: [],
-      expressions: [],
-      body: [
-        Kill,
       ],
     ),
   ],

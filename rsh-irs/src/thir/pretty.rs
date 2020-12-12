@@ -2,7 +2,7 @@ use super::{
     Constant, EntryPoint, Expr, ExprKind, Function, Global, Module, Stmt, StmtKind, Struct,
 };
 use crate::ty::{Type, TypeKind};
-use rsh_common::RodeoResolver;
+use rsh_common::{FunctionOrigin, RodeoResolver};
 use std::fmt;
 
 pub struct HirPrettyPrinter<'a> {
@@ -257,11 +257,23 @@ impl<'a> HirPrettyPrinter<'a> {
                     },
                     ExprKind::Arg(arg) => write!(f, "Arg({})", arg)?,
                     ExprKind::Local(local) => write!(f, "Local({})", local)?,
-                    ExprKind::Global(global) => write!(f, "Global({})", global)?,
-                    ExprKind::Constant(constant) => write!(f, "Const({})", constant)?,
-                    ExprKind::Function(fun) => {
-                        write!(f, "Function({})", fun.display(self.printer.rodeo))?
+                    ExprKind::Global(global) => {
+                        let ident = self.printer.module.globals[global as usize].ident;
+
+                        write!(f, "{}", self.printer.rodeo.resolve(&ident))?
                     },
+                    ExprKind::Constant(constant) => {
+                        let ident = self.printer.module.constants[constant as usize].ident;
+
+                        write!(f, "{}", self.printer.rodeo.resolve(&ident))?
+                    },
+                    ExprKind::Function(fun) => write!(f, "{}", match fun {
+                        FunctionOrigin::External(ident) => self.printer.rodeo.resolve(&ident),
+                        FunctionOrigin::Local(id) => {
+                            let ident = self.printer.module.functions[id as usize].sig.ident;
+                            self.printer.rodeo.resolve(&ident)
+                        },
+                    })?,
                     ExprKind::Return(ref expr) => {
                         write!(f, "return")?;
 

@@ -250,7 +250,7 @@ Ok(Module(
           ),
           LocalVariable(3),
           Call(
-            origin: Local(2),
+            origin: Local(3),
             arguments: [],
           ),
           LocalVariable(4),

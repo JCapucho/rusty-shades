@@ -105,7 +105,7 @@ pub struct Function {
     pub locals: Vec<Local>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub struct FunctionArg {
     pub name: Symbol,
     pub ty: Type,
@@ -334,6 +334,13 @@ fn build_struct(strct: &thir::Struct) -> Struct {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct CallableSig {
+    function: u32,
+    args: Vec<FunctionArg>,
+    ret: Type,
+}
+
 struct FunctionBuilderCtx<'a> {
     errors: &'a mut Vec<Error>,
     module: &'a mut Module,
@@ -343,7 +350,7 @@ struct FunctionBuilderCtx<'a> {
     functions: &'a Vec<thir::Function>,
     globals_lookup: &'a mut FastHashMap<u32, GlobalLookup>,
     structs: &'a Vec<thir::Struct>,
-    instances_map: FastHashMap<(u32, Vec<Type>), (u32, GraphIndex)>,
+    instances_map: FastHashMap<CallableSig, (u32, GraphIndex)>,
 }
 
 struct BlockCtx<'a> {
@@ -353,22 +360,54 @@ struct BlockCtx<'a> {
     generics: &'a [Type],
 }
 
-#[tracing::instrument(skip(fun,ctx,generics), fields(name = ctx.rodeo.resolve(&fun.sig.ident)))]
+#[tracing::instrument(skip(ctx, generics))]
 fn build_fn(
-    fun: &thir::Function,
+    function: u32,
     ctx: &mut FunctionBuilderCtx<'_>,
     generics: Vec<Type>,
-    id: u32,
 ) -> (u32, GraphIndex) {
-    if let Some(t) = ctx.instances_map.get(&(id, generics.clone())) {
+    let fun = &ctx.functions[function as usize];
+    let args: Vec<_> = fun
+        .sig
+        .args
+        .iter()
+        .filter_map(|arg| {
+            let ty = clean_ty(&arg.ty, &generics)?;
+
+            Some(FunctionArg {
+                name: *arg.name,
+                ty,
+            })
+        })
+        .collect();
+
+    let ret = clean_ty(&fun.sig.ret, &generics).unwrap_or_else(|| Type {
+        kind: TypeKind::Empty,
+        span: fun.sig.ret.span,
+    });
+
+    let callable_sig = CallableSig {
+        function,
+        args: args.clone(),
+        ret: ret.clone(),
+    };
+
+    if let Some(t) = ctx.instances_map.get(&callable_sig) {
         return *t;
     }
 
-    let ir_id = ctx.module.functions.len() as u32;
-    let node = ctx.call_graph.add_node(fun.sig.span);
+    let id = ctx.module.functions.len() as u32;
 
-    ctx.instances_map
-        .insert((id, generics.clone()), (ir_id, node));
+    let node = ctx.call_graph.add_node(fun.sig.span);
+    ctx.instances_map.insert(callable_sig, (id, node));
+
+    ctx.module.functions.push(Function {
+        name: fun.sig.ident.symbol,
+        args,
+        ret,
+        body: Vec::new(),
+        locals: Vec::new(),
+    });
 
     if !block_returns(&fun.body, &fun.sig.ret) {
         ctx.errors
@@ -399,42 +438,9 @@ fn build_fn(
         build_stmt(stmt, ctx, &mut block_ctx, &mut body, None);
     }
 
-    let args = fun
-        .sig
-        .args
-        .iter()
-        .filter_map(|arg| {
-            let ty = clean_ty(&arg.ty, &generics)?;
-
-            Some(FunctionArg {
-                name: *arg.name,
-                ty,
-            })
-        })
-        .collect();
-
-    let ret = clean_ty(&fun.sig.ret, &generics).unwrap_or_else(|| Type {
-        kind: TypeKind::Empty,
-        span: fun.sig.ret.span,
-    });
-
-    tracing::trace!(
-        "Ret: {} {:?} {}",
-        fun.sig.ret.display(ctx.rodeo),
-        generics,
-        ret.display(ctx.rodeo)
-    );
-
-    let fun = Function {
-        name: fun.sig.ident.symbol,
-        args,
-        ret,
-        body,
-        locals: locals.into_iter().filter_map(|local| local).collect(),
-    };
-
-    let id = ctx.module.functions.len() as u32;
-    ctx.module.functions.push(fun);
+    let mut function = &mut ctx.module.functions[id as usize];
+    function.locals = locals.into_iter().filter_map(|local| local).collect();
+    function.body = body;
 
     (id, node)
 }
@@ -635,8 +641,7 @@ fn build_expr<'a, 'b>(
 
             let origin = match monomorphize::instantiate_ty(&fun.ty, block_ctx.generics).kind {
                 TypeKind::FnDef(origin) => origin.map_local(|id| {
-                    let (id, called_node) =
-                        build_fn(&ctx.functions[id as usize], ctx, generics, id);
+                    let (id, called_node) = build_fn(id, ctx, generics);
 
                     ctx.call_graph.add_edge(block_ctx.node, called_node, span);
 
