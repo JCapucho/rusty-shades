@@ -64,8 +64,17 @@ Ok(Module(
         return_type: None,
         global_usage: [],
         local_variables: [],
-        expressions: [],
-        body: [],
+        expressions: [
+          Call(
+            origin: Local(1),
+            arguments: [],
+          ),
+        ],
+        body: [
+          Return(
+            value: Some(1),
+          ),
+        ],
       ),
     ),
   },

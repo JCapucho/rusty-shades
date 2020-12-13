@@ -271,9 +271,6 @@ impl<'a> ConstSolver<'a> {
         for sta in block.stmts.iter() {
             match sta.kind {
                 StmtKind::Expr(ref expr) => {
-                    return self.solve_expr(expr, locals);
-                },
-                StmtKind::ExprSemi(ref expr) => {
                     self.solve_expr(expr, locals);
                 },
                 StmtKind::Assign(tgt, ref expr) => {
@@ -286,6 +283,10 @@ impl<'a> ConstSolver<'a> {
                     locals.insert(local, val);
                 },
             }
+        }
+
+        if let Some(ref expr) = block.tail {
+            return self.solve_expr(expr, locals);
         }
 
         unreachable!()

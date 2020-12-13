@@ -435,7 +435,12 @@ fn build_fn(
     let mut body = vec![];
 
     for stmt in fun.body.stmts.iter() {
-        build_stmt(stmt, ctx, &mut block_ctx, &mut body, None);
+        build_stmt(stmt, ctx, &mut block_ctx, &mut body);
+    }
+
+    if let Some(ref expr) = fun.body.tail {
+        let expr = build_expr(expr, ctx, &mut block_ctx, &mut body);
+        body.push(Statement::Return(expr))
     }
 
     let mut function = &mut ctx.module.functions[id as usize];
@@ -497,7 +502,12 @@ fn build_entry(
     };
 
     for stmt in entry.body.stmts.iter() {
-        build_stmt(stmt, ctx, &mut block_ctx, &mut body, None);
+        build_stmt(stmt, ctx, &mut block_ctx, &mut body);
+    }
+
+    if let Some(ref expr) = entry.body.tail {
+        let expr = build_expr(expr, ctx, &mut block_ctx, &mut body);
+        body.push(Statement::Return(expr))
     }
 
     let entry = EntryPoint {
@@ -515,25 +525,11 @@ fn build_stmt<'a, 'b>(
     ctx: &mut FunctionBuilderCtx<'a>,
     block_ctx: &mut BlockCtx<'b>,
     body: &mut Vec<Statement>,
-    nested: Option<u32>,
 ) {
     match stmt.kind {
         thir::StmtKind::Expr(ref expr) => {
-            match (build_expr(expr, ctx, block_ctx, body, nested), nested) {
-                (Some(expr), Some(local)) => {
-                    body.push(Statement::Assign(AssignTarget::Local(local), expr))
-                },
-                (Some(expr), None) => {
-                    if let Some(_) = clean_ty(expr.attr(), block_ctx.generics) {
-                        body.push(Statement::Return(Some(expr)))
-                    }
-                },
-                _ => {},
-            }
-        },
-        thir::StmtKind::ExprSemi(ref expr) => {
-            if let Some(expr) = build_expr(expr, ctx, block_ctx, body, nested) {
-                body.push(Statement::Expr(expr))
+            if let Some(expr) = build_expr(expr, ctx, block_ctx, body) {
+                body.push(Statement::Expr(expr));
             }
         },
         thir::StmtKind::Assign(tgt, ref expr) => {
@@ -571,7 +567,7 @@ fn build_stmt<'a, 'b>(
                     .map(|_| AssignTarget::Local(id)),
             };
 
-            let expr = build_expr(expr, ctx, block_ctx, body, nested);
+            let expr = build_expr(expr, ctx, block_ctx, body);
 
             match (expr, tgt) {
                 (Some(expr), None) => body.push(Statement::Expr(expr)),
@@ -583,23 +579,22 @@ fn build_stmt<'a, 'b>(
 }
 
 fn build_expr<'a, 'b>(
-    stmt: &thir::Expr<Type>,
+    expr: &thir::Expr<Type>,
     ctx: &mut FunctionBuilderCtx<'a>,
     block_ctx: &mut BlockCtx<'b>,
     body: &mut Vec<Statement>,
-    nested: Option<u32>,
 ) -> Option<TypedExpr> {
-    let mut ty = clean_ty(&stmt.ty, &block_ctx.generics);
-    let span = stmt.span;
+    let mut ty = clean_ty(&expr.ty, &block_ctx.generics);
+    let span = expr.span;
 
-    let expr = match stmt.kind {
+    let expr = match expr.kind {
         thir::ExprKind::BinaryOp {
             ref left,
             op,
             ref right,
         } => {
-            let left = build_expr(left, ctx, block_ctx, body, nested)?;
-            let right = build_expr(right, ctx, block_ctx, body, nested)?;
+            let left = build_expr(left, ctx, block_ctx, body)?;
+            let right = build_expr(right, ctx, block_ctx, body)?;
 
             Expr::BinaryOp {
                 left,
@@ -608,7 +603,7 @@ fn build_expr<'a, 'b>(
             }
         },
         thir::ExprKind::UnaryOp { ref tgt, op } => {
-            let tgt = build_expr(tgt, ctx, block_ctx, body, nested)?;
+            let tgt = build_expr(tgt, ctx, block_ctx, body)?;
 
             Expr::UnaryOp { tgt, op: op.node }
         },
@@ -634,7 +629,7 @@ fn build_expr<'a, 'b>(
                     {
                         None
                     } else {
-                        build_expr(arg, ctx, block_ctx, body, nested)
+                        build_expr(arg, ctx, block_ctx, body)
                     }
                 })
                 .collect();
@@ -664,7 +659,7 @@ fn build_expr<'a, 'b>(
             ref base,
             ref field,
         } => {
-            let base = build_expr(base, ctx, block_ctx, body, nested)?;
+            let base = build_expr(base, ctx, block_ctx, body)?;
 
             let fields = match base.attr().kind {
                 TypeKind::Struct(id) => vec![
@@ -698,7 +693,7 @@ fn build_expr<'a, 'b>(
             let ty = ty.as_ref()?;
             let mut elements: Vec<_> = elements
                 .iter()
-                .map(|ele| build_expr(ele, ctx, block_ctx, body, nested))
+                .map(|ele| build_expr(ele, ctx, block_ctx, body))
                 .collect::<Option<_>>()?;
 
             match ty.kind {
@@ -865,7 +860,7 @@ fn build_expr<'a, 'b>(
         thir::ExprKind::Return(ref expr) => {
             let sta = Statement::Return(
                 expr.as_ref()
-                    .and_then(|expr| build_expr(expr, ctx, block_ctx, body, nested)),
+                    .and_then(|expr| build_expr(expr, ctx, block_ctx, body)),
             );
 
             body.push(sta);
@@ -889,9 +884,9 @@ fn build_expr<'a, 'b>(
             };
 
             let sta = Statement::If {
-                condition: build_expr(condition, ctx, block_ctx, body, None)?,
-                accept: build_block(accept, ctx, block_ctx, nested, &ty),
-                reject: build_block(reject, ctx, block_ctx, nested, &ty),
+                condition: build_expr(condition, ctx, block_ctx, body)?,
+                accept: build_block(accept, ctx, block_ctx, nested),
+                reject: build_block(reject, ctx, block_ctx, nested),
             };
 
             body.push(sta);
@@ -906,9 +901,9 @@ fn build_expr<'a, 'b>(
             ref base,
             ref index,
         } => {
-            let base = build_expr(base, ctx, block_ctx, body, nested)?;
+            let base = build_expr(base, ctx, block_ctx, body)?;
 
-            let index = build_expr(index, ctx, block_ctx, body, nested)?;
+            let index = build_expr(index, ctx, block_ctx, body)?;
 
             Expr::Index { base, index }
         },
@@ -926,7 +921,7 @@ fn build_expr<'a, 'b>(
                 None
             };
 
-            let block = build_block(block, ctx, block_ctx, nested, &ty);
+            let block = build_block(block, ctx, block_ctx, nested);
             let stmt = Statement::Block(block);
             body.push(stmt);
 
@@ -966,12 +961,11 @@ fn build_block<'a, 'b>(
     block: &thir::Block<Type>,
     ctx: &mut FunctionBuilderCtx<'a>,
     block_ctx: &mut BlockCtx<'b>,
-    nested: Option<u32>,
-    ty: &Option<Type>,
+    local: Option<u32>,
 ) -> Vec<Statement> {
     let mut body = vec![];
 
-    if let Some(ref ty) = ty {
+    if let Some(ref ty) = clean_ty(&block.ty, block_ctx.generics) {
         if !block_returns(&block, ty) {
             ctx.errors
                 .push(Error::custom(String::from("Block doesn't return")).with_span(block.span))
@@ -979,7 +973,18 @@ fn build_block<'a, 'b>(
     }
 
     for stmt in block.stmts.iter() {
-        build_stmt(stmt, ctx, block_ctx, &mut body, nested);
+        build_stmt(stmt, ctx, block_ctx, &mut body);
+    }
+
+    if let Some(expr) = block
+        .tail
+        .as_ref()
+        .and_then(|expr| build_expr(expr, ctx, block_ctx, &mut body))
+    {
+        body.push(match local {
+            Some(local) => Statement::Assign(AssignTarget::Local(local), expr),
+            None => Statement::Expr(expr),
+        })
     }
 
     body
@@ -988,8 +993,7 @@ fn build_block<'a, 'b>(
 fn block_returns(block: &thir::Block<Type>, ty: &Type) -> bool {
     for sta in block.stmts.iter() {
         match sta.kind {
-            thir::StmtKind::Expr(_) => return true,
-            thir::StmtKind::ExprSemi(ref expr) => {
+            thir::StmtKind::Expr(ref expr) => {
                 if returns(expr) {
                     return true;
                 }
@@ -1002,5 +1006,5 @@ fn block_returns(block: &thir::Block<Type>, ty: &Type) -> bool {
         }
     }
 
-    ty.kind == TypeKind::Empty
+    ty.kind == TypeKind::Empty || block.tail.is_some()
 }

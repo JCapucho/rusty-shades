@@ -76,7 +76,7 @@ fn display_expected(expected: Vec<String>) -> impl fmt::Display {
             for (i, item) in self.0.iter().enumerate() {
                 write!(f, "{}", item)?;
 
-                if len - 2 == i {
+                if len.saturating_sub(2) == i {
                     write!(f, " or ")?;
                 } else if len - 1 > i {
                     write!(f, ", ")?;

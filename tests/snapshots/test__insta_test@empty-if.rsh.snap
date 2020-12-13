@@ -53,8 +53,15 @@ Ok(Module(
         body: [
           If(
             condition: 1,
-            accept: [],
-            reject: [],
+            accept: [
+              Kill,
+            ],
+            reject: [
+              Kill,
+            ],
+          ),
+          Return(
+            value: None,
           ),
         ],
       ),

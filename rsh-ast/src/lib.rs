@@ -81,6 +81,7 @@ pub struct StructField {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
+    pub tail: Option<Box<Expr>>,
     pub span: Span,
 }
 
@@ -93,7 +94,6 @@ pub struct Stmt {
 #[derive(Clone, Debug, PartialEq)]
 pub enum StmtKind {
     Expr(Expr),
-    ExprSemi(Expr),
     Local(Local),
     Assignment { ident: Ident, expr: Expr },
 }
@@ -136,7 +136,7 @@ pub enum ExprKind {
     If {
         condition: Box<Expr>,
         accept: Block,
-        reject: Block,
+        reject: Option<Block>,
     },
     Return(Option<Box<Expr>>),
     Index {

@@ -313,14 +313,11 @@ Uint: u64 = {
 
 Block: Block = {
     <l: @L> "{" 
-        <mut stmts: (<Stmt> ";")*> <f: FinalStmt?> 
+        <stmts: (<Stmt> ";")*> <tail: Expr?> 
     "}" <r: @R> => {
-        if let Some(f) = f {
-            stmts.push(f)
-        }
-
         Block {
             stmts,
+            tail: tail.map(Box::new),
             span: Span::range(l,r)
         }
     },
@@ -333,20 +330,14 @@ Stmt: Stmt = <l: @L> <kind: StmtKind> <r: @R>
     };
 
 StmtKind: StmtKind = {
-    Expr => StmtKind::ExprSemi(<>),
-
     "let" <Local> => StmtKind::Local(<>),
 
     <ident: Ident> "=" <expr: Expr> => StmtKind::Assignment { <> },
+
+    <Expr> => StmtKind::Expr(<>)
 }
 
 Local: Local = <ident: Ident> <ty: (":" <Ty>)?> "=" <init: Expr> => Local { <> };
-
-FinalStmt: Stmt = <l: @L> <expr: Expr> <r: @R> 
-    => Stmt {
-        kind: StmtKind::Expr(expr),
-        span: Span::range(l,r)
-    };
 
 Tier<Op,NextTier>: Expr = {
     <l: @L> <left: Box<Tier<Op,NextTier>>> 
@@ -494,24 +485,17 @@ If: ExprKind =
     "if" <condition: Box<Expr>> <accept: Block> <reject: Else>
         => ExprKind::If { <> };
 
-Else: Block = {
-    "else" <Block> => <>,
-    "else" <l: @L> <kind: If> <r: @R> => Block {
-        stmts: vec![
-            Stmt {
-                kind: StmtKind::Expr(Expr {
+Else: Option<Block> = {
+    "else" <Block> => Some(<>),
+    "else" <l: @L> <kind: If> <r: @R> => Some(Block {
+        stmts: Vec::new(),
+        tail: Some(Box::new(Expr {
                     kind,
                     span: Span::range(l,r)
-                }),
-                span: Span::range(l,r)
-            },
-        ],
+                })),
         span: Span::range(l,r)
-    },
-    () => Block {
-        stmts: Vec::new(),
-        span: Span::None
-    }
+    }),
+    () => None
 }
 
 ElseIf: ElseIf = <l: @L> "else" "if" <expr: Expr> <block: Block> <r: @R>

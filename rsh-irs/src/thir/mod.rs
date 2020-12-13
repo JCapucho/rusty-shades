@@ -102,7 +102,6 @@ pub struct Stmt<T> {
 #[derive(Debug, Clone)]
 pub enum StmtKind<T> {
     Expr(Expr<T>),
-    ExprSemi(Expr<T>),
     Assign(Spanned<AssignTarget>, Expr<T>),
 }
 
@@ -110,7 +109,6 @@ impl Stmt<TypeId> {
     fn into_statement(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> Stmt<Type> {
         let kind = match self.kind {
             StmtKind::Expr(e) => StmtKind::Expr(e.into_expr(infer_ctx, errors)),
-            StmtKind::ExprSemi(e) => StmtKind::ExprSemi(e.into_expr(infer_ctx, errors)),
             StmtKind::Assign(tgt, e) => StmtKind::Assign(tgt, e.into_expr(infer_ctx, errors)),
         };
 
@@ -170,13 +168,6 @@ pub enum ExprKind<T> {
 }
 
 impl Expr<TypeId> {
-    fn is_return(&self) -> bool {
-        match self.kind {
-            ExprKind::Return(_) => true,
-            _ => false,
-        }
-    }
-
     fn into_expr(self, infer_ctx: &mut InferContext, errors: &mut Vec<Error>) -> Expr<Type> {
         let ty = self.ty;
 
@@ -246,6 +237,8 @@ impl Expr<TypeId> {
 #[derive(Debug, Clone)]
 pub struct Block<T> {
     pub stmts: Vec<Stmt<T>>,
+    pub tail: Option<Box<Expr<T>>>,
+    pub ty: T,
     pub span: Span,
 }
 
@@ -261,6 +254,10 @@ impl Block<TypeId> {
                 .into_iter()
                 .map(|stmt| stmt.into_statement(infer_ctx, errors))
                 .collect(),
+            tail: self
+                .tail
+                .map(|tail| Box::new(tail.into_expr(infer_ctx, errors))),
+            ty: reconstruct(self.ty, self.span, infer_ctx, errors),
             span: self.span,
         }
     }
@@ -473,6 +470,12 @@ fn build_fn(
 
     let body = build_block(&fun.body, &mut builder, &mut locals_lookup, fun.sig.ret);
 
+    if let Some(ref tail) = body.tail {
+        if let Err(e) = scoped.unify(tail.ty, fun.sig.ret) {
+            errors.push(e)
+        }
+    }
+
     if let Err(ref mut e) = scoped.solve_all() {
         errors.append(e)
     }
@@ -589,8 +592,20 @@ fn build_block(
         .map(|stmt| build_stmt(stmt, ctx, &mut locals_lookup, out))
         .collect();
 
+    let tail = block.tail.as_ref().map(|tail| {
+        let expr = build_expr(tail, ctx, &mut locals_lookup, out);
+
+        if let Err(e) = ctx.infer_ctx.unify(expr.ty, out) {
+            ctx.errors.push(e)
+        }
+
+        Box::new(expr)
+    });
+
     Block {
         stmts,
+        tail,
+        ty: out,
         span: block.span,
     }
 }
@@ -605,18 +620,7 @@ fn build_stmt<'a, 'b>(
         ast::StmtKind::Expr(ref expr) => {
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
-            if !expr.is_return() {
-                if let Err(e) = ctx.infer_ctx.unify(expr.ty, out) {
-                    ctx.errors.push(e)
-                }
-            }
-
             StmtKind::Expr(expr)
-        },
-        ast::StmtKind::ExprSemi(ref expr) => {
-            let expr = build_expr(expr, ctx, locals_lookup, out);
-
-            StmtKind::ExprSemi(expr)
         },
         ast::StmtKind::Local(ref local) => {
             let expr = build_expr(&local.init, ctx, locals_lookup, out);
@@ -829,7 +833,7 @@ fn build_expr<'a, 'b>(
             ref reject,
         } => {
             let out = ctx.infer_ctx.insert(
-                if reject.stmts.is_empty() {
+                if reject.is_none() {
                     TypeInfo::Empty
                 } else {
                     TypeInfo::Unknown
@@ -852,7 +856,16 @@ fn build_expr<'a, 'b>(
 
             let accept = build_block(accept, ctx, locals_lookup, out);
 
-            let reject = build_block(reject, ctx, locals_lookup, out);
+            let reject = if let Some(ref block) = reject {
+                build_block(block, ctx, locals_lookup, out)
+            } else {
+                Block {
+                    stmts: Vec::new(),
+                    tail: None,
+                    ty: out,
+                    span: Span::None,
+                }
+            };
 
             (
                 ExprKind::If {

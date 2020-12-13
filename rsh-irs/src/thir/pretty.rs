@@ -111,6 +111,10 @@ impl<'a> HirPrettyPrinter<'a> {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                 }
 
+                if let Some(ref tail) = self.entry_point.body.tail {
+                    writeln!(f, "{}", self.printer.expr_fmt(tail))?;
+                }
+
                 writeln!(f, "}}")
             }
         }
@@ -162,6 +166,10 @@ impl<'a> HirPrettyPrinter<'a> {
                     writeln!(f, "{}", self.printer.stmt_fmt(sta))?;
                 }
 
+                if let Some(ref tail) = self.func.body.tail {
+                    writeln!(f, "{}", self.printer.expr_fmt(tail))?;
+                }
+
                 writeln!(f, "}}")
             }
         }
@@ -182,7 +190,6 @@ impl<'a> HirPrettyPrinter<'a> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.stmt.kind {
                     StmtKind::Expr(ref expr) => write!(f, "{}", self.printer.expr_fmt(expr)),
-                    StmtKind::ExprSemi(ref expr) => write!(f, "{};", self.printer.expr_fmt(expr)),
                     StmtKind::Assign(tgt, ref expr) => {
                         write!(f, "{} = {};", tgt, self.printer.expr_fmt(expr))
                     },
