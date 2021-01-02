@@ -1,9 +1,4 @@
 use crate::{
-    common::{
-        error::Error, src::Span, BinaryOp, Binding, BuiltIn, EntryPointStage, FastHashMap,
-        FieldKind, FunctionOrigin, GlobalBinding, Literal, RodeoResolver, ScalarType, StorageClass,
-        Symbol, UnaryOp,
-    },
     node::Node,
     thir,
     ty::{Type, TypeKind},
@@ -13,6 +8,11 @@ use petgraph::{
     graph::NodeIndex as GraphIndex,
     visit::{depth_first_search, Control, DfsEvent},
     Graph,
+};
+use rsh_common::{
+    error::Error, src::Span, BinaryOp, Binding, BuiltIn, EntryPointStage, FastHashMap, FieldKind,
+    FunctionOrigin, GlobalBinding, Literal, RodeoResolver, ScalarType, StorageClass, Symbol,
+    UnaryOp,
 };
 
 pub type TypedExpr = Node<Expr, Type>;
@@ -181,11 +181,14 @@ impl Module {
                         storage: StorageClass::Input,
                     });
 
-                    global_lookups.insert(hir_id, GlobalLookup::ContextFull {
-                        vert: id,
-                        frag: id + 1,
-                    });
-                },
+                    global_lookups.insert(
+                        hir_id,
+                        GlobalLookup::ContextFull {
+                            vert: id,
+                            frag: id + 1,
+                        },
+                    );
+                }
                 GlobalBinding::Input(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
@@ -204,7 +207,7 @@ impl Module {
                     });
 
                     global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
-                },
+                }
                 GlobalBinding::Output(location) => {
                     if !global.ty.is_primitive() {
                         errors.push(
@@ -223,7 +226,7 @@ impl Module {
                     });
 
                     global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
-                },
+                }
                 GlobalBinding::Uniform { set, binding } => {
                     module.globals.push(Global {
                         name: global.ident.symbol,
@@ -236,7 +239,7 @@ impl Module {
                     });
 
                     global_lookups.insert(hir_id, GlobalLookup::ContextLess(id));
-                },
+                }
             };
         }
 
@@ -300,7 +303,7 @@ fn emit_recursive_errors(
             DfsEvent::BackEdge(a, b) => {
                 nodes.push((a, b));
                 Control::Prune
-            },
+            }
             _ => Control::Continue,
         },
     );
@@ -469,7 +472,7 @@ fn clean_ty(ty: &Type, generics: &[Type]) -> Option<Type> {
                     span: ty.span,
                 }),
             }
-        },
+        }
         TypeKind::Empty | TypeKind::FnDef(_) => None,
         _ => Some(ty.clone()),
     }
@@ -531,7 +534,7 @@ fn build_stmt<'a, 'b>(
             if let Some(expr) = build_expr(expr, ctx, block_ctx, body) {
                 body.push(Statement::Expr(expr));
             }
-        },
+        }
         thir::StmtKind::Assign(tgt, ref expr) => {
             let tgt = match tgt.node {
                 AssignTarget::Global(global) => {
@@ -549,7 +552,7 @@ fn build_stmt<'a, 'b>(
                                     .with_span(tgt.span),
                                 );
                                 *vert
-                            },
+                            }
                         },
                     };
 
@@ -561,7 +564,7 @@ fn build_stmt<'a, 'b>(
                     }
 
                     Some(AssignTarget::Global(id))
-                },
+                }
                 AssignTarget::Local(id) => block_ctx.locals[id as usize]
                     .as_ref()
                     .map(|_| AssignTarget::Local(id)),
@@ -572,9 +575,9 @@ fn build_stmt<'a, 'b>(
             match (expr, tgt) {
                 (Some(expr), None) => body.push(Statement::Expr(expr)),
                 (Some(expr), Some(tgt)) => body.push(Statement::Assign(tgt, expr)),
-                _ => {},
+                _ => {}
             }
-        },
+        }
     }
 }
 
@@ -601,12 +604,12 @@ fn build_expr<'a, 'b>(
                 right,
                 op: op.node,
             }
-        },
+        }
         thir::ExprKind::UnaryOp { ref tgt, op } => {
             let tgt = build_expr(tgt, ctx, block_ctx, body)?;
 
             Expr::UnaryOp { tgt, op: op.node }
-        },
+        }
         thir::ExprKind::Call { ref fun, ref args } => {
             ty = Some(ty.unwrap_or_else(|| Type {
                 kind: TypeKind::Empty,
@@ -649,11 +652,11 @@ fn build_expr<'a, 'b>(
                     );
 
                     FunctionOrigin::Local(0)
-                },
+                }
             };
 
             Expr::Call { origin, args }
-        },
+        }
         thir::ExprKind::Literal(lit) => Expr::Literal(lit),
         thir::ExprKind::Access {
             ref base,
@@ -662,13 +665,11 @@ fn build_expr<'a, 'b>(
             let base = build_expr(base, ctx, block_ctx, body)?;
 
             let fields = match base.attr().kind {
-                TypeKind::Struct(id) => vec![
-                    ctx.structs[id as usize]
-                        .members
-                        .iter()
-                        .position(|member| member.field.kind == field.kind)
-                        .unwrap() as u32,
-                ],
+                TypeKind::Struct(id) => vec![ctx.structs[id as usize]
+                    .members
+                    .iter()
+                    .position(|member| member.field.kind == field.kind)
+                    .unwrap() as u32],
                 TypeKind::Tuple(_) => vec![field.kind.uint().unwrap()],
                 TypeKind::Vector(_, _) => {
                     const MEMBERS: [char; 4] = ['x', 'y', 'z', 'w'];
@@ -678,17 +679,17 @@ fn build_expr<'a, 'b>(
                         .chars()
                         .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u32)
                         .collect()
-                },
+                }
                 TypeKind::Scalar(_) => return Some(base),
                 TypeKind::Empty => return None,
                 _ => {
                     tracing::error!("{}", ty?.display(ctx.rodeo));
                     unreachable!()
-                },
+                }
             };
 
             Expr::Access { base, fields }
-        },
+        }
         thir::ExprKind::Constructor { ref elements } => {
             let ty = ty.as_ref()?;
             let mut elements: Vec<_> = elements
@@ -756,14 +757,14 @@ fn build_expr<'a, 'b>(
                                             },
                                         ))
                                     }
-                                },
+                                }
                                 _ => unreachable!(),
                             }
                         }
 
                         elements = tmp;
                     }
-                },
+                }
                 TypeKind::Matrix { rows, .. } => {
                     if elements.len() == 1 {
                         // Small optimization
@@ -815,25 +816,25 @@ fn build_expr<'a, 'b>(
                                             },
                                         ))
                                     }
-                                },
+                                }
                                 _ => unreachable!(),
                             }
                         }
 
                         elements = tmp;
                     }
-                },
-                TypeKind::Tuple(_) => {},
+                }
+                TypeKind::Tuple(_) => {}
                 TypeKind::Scalar(_) => return Some(elements.remove(0)),
                 TypeKind::Empty => return None,
                 _ => {
                     tracing::error!("{:?} {:?}", ty, elements);
                     unreachable!()
-                },
+                }
             }
 
             Expr::Constructor { elements }
-        },
+        }
         thir::ExprKind::Arg(pos) => Expr::Arg(pos),
         thir::ExprKind::Local(local) => Expr::Local(local),
         thir::ExprKind::Global(global) => {
@@ -851,12 +852,12 @@ fn build_expr<'a, 'b>(
                         );
 
                         *vert
-                    },
+                    }
                 },
             };
 
             Expr::Global(id)
-        },
+        }
         thir::ExprKind::Return(ref expr) => {
             let sta = Statement::Return(
                 expr.as_ref()
@@ -865,7 +866,7 @@ fn build_expr<'a, 'b>(
 
             body.push(sta);
             return None;
-        },
+        }
         thir::ExprKind::If {
             ref condition,
             ref accept,
@@ -896,7 +897,7 @@ fn build_expr<'a, 'b>(
             } else {
                 return None;
             }
-        },
+        }
         thir::ExprKind::Index {
             ref base,
             ref index,
@@ -906,7 +907,7 @@ fn build_expr<'a, 'b>(
             let index = build_expr(index, ctx, block_ctx, body)?;
 
             Expr::Index { base, index }
-        },
+        }
         thir::ExprKind::Constant(id) => Expr::Constant(id),
         thir::ExprKind::Block(ref block) => {
             let nested = if let Some(ref ty) = ty {
@@ -930,7 +931,7 @@ fn build_expr<'a, 'b>(
             } else {
                 return None;
             }
-        },
+        }
         thir::ExprKind::Function(_) => return None,
     };
 
@@ -948,7 +949,7 @@ fn returns(expr: &thir::Expr<Type>) -> bool {
             let right = returns(right);
 
             left || right
-        },
+        }
         thir::ExprKind::UnaryOp { ref tgt, .. } => returns(tgt),
         thir::ExprKind::Call { ref args, .. } => args.iter().any(returns),
         thir::ExprKind::Access { ref base, .. } => returns(base),
@@ -997,12 +998,12 @@ fn block_returns(block: &thir::Block<Type>, ty: &Type) -> bool {
                 if returns(expr) {
                     return true;
                 }
-            },
+            }
             thir::StmtKind::Assign(_, ref expr) => {
                 if returns(expr) {
                     return true;
                 }
-            },
+            }
         }
     }
 

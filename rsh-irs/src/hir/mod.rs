@@ -1,10 +1,10 @@
-use crate::{
+use crate::infer::{InferContext, TraitBound, TypeId, TypeInfo};
+use rsh_common::{
     ast::{self, Block},
-    common::{
-        error::Error, src::Span, EntryPointStage, FastHashMap, Field, FieldKind, FunctionOrigin,
-        GlobalBinding, Ident, RodeoResolver, ScalarType, Symbol, VectorSize,
-    },
-    infer::{InferContext, TraitBound, TypeId, TypeInfo},
+    error::Error,
+    src::Span,
+    EntryPointStage, FastHashMap, Field, FieldKind, FunctionOrigin, GlobalBinding, Ident,
+    RodeoResolver, ScalarType, Symbol, VectorSize,
 };
 
 #[derive(Debug)]
@@ -115,7 +115,7 @@ impl<'a> Module<'a> {
             match item.kind {
                 ast::ItemKind::Struct(ref kind) => {
                     build_struct(kind, item.ident, item.span, &mut ctx, 0);
-                },
+                }
                 ast::ItemKind::Global(binding, ref ty) => {
                     let ty = build_ast_ty(ty, &mut ctx, 0);
 
@@ -138,7 +138,7 @@ impl<'a> Module<'a> {
                         ty,
                         span: item.span,
                     });
-                },
+                }
                 ast::ItemKind::Fn(ref generics, ref fun) => {
                     let sig = &fun.sig;
                     let mut ctx = TypeBuilderCtx {
@@ -212,7 +212,7 @@ impl<'a> Module<'a> {
                         body: &fun.body,
                         span: item.span,
                     });
-                },
+                }
                 ast::ItemKind::Const(ref constant) => {
                     let ty = build_ast_ty(&constant.ty, &mut ctx, 0);
 
@@ -222,7 +222,7 @@ impl<'a> Module<'a> {
                         init: &constant.init,
                         span: item.span,
                     });
-                },
+                }
                 ast::ItemKind::EntryPoint(stage, ref fun) => {
                     let item_start = item.span.as_range().map(|range| range.start).unwrap_or(0);
                     let sig_end = fun.sig.span.as_range().map(|range| range.end).unwrap_or(0);
@@ -243,7 +243,7 @@ impl<'a> Module<'a> {
                     };
 
                     module.entry_points.push(EntryPoint { stage, fun })
-                },
+                }
                 ast::ItemKind::Extern(ref sig) => {
                     let args = sig
                         .args
@@ -275,7 +275,7 @@ impl<'a> Module<'a> {
                     infer_ctx.add_function(FunctionOrigin::External(item.ident), sig.clone());
 
                     module.externs.insert(item.ident.symbol, sig);
-                },
+                }
             }
         }
 
@@ -311,7 +311,7 @@ fn build_trait_bound<'a, 'b>(
                 .unwrap_or_else(|| builder.infer_ctx.insert(TypeInfo::Empty, Span::None));
 
             TraitBound::Fn { args, ret }
-        },
+        }
     }
 }
 
@@ -349,7 +349,7 @@ fn build_struct<'a, 'b>(
                     span: field.span,
                 });
             }
-        },
+        }
         ast::StructKind::Tuple(fields) => {
             for (pos, field) in fields.iter().enumerate() {
                 let ty = build_ast_ty(&field, ctx, iter + 1);
@@ -363,8 +363,8 @@ fn build_struct<'a, 'b>(
                     span: field.span,
                 });
             }
-        },
-        ast::StructKind::Unit => {},
+        }
+        ast::StructKind::Unit => {}
     }
 
     let id = ctx.module.structs.len() as u32;
@@ -392,7 +392,7 @@ fn build_ast_ty<'a, 'b>(ty: &ast::Ty, ctx: &mut TypeBuilderCtx<'a, 'b>, iter: us
         ast::TypeKind::ScalarType(scalar) => {
             let base = ctx.infer_ctx.add_scalar(scalar);
             ctx.infer_ctx.insert(base, ty.span)
-        },
+        }
         ast::TypeKind::Named(name) => {
             if let Some((pos, gen)) = ctx
                 .generics
@@ -414,7 +414,7 @@ fn build_ast_ty<'a, 'b>(ty: &ast::Ty, ctx: &mut TypeBuilderCtx<'a, 'b>, iter: us
                 ctx.items.iter().find_map(|item| match item.kind {
                     ast::ItemKind::Struct(ref kind) if item.ident == name => {
                         Some((kind, item.ident, item.span))
-                    },
+                    }
                     _ => None,
                 })
             {
@@ -425,7 +425,7 @@ fn build_ast_ty<'a, 'b>(ty: &ast::Ty, ctx: &mut TypeBuilderCtx<'a, 'b>, iter: us
 
                 ctx.infer_ctx.insert(TypeInfo::Empty, ty.span)
             }
-        },
+        }
         ast::TypeKind::Tuple(ref types) => {
             let types = types
                 .iter()
@@ -433,20 +433,20 @@ fn build_ast_ty<'a, 'b>(ty: &ast::Ty, ctx: &mut TypeBuilderCtx<'a, 'b>, iter: us
                 .collect();
 
             ctx.infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
-        },
+        }
         ast::TypeKind::Vector(size, base) => {
             let base = ctx.infer_ctx.add_scalar(base);
             let size = ctx.infer_ctx.add_size(size);
 
             ctx.infer_ctx.insert(TypeInfo::Vector(base, size), ty.span)
-        },
+        }
         ast::TypeKind::Matrix { columns, rows } => {
             let columns = ctx.infer_ctx.add_size(columns);
             let rows = ctx.infer_ctx.add_size(rows);
 
             ctx.infer_ctx
                 .insert(TypeInfo::Matrix { columns, rows }, ty.span)
-        },
+        }
     };
 
     ty

@@ -756,13 +756,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rsh-ast"
-version = "0.1.0"
-dependencies = [
- "rsh-common",
-]
-
-[[package]]
 name = "rsh-common"
 version = "0.1.0"
 dependencies = [
@@ -778,17 +771,8 @@ name = "rsh-irs"
 version = "0.1.0"
 dependencies = [
  "petgraph",
- "rsh-ast",
  "rsh-common",
  "tracing",
-]
-
-[[package]]
-name = "rsh-lexer"
-version = "0.1.0"
-dependencies = [
- "logos",
- "rsh-common",
 ]
 
 [[package]]
@@ -806,9 +790,8 @@ version = "0.1.0"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
- "rsh-ast",
+ "logos",
  "rsh-common",
- "rsh-lexer",
 ]
 
 [[package]]
@@ -852,7 +835,6 @@ dependencies = [
  "insta",
  "rsh-common",
  "rsh-irs",
- "rsh-lexer",
  "rsh-naga",
  "rsh-parser",
 ]

@@ -7,6 +7,5 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 rsh-common = { path = "../rsh-common" }
-rsh-ast = { path = "../rsh-ast" }
 petgraph = { version = "0.5", default-features = false }
 tracing = "0.1"

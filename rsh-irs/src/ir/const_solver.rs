@@ -1,10 +1,10 @@
 use crate::{
-    common::{error::Error, BinaryOp, FastHashMap, Literal, RodeoResolver, UnaryOp},
     ir::ConstantInner,
     thir::{Block, Constant, Expr, ExprKind, StmtKind},
     ty::{Type, TypeKind},
     AssignTarget,
 };
+use rsh_common::{error::Error, BinaryOp, FastHashMap, Literal, RodeoResolver, UnaryOp};
 
 pub struct ConstSolver<'a> {
     constants: &'a [Constant],
@@ -53,38 +53,38 @@ impl<'a> ConstSolver<'a> {
                 match (left, right) {
                     (ConstantInner::Scalar(a), ConstantInner::Scalar(b)) => {
                         ConstantInner::Scalar(apply_binary_op(a, op.node, b))
-                    },
+                    }
                     (ConstantInner::Vector(mut a), ConstantInner::Vector(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
                             .for_each(|(a, b)| *a = apply_binary_op(*a, op.node, *b));
 
                         ConstantInner::Vector(a)
-                    },
+                    }
                     (ConstantInner::Matrix(mut a), ConstantInner::Matrix(b)) => {
                         a.iter_mut()
                             .zip(b.iter())
                             .for_each(|(a, b)| *a = apply_binary_op(*a, op.node, *b));
 
                         ConstantInner::Matrix(a)
-                    },
+                    }
                     (ConstantInner::Scalar(a), ConstantInner::Vector(mut b))
                     | (ConstantInner::Vector(mut b), ConstantInner::Scalar(a)) => {
                         b.iter_mut()
                             .for_each(|b| *b = apply_binary_op(*b, op.node, a));
 
                         ConstantInner::Vector(b)
-                    },
+                    }
                     (ConstantInner::Scalar(a), ConstantInner::Matrix(mut b))
                     | (ConstantInner::Matrix(mut b), ConstantInner::Scalar(a)) => {
                         b.iter_mut()
                             .for_each(|b| *b = apply_binary_op(*b, op.node, a));
 
                         ConstantInner::Matrix(b)
-                    },
+                    }
                     _ => unreachable!(),
                 }
-            },
+            }
             ExprKind::UnaryOp { ref tgt, op } => {
                 let tgt = self.solve_expr(tgt, locals);
 
@@ -94,14 +94,14 @@ impl<'a> ConstSolver<'a> {
                         a.iter_mut().for_each(|a| *a = apply_unary_op(*a, op.node));
 
                         ConstantInner::Vector(a)
-                    },
+                    }
                     ConstantInner::Matrix(mut a) => {
                         a.iter_mut().for_each(|a| *a = apply_unary_op(*a, op.node));
 
                         ConstantInner::Matrix(a)
-                    },
+                    }
                 }
-            },
+            }
             ExprKind::Literal(lit) => ConstantInner::Scalar(lit),
             ExprKind::Access {
                 ref base,
@@ -117,7 +117,7 @@ impl<'a> ConstSolver<'a> {
                             .chars()
                             .map(|c| MEMBERS.iter().position(|f| *f == c).unwrap() as u64)
                             .collect()
-                    },
+                    }
                     _ => unreachable!(),
                 };
                 let base = self.solve_expr(base, locals);
@@ -139,7 +139,7 @@ impl<'a> ConstSolver<'a> {
 
                     ConstantInner::Vector(data)
                 }
-            },
+            }
             ExprKind::Constructor { ref elements } => {
                 let elements: Vec<_> = elements
                     .iter()
@@ -152,7 +152,7 @@ impl<'a> ConstSolver<'a> {
                             match elements[0].0 {
                                 ConstantInner::Scalar(lit) => {
                                     ConstantInner::Vector([lit, lit, lit, lit])
-                                },
+                                }
                                 _ => unreachable!(),
                             }
                         } else {
@@ -164,19 +164,19 @@ impl<'a> ConstSolver<'a> {
                                     (ConstantInner::Scalar(lit), _) => {
                                         data[index] = lit;
                                         index += 1;
-                                    },
+                                    }
                                     (ConstantInner::Vector(vector), TypeKind::Vector(_, size)) => {
                                         data[index..(*size as usize + index)]
                                             .clone_from_slice(&vector[..*size as usize]);
                                         index += *size as usize;
-                                    },
+                                    }
                                     _ => unreachable!(),
                                 }
                             }
 
                             ConstantInner::Vector(data)
                         }
-                    },
+                    }
                     TypeKind::Matrix { .. } => {
                         if elements.len() == 1 {
                             match elements[0].0 {
@@ -197,7 +197,7 @@ impl<'a> ConstSolver<'a> {
                                         data[index..(*size as usize + index)]
                                             .clone_from_slice(&vector[..*size as usize]);
                                         index += *size as usize;
-                                    },
+                                    }
                                     (
                                         ConstantInner::Matrix(matrix),
                                         TypeKind::Matrix { rows, .. },
@@ -209,17 +209,17 @@ impl<'a> ConstSolver<'a> {
                                             data[index + i * 4 + 3] = matrix[i + 3];
                                         }
                                         index += *rows as usize * 4;
-                                    },
+                                    }
                                     _ => unreachable!(),
                                 }
                             }
 
                             ConstantInner::Matrix(data)
                         }
-                    },
+                    }
                     _ => unreachable!(),
                 }
-            },
+            }
             ExprKind::Local(id) => locals.get(&id).unwrap().clone(),
             ExprKind::Constant(id) => self.solve(id),
             ExprKind::Return(_) => {
@@ -227,7 +227,7 @@ impl<'a> ConstSolver<'a> {
                     Error::custom(String::from("Cannot return in a constant")).with_span(expr.span),
                 );
                 ConstantInner::Scalar(Literal::Boolean(false))
-            },
+            }
             ExprKind::If {
                 ref condition,
                 ref accept,
@@ -244,7 +244,7 @@ impl<'a> ConstSolver<'a> {
                 } else {
                     self.solve_block(reject, locals)
                 }
-            },
+            }
             ExprKind::Index {
                 ref base,
                 ref index,
@@ -253,7 +253,7 @@ impl<'a> ConstSolver<'a> {
                 let index = self.solve_expr(index, locals);
 
                 base.index(&index)
-            },
+            }
             ExprKind::Block(ref block) => self.solve_block(block, locals),
             // TODO: const functions when?
             ExprKind::Call { .. } => unreachable!(),
@@ -272,7 +272,7 @@ impl<'a> ConstSolver<'a> {
             match sta.kind {
                 StmtKind::Expr(ref expr) => {
                     self.solve_expr(expr, locals);
-                },
+                }
                 StmtKind::Assign(tgt, ref expr) => {
                     let local = match tgt.node {
                         AssignTarget::Local(local) => local,
@@ -281,7 +281,7 @@ impl<'a> ConstSolver<'a> {
                     let val = self.solve_expr(expr, locals);
 
                     locals.insert(local, val);
-                },
+                }
             }
         }
 

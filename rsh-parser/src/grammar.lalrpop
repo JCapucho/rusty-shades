@@ -1,10 +1,10 @@
-use rsh_ast::*;
 use rsh_common::{
+    ast::*,
     src::{Loc, Span, Spanned},
     BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
     VectorSize, Field, FieldKind
 };
-use rsh_lexer::{Token, LexerError};
+use crate::lexer::{Token, LexerError};
 
 // TODO: Error recovery
 

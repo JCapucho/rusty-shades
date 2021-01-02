@@ -1,8 +1,8 @@
 use crate::{
-    common::src::Span,
     thir::{Expr, Function},
     ty::{Type, TypeKind},
 };
+use rsh_common::src::Span;
 
 pub fn collect(
     hir_functions: &Vec<Function>,
@@ -19,7 +19,7 @@ pub fn collect(
         ref ty => {
             tracing::error!("Not a function: {:?}", ty);
             unreachable!()
-        },
+        }
     };
 
     match origin {
@@ -41,7 +41,7 @@ pub fn collect(
             collect_inner(&mut call_generics, &fun.sig.ret, call_ret);
 
             call_generics
-        },
+        }
         rsh_common::FunctionOrigin::External(_) => Vec::new(),
     }
 }
@@ -54,11 +54,11 @@ fn collect_inner(call_generics: &mut [Type], def: &Type, call: &Type) {
                     collect_inner(call_generics, def, call)
                 }
             }
-        },
+        }
         TypeKind::Generic(pos) => {
             call_generics[pos as usize] = instantiate_ty(&call, &call_generics).clone();
-        },
-        _ => {},
+        }
+        _ => {}
     }
 }
 

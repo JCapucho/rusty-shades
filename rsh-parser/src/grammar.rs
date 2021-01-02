@@ -1,12 +1,12 @@
 // auto-generated: "lalrpop 0.19.1"
-// sha256: 1e10216555dc77adfa24253aa2b5258f285af1f2f5d232141459ad678dae
-use rsh_ast::*;
+// sha256: de6c479d731edfa95ff56247ecf3c2502d716da4dc7419897444833ba915774
 use rsh_common::{
+    ast::*,
     src::{Loc, Span, Spanned},
     BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
     VectorSize, Field, FieldKind
 };
-use rsh_lexer::{Token, LexerError};
+use crate::lexer::{Token, LexerError};
 #[allow(unused_extern_crates)]
 extern crate lalrpop_util as __lalrpop_util;
 #[allow(unused_imports)]
@@ -16,13 +16,13 @@ use self::__lalrpop_util::state_machine as __state_machine;
 mod __parse__Program {
     #![allow(non_snake_case, non_camel_case_types, unused_mut, unused_variables, unused_imports, unused_parens)]
 
-    use rsh_ast::*;
     use rsh_common::{
+    ast::*,
     src::{Loc, Span, Spanned},
     BinaryOp, EntryPointStage, GlobalBinding, Ident, Literal, ScalarType, Symbol, UnaryOp,
     VectorSize, Field, FieldKind
 };
-    use rsh_lexer::{Token, LexerError};
+    use crate::lexer::{Token, LexerError};
     #[allow(unused_extern_crates)]
     extern crate lalrpop_util as __lalrpop_util;
     #[allow(unused_imports)]

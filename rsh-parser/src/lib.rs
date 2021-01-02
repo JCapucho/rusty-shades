@@ -1,12 +1,14 @@
 use lalrpop_util::ParseError;
-use rsh_ast::Item;
+use lexer::{Lexer, LexerError, Token};
 use rsh_common::{
+    ast::Item,
     error::Error as CommonError,
     src::{Loc, Span},
-    RodeoResolver,
+    Rodeo, RodeoResolver,
 };
-use rsh_lexer::{Lexer, LexerError, Token};
 use std::fmt;
+
+mod lexer;
 
 #[allow(clippy::all)]
 #[rustfmt::skip]
@@ -15,7 +17,8 @@ mod grammar;
 pub type Error = ParseError<Loc, Token, LexerError>;
 
 // TODO: Return multiple errors
-pub fn parse(lexer: Lexer) -> Result<Vec<Item>, Error> {
+pub fn parse(input: &str, rodeo: &mut Rodeo) -> Result<Vec<Item>, Error> {
+    let lexer = Lexer::new(input, rodeo);
     grammar::ProgramParser::new().parse(lexer)
 }
 
@@ -26,7 +29,7 @@ pub fn common_error_from_parser_error(
     match e {
         ParseError::InvalidToken { location } => {
             CommonError::custom(String::from("Invalid token")).with_span(Span::single(location))
-        },
+        }
         ParseError::UnrecognizedEOF { location, expected } => {
             if expected.is_empty() {
                 CommonError::custom(String::from("Unexpected EOF"))
@@ -38,7 +41,7 @@ pub fn common_error_from_parser_error(
                 ))
                 .with_span(Span::single(location))
             }
-        },
+        }
         ParseError::UnrecognizedToken {
             token: (start, tok, end),
             expected,
@@ -54,7 +57,7 @@ pub fn common_error_from_parser_error(
                 ))
                 .with_span(Span::range(start, end))
             }
-        },
+        }
         ParseError::ExtraToken {
             token: (start, tok, end),
         } => CommonError::custom(format!("Unexpected token: \"{}\"", tok.display(rodeo)))
@@ -62,7 +65,7 @@ pub fn common_error_from_parser_error(
         ParseError::User { error } => {
             CommonError::custom(format!("Unexpected token: \"{}\"", error.text))
                 .with_span(error.span)
-        },
+        }
     }
 }
 

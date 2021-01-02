@@ -7,9 +7,7 @@ use rsh_irs::{hir, ir::Module as IrModule, thir::Module as HirModule};
 pub fn build_hir(code: &str) -> Result<(HirModule, RodeoResolver), Vec<Error>> {
     let mut rodeo = Rodeo::with_hasher(Hasher::default());
 
-    let lexer = rsh_lexer::Lexer::new(&code, &mut rodeo);
-
-    let ast_res = rsh_parser::parse(lexer);
+    let ast_res = rsh_parser::parse(&code, &mut rodeo);
 
     let rodeo = rodeo.into_resolver();
 

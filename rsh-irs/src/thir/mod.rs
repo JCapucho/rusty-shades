@@ -1,15 +1,15 @@
 use crate::{
-    ast,
-    common::{
-        error::Error,
-        src::{Span, Spanned},
-        BinaryOp, EntryPointStage, FastHashMap, Field, FunctionOrigin, GlobalBinding, Ident,
-        Literal, ScalarType, Symbol, UnaryOp,
-    },
     hir,
     infer::{Constraint, InferContext, ScalarInfo, SizeInfo, TypeId, TypeInfo},
     ty::{Type, TypeKind},
     AssignTarget,
+};
+use rsh_common::{
+    ast,
+    error::Error,
+    src::{Span, Spanned},
+    BinaryOp, EntryPointStage, FastHashMap, Field, FunctionOrigin, GlobalBinding, Ident, Literal,
+    ScalarType, Symbol, UnaryOp,
 };
 
 /// Pretty printing of the HIR
@@ -193,7 +193,7 @@ impl Expr<TypeId> {
                 let base = Box::new(base.into_expr(infer_ctx, errors));
 
                 ExprKind::Access { base, field }
-            },
+            }
             ExprKind::Constructor { elements } => ExprKind::Constructor {
                 elements: elements
                     .into_iter()
@@ -207,7 +207,7 @@ impl Expr<TypeId> {
             ExprKind::Function(id) => ExprKind::Function(id),
             ExprKind::Return(expr) => {
                 ExprKind::Return(expr.map(|e| Box::new(e.into_expr(infer_ctx, errors))))
-            },
+            }
             ExprKind::If {
                 condition,
                 accept,
@@ -243,7 +243,9 @@ pub struct Block<T> {
 }
 
 impl<T> Block<T> {
-    fn is_empty(&self) -> bool { self.stmts.is_empty() }
+    fn is_empty(&self) -> bool {
+        self.stmts.is_empty()
+    }
 }
 
 impl Block<TypeId> {
@@ -533,7 +535,7 @@ fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
         ast::TypeKind::ScalarType(scalar) => {
             let base = ctx.infer_ctx.add_scalar(scalar);
             ctx.infer_ctx.insert(base, ty.span)
-        },
+        }
         ast::TypeKind::Named(name) => {
             if let Some(ty) = ctx.scope.structs_lookup.get(&name) {
                 *ty
@@ -543,25 +545,25 @@ fn build_hir_ty(ty: &ast::Ty, ctx: &mut StatementBuilderCtx<'_, '_>) -> TypeId {
 
                 ctx.infer_ctx.insert(TypeInfo::Empty, ty.span)
             }
-        },
+        }
         ast::TypeKind::Tuple(ref types) => {
             let types = types.iter().map(|ty| build_hir_ty(ty, ctx)).collect();
 
             ctx.infer_ctx.insert(TypeInfo::Tuple(types), ty.span)
-        },
+        }
         ast::TypeKind::Vector(size, base) => {
             let base = ctx.infer_ctx.add_scalar(base);
             let size = ctx.infer_ctx.add_size(size);
 
             ctx.infer_ctx.insert(TypeInfo::Vector(base, size), ty.span)
-        },
+        }
         ast::TypeKind::Matrix { columns, rows } => {
             let columns = ctx.infer_ctx.add_size(columns);
             let rows = ctx.infer_ctx.add_size(rows);
 
             ctx.infer_ctx
                 .insert(TypeInfo::Matrix { columns, rows }, ty.span)
-        },
+        }
     };
 
     ty
@@ -621,7 +623,7 @@ fn build_stmt<'a, 'b>(
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
             StmtKind::Expr(expr)
-        },
+        }
         ast::StmtKind::Local(ref local) => {
             let expr = build_expr(&local.init, ctx, locals_lookup, out);
 
@@ -658,7 +660,7 @@ fn build_stmt<'a, 'b>(
                 },
                 expr,
             )
-        },
+        }
         ast::StmtKind::Assignment { ident, ref expr } => {
             let expr = build_expr(expr, ctx, locals_lookup, out);
 
@@ -684,7 +686,7 @@ fn build_stmt<'a, 'b>(
                 },
                 expr,
             )
-        },
+        }
     };
 
     Stmt {
@@ -719,7 +721,7 @@ fn build_expr<'a, 'b>(
             });
 
             (ExprKind::BinaryOp { left, op, right }, out)
-        },
+        }
         ast::ExprKind::UnaryOp { ref tgt, op } => {
             let tgt = Box::new(build_expr(tgt, ctx, locals_lookup, out));
 
@@ -728,7 +730,7 @@ fn build_expr<'a, 'b>(
                 .add_constraint(Constraint::Unary { a: tgt.ty, op, out });
 
             (ExprKind::UnaryOp { tgt, op }, out)
-        },
+        }
         ast::ExprKind::Constructor {
             ty,
             size,
@@ -746,14 +748,14 @@ fn build_expr<'a, 'b>(
 
                     ctx.infer_ctx
                         .insert(TypeInfo::Vector(base, size), expr.span)
-                },
+                }
                 ast::ConstructorType::Matrix => {
                     let rows = ctx.infer_ctx.add_size(size);
                     let columns = ctx.infer_ctx.add_size(SizeInfo::Unknown);
 
                     ctx.infer_ctx
                         .insert(TypeInfo::Matrix { rows, columns }, expr.span)
-                },
+                }
             };
 
             ctx.infer_ctx.add_constraint(Constraint::Constructor {
@@ -762,7 +764,7 @@ fn build_expr<'a, 'b>(
             });
 
             (ExprKind::Constructor { elements }, out)
-        },
+        }
         ast::ExprKind::Call { ref fun, ref args } => {
             let fun = Box::new(build_expr(fun, ctx, locals_lookup, out));
             let args: Vec<_> = args
@@ -779,13 +781,13 @@ fn build_expr<'a, 'b>(
             });
 
             (ExprKind::Call { fun, args }, ret)
-        },
+        }
         ast::ExprKind::Literal(lit) => {
             let base = ctx.infer_ctx.add_scalar(&lit);
             let out = ctx.infer_ctx.insert(base, expr.span);
 
             (ExprKind::Literal(lit), out)
-        },
+        }
         ast::ExprKind::Access { ref base, field } => {
             let base = Box::new(build_expr(base, ctx, locals_lookup, out));
 
@@ -797,7 +799,7 @@ fn build_expr<'a, 'b>(
             });
 
             (ExprKind::Access { base, field }, out)
-        },
+        }
         ast::ExprKind::Variable(var) => {
             if let Some((var, local)) = locals_lookup.get(&var) {
                 (ExprKind::Local(*var), *local)
@@ -826,7 +828,7 @@ fn build_expr<'a, 'b>(
 
                 (ExprKind::Local(0), empty)
             }
-        },
+        }
         ast::ExprKind::If {
             ref condition,
             ref accept,
@@ -875,7 +877,7 @@ fn build_expr<'a, 'b>(
                 },
                 out,
             )
-        },
+        }
         ast::ExprKind::Return(ref ret_expr) => {
             let ret_expr = ret_expr
                 .as_ref()
@@ -889,7 +891,7 @@ fn build_expr<'a, 'b>(
             };
 
             (ExprKind::Return(ret_expr), empty)
-        },
+        }
         ast::ExprKind::Index {
             ref base,
             ref index,
@@ -906,7 +908,7 @@ fn build_expr<'a, 'b>(
             });
 
             (ExprKind::Index { base, index }, out)
-        },
+        }
         ast::ExprKind::TupleConstructor(ref elements) => {
             let elements: Vec<_> = elements
                 .iter()
@@ -918,12 +920,12 @@ fn build_expr<'a, 'b>(
             let out = ctx.infer_ctx.insert(TypeInfo::Tuple(ids), expr.span);
 
             (ExprKind::Constructor { elements }, out)
-        },
+        }
         ast::ExprKind::Block(ref block) => {
             let block = build_block(block, ctx, locals_lookup, out);
 
             (ExprKind::Block(block), out)
-        },
+        }
     };
 
     Expr {
@@ -947,6 +949,6 @@ fn reconstruct(
                 kind: TypeKind::Empty,
                 span: infer_ctx.span(ty),
             }
-        },
+        }
     }
 }

@@ -1,12 +1,12 @@
 use crate::{
-    common::{
-        error::Error,
-        src::{Span, Spanned},
-        BinaryOp, FastHashMap, Field, FieldKind, FunctionOrigin, Literal, RodeoResolver,
-        ScalarType, UnaryOp, VectorSize,
-    },
     hir::FnSig,
     ty::{Type, TypeKind},
+};
+use rsh_common::{
+    error::Error,
+    src::{Span, Spanned},
+    BinaryOp, FastHashMap, Field, FieldKind, FunctionOrigin, Literal, RodeoResolver, ScalarType,
+    UnaryOp, VectorSize,
 };
 use std::fmt;
 
@@ -59,7 +59,9 @@ impl From<&Literal> for ScalarInfo {
 }
 
 impl From<ScalarType> for ScalarInfo {
-    fn from(ty: ScalarType) -> Self { ScalarInfo::Concrete(ty) }
+    fn from(ty: ScalarType) -> Self {
+        ScalarInfo::Concrete(ty)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Copy)]
@@ -70,7 +72,9 @@ pub enum SizeInfo {
 }
 
 impl From<VectorSize> for SizeInfo {
-    fn from(size: VectorSize) -> Self { SizeInfo::Concrete(size) }
+    fn from(size: VectorSize) -> Self {
+        SizeInfo::Concrete(size)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -88,11 +92,15 @@ pub enum TypeInfo {
 }
 
 impl From<TypeId> for TypeInfo {
-    fn from(ty: TypeId) -> Self { TypeInfo::Ref(ty) }
+    fn from(ty: TypeId) -> Self {
+        TypeInfo::Ref(ty)
+    }
 }
 
 impl From<ScalarId> for TypeInfo {
-    fn from(scalar: ScalarId) -> Self { TypeInfo::Scalar(scalar) }
+    fn from(scalar: ScalarId) -> Self {
+        TypeInfo::Scalar(scalar)
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -347,10 +355,10 @@ impl<'a> InferContext<'a> {
 
             (Float, Concrete(b_info)) if b_info as u8 == 3 || b_info as u8 == 2 => {
                 Ok(self.link_scalar(a, b))
-            },
+            }
             (Concrete(a_info), Float) if a_info as u8 == 3 || a_info as u8 == 2 => {
                 Ok(self.link_scalar(b, a))
-            },
+            }
 
             (_, _) => Err((a, b)),
         }
@@ -405,10 +413,14 @@ impl<'a> InferContext<'a> {
                     Unknown => write!(f, "?"),
                     Empty => write!(f, "()"),
                     Ref(id) => self.with_id(id).fmt(f),
-                    Scalar(scalar) => write!(f, "{}", ScalarInfoDisplay {
-                        ctx: self.ctx,
-                        id: scalar
-                    }),
+                    Scalar(scalar) => write!(
+                        f,
+                        "{}",
+                        ScalarInfoDisplay {
+                            ctx: self.ctx,
+                            id: scalar
+                        }
+                    ),
                     Vector(scalar, size) => write!(
                         f,
                         "Vector<{},{}>",
@@ -455,7 +467,7 @@ impl<'a> InferContext<'a> {
                                 .join(", ")
                         )?;
                         write!(f, "{}}}", if !fields.is_empty() { " " } else { "" })
-                    },
+                    }
                     Tuple(ids) => write!(
                         f,
                         "({})",
@@ -481,7 +493,7 @@ impl<'a> InferContext<'a> {
                             self.with_id(*ret),
                             self.ctx.rodeo.resolve(ident)
                         )
-                    },
+                    }
                 }
             }
         }
@@ -551,13 +563,13 @@ impl<'a> InferContext<'a> {
             (Empty, Empty) => Ok(()),
             (Scalar(a_info), Scalar(b_info)) => {
                 self.unify_scalar(a_info, b_info).map_err(|_| (a, b))
-            },
+            }
 
             (Vector(a_base, a_size), Vector(b_base, b_size)) => {
                 self.unify_scalar(a_base, b_base).map_err(|_| (a, b))?;
                 self.unify_size(a_size, b_size).map_err(|_| (a, b))?;
                 Ok(())
-            },
+            }
 
             (
                 Matrix {
@@ -572,7 +584,7 @@ impl<'a> InferContext<'a> {
                 self.unify_size(a_cols, b_cols).map_err(|_| (a, b))?;
                 self.unify_size(a_rows, b_rows).map_err(|_| (a, b))?;
                 Ok(())
-            },
+            }
 
             (Struct(a_id), Struct(b_id)) if a_id == b_id => Ok(()),
             (Tuple(a_types), Tuple(b_types)) if a_types.len() == b_types.len() => {
@@ -581,7 +593,7 @@ impl<'a> InferContext<'a> {
                 }
 
                 Ok(())
-            },
+            }
             (FnDef(a), FnDef(b)) if a == b => Ok(()),
             (Generic(a_gen, _), Generic(b_gen, _)) if a_gen == b_gen => Ok(()),
             (_, _) => Err((a, b)),
@@ -692,7 +704,7 @@ impl<'a> InferContext<'a> {
                     }
 
                     Some(self.unify_or_check_bounds(ret, fn_ret).is_ok())
-                },
+                }
                 TypeInfo::Generic(_, gen_bound) => match (bound, gen_bound) {
                     (
                         TraitBound::Fn {
@@ -715,7 +727,7 @@ impl<'a> InferContext<'a> {
                         }
 
                         Some(self.unify(a_ret, b_ret).is_ok())
-                    },
+                    }
                     _ => Some(false),
                 },
                 _ => Some(false),
@@ -742,12 +754,12 @@ impl<'a> InferContext<'a> {
                     Ok(true) => {
                         self.constraints.remove(&c);
                         continue 'solver;
-                    },
-                    Ok(false) => {},
+                    }
+                    Ok(false) => {}
                     Err(e) => {
                         self.constraints.remove(&c);
                         errors.push(e)
-                    },
+                    }
                 }
             }
 
@@ -838,7 +850,7 @@ impl<'a> InferContext<'a> {
                 tracing::warn!("Recursive type");
 
                 Error::custom(String::from("Recursive type")).with_span(self.span(id))
-            },
+            }
             ReconstructError::Unknown(a) => {
                 tracing::warn!("Cannot infer type");
 
@@ -855,7 +867,7 @@ impl<'a> InferContext<'a> {
                     .with_span(span)
                     .with_span(self.span(id))
                     .with_hint(String::from("Specify all missing types"))
-            },
+            }
         })
     }
 }

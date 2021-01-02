@@ -1,4 +1,4 @@
-use rsh_common::{
+use crate::{
     src::{Span, Spanned},
     BinaryOp, EntryPointStage, Field, GlobalBinding, Ident, Literal, ScalarType, UnaryOp,
     VectorSize,

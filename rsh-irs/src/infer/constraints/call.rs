@@ -1,8 +1,6 @@
 use super::{InferContext, TraitBound, TypeId, TypeInfo};
-use crate::{
-    common::{error::Error, FastHashMap},
-    hir::FnSig,
-};
+use crate::hir::FnSig;
+use rsh_common::{error::Error, FastHashMap};
 
 impl<'a> InferContext<'a> {
     #[tracing::instrument(
@@ -30,12 +28,12 @@ impl<'a> InferContext<'a> {
                         let FnSig { args, ret, .. } = self.get_function(fun);
 
                         (args.iter().map(|arg| arg.ty).collect(), *ret)
-                    },
+                    }
                     TypeInfo::Generic(_, TraitBound::Fn { args, ret }) => (args, ret),
                     _ => {
                         tracing::error!("Cannot be called: {}", self.display_type_info(fun));
                         unreachable!()
-                    },
+                    }
                 };
 
                 let generics = self.collect(&call_args, call_ret, &def_args, def_ret);
@@ -47,7 +45,7 @@ impl<'a> InferContext<'a> {
                 self.gen_unify(&generics, def_ret, call_ret);
 
                 Ok(true)
-            },
+            }
             Some(false) => Err(Error::custom(format!(
                 "Type '{}' doesn't implement Fn({}) -> {}",
                 self.display_type_info(fun),
@@ -63,7 +61,7 @@ impl<'a> InferContext<'a> {
                 tracing::debug!("Cannot solve call constraint yet");
 
                 Ok(false)
-            },
+            }
         }
     }
 
@@ -74,7 +72,7 @@ impl<'a> InferContext<'a> {
                     for (def, call) in def_types.into_iter().zip(call_types) {
                         self.gen_unify(&generics, def, call)
                     }
-                },
+                }
                 _ => self.unify(def, call).unwrap(),
             },
             TypeInfo::Generic(pos, _) => self.unify(*generics.get(&pos).unwrap(), call).unwrap(),
@@ -113,8 +111,8 @@ impl<'a> InferContext<'a> {
                     for (def, call) in def_types.iter().zip(call_types.iter()) {
                         self.collect_inner(generics, *call, *def)
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             },
             TypeInfo::Generic(pos, bound) => {
                 if let TraitBound::Fn {
@@ -136,8 +134,8 @@ impl<'a> InferContext<'a> {
                 let gen_ty = *generics.entry(pos).or_insert(call_ty);
 
                 self.unify_or_check_bounds(gen_ty, call_ty).unwrap();
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 }

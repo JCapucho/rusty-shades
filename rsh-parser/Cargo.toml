@@ -7,9 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 lalrpop-util = "0.19"
+logos = { git = "https://github.com/maciejhirsz/logos", rev = "cc26afc3a3ce28ea88c63699c06c0e27fc90fc92" }
 rsh-common = { path = "../rsh-common" }
-rsh-lexer = { path = "../rsh-lexer" }
-rsh-ast = { path = "../rsh-ast" }
 
 [features]
 build = ["lalrpop"]
