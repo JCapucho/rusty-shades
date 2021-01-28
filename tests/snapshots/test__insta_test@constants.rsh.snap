@@ -17,56 +17,59 @@ Ok(Module(
         width: 4,
       ),
     ),
-    Type(
-      name: None,
-      inner: Scalar(
-        kind: Uint,
-        width: 4,
-      ),
-    ),
   ],
   constants: [
     Constant(
       name: None,
       specialization: None,
-      inner: Uint(1),
-      ty: 2,
+      inner: Scalar(
+        width: 4,
+        value: Uint(1),
+      ),
     ),
     Constant(
       name: Some("TRUE_HELP"),
       specialization: None,
-      inner: Composite([
-        1,
-        1,
-        1,
-      ]),
-      ty: 1,
+      inner: Composite(
+        ty: 1,
+        components: [
+          1,
+          1,
+          1,
+        ],
+      ),
     ),
     Constant(
       name: None,
       specialization: None,
-      inner: Uint(2),
-      ty: 2,
+      inner: Scalar(
+        width: 4,
+        value: Uint(2),
+      ),
     ),
     Constant(
       name: Some("FALSE_HELP"),
       specialization: None,
-      inner: Composite([
-        3,
-        3,
-        3,
-      ]),
-      ty: 1,
+      inner: Composite(
+        ty: 1,
+        components: [
+          3,
+          3,
+          3,
+        ],
+      ),
     ),
     Constant(
       name: Some("HELP"),
       specialization: None,
-      inner: Composite([
-        3,
-        3,
-        3,
-      ]),
-      ty: 1,
+      inner: Composite(
+        ty: 1,
+        components: [
+          3,
+          3,
+          3,
+        ],
+      ),
     ),
   ],
   global_variables: [],

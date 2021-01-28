@@ -28,21 +28,15 @@ pub struct Ident {
 impl Deref for Ident {
     type Target = Symbol;
 
-    fn deref(&self) -> &Self::Target {
-        &self.symbol
-    }
+    fn deref(&self) -> &Self::Target { &self.symbol }
 }
 
 impl PartialEq for Ident {
-    fn eq(&self, other: &Self) -> bool {
-        self.symbol == other.symbol
-    }
+    fn eq(&self, other: &Self) -> bool { self.symbol == other.symbol }
 }
 
 impl Hash for Ident {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        self.symbol.hash(state)
-    }
+    fn hash<H: hash::Hasher>(&self, state: &mut H) { self.symbol.hash(state) }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, PartialOrd, Ord)]
@@ -104,6 +98,18 @@ pub enum ScalarType {
     Float,
     Double,
     Bool = 0xFF,
+}
+
+impl ScalarType {
+    pub fn bytes(&self) -> u8 {
+        match self {
+            ScalarType::Uint => 4,
+            ScalarType::Int => 4,
+            ScalarType::Float => 4,
+            ScalarType::Double => 8,
+            ScalarType::Bool => 1,
+        }
+    }
 }
 
 impl fmt::Display for ScalarType {
@@ -202,7 +208,7 @@ impl fmt::Display for GlobalBinding {
             GlobalBinding::Output(loc) => write!(f, "out={}", loc),
             GlobalBinding::Uniform { set, binding } => {
                 write!(f, "uniform {{ set={} binding={} }}", set, binding)
-            }
+            },
         }
     }
 }
@@ -251,15 +257,11 @@ impl FunctionOrigin {
 }
 
 impl From<Ident> for FunctionOrigin {
-    fn from(ident: Ident) -> Self {
-        FunctionOrigin::External(ident)
-    }
+    fn from(ident: Ident) -> Self { FunctionOrigin::External(ident) }
 }
 
 impl From<u32> for FunctionOrigin {
-    fn from(id: u32) -> Self {
-        FunctionOrigin::Local(id)
-    }
+    fn from(id: u32) -> Self { FunctionOrigin::Local(id) }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -290,9 +292,7 @@ pub struct Field {
 impl std::ops::Deref for Field {
     type Target = FieldKind;
 
-    fn deref(&self) -> &Self::Target {
-        &self.kind
-    }
+    fn deref(&self) -> &Self::Target { &self.kind }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]

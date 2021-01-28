@@ -10,10 +10,8 @@ fxhash = "0.2"
 codespan-reporting = { version = "0.9", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 
-# naga is under heavy development and many things aren't in the crates.io release
 [dependencies.naga]
-git = "https://github.com/gfx-rs/naga.git"
-rev = "181d8721cc9577fcd6e509eb5c1c6c3e16f95398"
+version = "0.2"
 optional = true
 
 # we use a git depedency to prevent hashbrown version duplication

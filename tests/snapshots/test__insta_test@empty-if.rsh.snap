@@ -8,21 +8,15 @@ Ok(Module(
     version: (1, 0, 0),
     generator: 1920299892,
   ),
-  types: [
-    Type(
-      name: None,
-      inner: Scalar(
-        kind: Bool,
-        width: 1,
-      ),
-    ),
-  ],
+  types: [],
   constants: [
     Constant(
       name: None,
       specialization: None,
-      inner: Bool(true),
-      ty: 1,
+      inner: Scalar(
+        width: 4,
+        value: Bool(true),
+      ),
     ),
   ],
   global_variables: [],

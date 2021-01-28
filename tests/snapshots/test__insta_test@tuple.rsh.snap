@@ -26,15 +26,16 @@ Ok(Module(
     Type(
       name: None,
       inner: Struct(
+        block: true,
         members: [
           StructMember(
             name: None,
-            origin: Offset(0),
+            span: None,
             ty: 1,
           ),
           StructMember(
             name: None,
-            origin: Offset(4),
+            span: None,
             ty: 2,
           ),
         ],
@@ -45,14 +46,18 @@ Ok(Module(
     Constant(
       name: None,
       specialization: None,
-      inner: Uint(0),
-      ty: 1,
+      inner: Scalar(
+        width: 4,
+        value: Uint(0),
+      ),
     ),
     Constant(
       name: None,
       specialization: None,
-      inner: Float(3),
-      ty: 2,
+      inner: Scalar(
+        width: 4,
+        value: Float(3),
+      ),
     ),
   ],
   global_variables: [],
@@ -103,7 +108,7 @@ Ok(Module(
       local_variables: [],
       expressions: [
         Call(
-          origin: Local(2),
+          function: 2,
           arguments: [],
         ),
         AccessIndex(
@@ -142,17 +147,17 @@ Ok(Module(
         expressions: [
           LocalVariable(1),
           Call(
-            origin: Local(1),
+            function: 1,
             arguments: [],
           ),
           LocalVariable(2),
           Call(
-            origin: Local(2),
+            function: 2,
             arguments: [],
           ),
           LocalVariable(1),
           Call(
-            origin: Local(3),
+            function: 3,
             arguments: [],
           ),
         ],

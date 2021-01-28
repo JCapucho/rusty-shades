@@ -3,7 +3,7 @@ use super::{
     VectorSize,
 };
 use naga::{
-    BinaryOperator, Binding as NagaBinding, BuiltIn as NagaBuiltIn, ConstantInner, ScalarKind,
+    BinaryOperator, Binding as NagaBinding, BuiltIn as NagaBuiltIn, ScalarKind, ScalarValue,
     ShaderStage, StorageClass as NagaStorageClass, TypeInner, UnaryOperator,
     VectorSize as NagaVectorSize,
 };
@@ -40,13 +40,13 @@ impl Into<UnaryOperator> for UnaryOp {
     }
 }
 
-impl Into<ConstantInner> for Literal {
-    fn into(self) -> ConstantInner {
+impl Into<ScalarValue> for Literal {
+    fn into(self) -> ScalarValue {
         match self {
-            Literal::Int(val) => ConstantInner::Sint(val),
-            Literal::Uint(val) => ConstantInner::Uint(val),
-            Literal::Float(val) => ConstantInner::Float(val),
-            Literal::Boolean(val) => ConstantInner::Bool(val),
+            Literal::Int(val) => ScalarValue::Sint(val),
+            Literal::Uint(val) => ScalarValue::Uint(val),
+            Literal::Float(val) => ScalarValue::Float(val),
+            Literal::Boolean(val) => ScalarValue::Bool(val),
         }
     }
 }

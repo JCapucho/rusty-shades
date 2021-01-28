@@ -178,9 +178,13 @@ fn build(matches: &ArgMatches<'_>, color: ColorChoice) -> io::Result<()> {
         #[cfg(feature = "spirv")]
         "spirv" => {
             use rsh_naga::back::spv::{Writer, WriterFlags};
-            let spirv = Writer::new(&naga_ir.header, WriterFlags::DEBUG).write(&naga_ir);
+            let mut words = Vec::new();
 
-            let x: Result<File, io::Error> = spirv.iter().try_fold(output, |mut f, x| {
+            Writer::new(&naga_ir.header, WriterFlags::DEBUG, Default::default())
+                .write(&naga_ir, &mut words)
+                .unwrap();
+
+            let x: Result<File, io::Error> = words.iter().try_fold(output, |mut f, x| {
                 f.write_all(&x.to_le_bytes())?;
                 Ok(f)
             });

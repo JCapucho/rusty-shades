@@ -2,9 +2,9 @@ pub use naga::{self, back, Module as NagaModule};
 
 use naga::{
     Arena, Constant, ConstantInner, EntryPoint as NagaEntryPoint, Expression,
-    Function as NagaFunction, FunctionArgument, FunctionOrigin, GlobalVariable, Handle, Header,
-    LocalVariable, MemberOrigin, ScalarKind, Statement as NagaStatement, StorageAccess,
-    StructMember, Type as NagaType, TypeInner,
+    Function as NagaFunction, FunctionArgument, GlobalVariable, Handle, Header, LocalVariable,
+    ScalarKind, Statement as NagaStatement, StorageAccess, StructMember, Type as NagaType,
+    TypeInner,
 };
 use rsh_common::{EntryPointStage, FastHashMap, RodeoResolver};
 use rsh_irs::{
@@ -67,34 +67,34 @@ pub fn build(hir_module: &Module, rodeo: &RodeoResolver) -> NagaModule {
     }
 
     for (id, constant) in hir_module.constants.iter().enumerate() {
-        let ty = build_ty(&constant.ty, &mut ctx).0;
-
         let inner = match constant.inner {
-            ir::ConstantInner::Scalar(scalar) => scalar.into(),
+            ir::ConstantInner::Scalar(scalar) => ConstantInner::Scalar {
+                width: 4, /* FIXME */
+                value: scalar.into(),
+            },
             ir::ConstantInner::Vector(vec) => match constant.ty.kind {
                 TypeKind::Vector(base, size) => {
-                    let mut elements = Vec::with_capacity(size as usize);
-                    let ty = ctx.module.types.fetch_or_append(NagaType {
-                        name: None,
-                        inner: base.into(),
-                    });
+                    let ty = build_ty(&constant.ty, &mut ctx).0;
+                    let mut components = Vec::with_capacity(size as usize);
 
                     for item in vec.iter().take(size as usize) {
-                        elements.push(ctx.module.constants.fetch_or_append(Constant {
+                        components.push(ctx.module.constants.fetch_or_append(Constant {
                             name: None,
                             specialization: None,
-                            ty,
-                            inner: Into::into(*item),
+                            inner: ConstantInner::Scalar {
+                                width: base.bytes(),
+                                value: (*item).into(),
+                            },
                         }))
                     }
 
-                    ConstantInner::Composite(elements)
+                    ConstantInner::Composite { ty, components }
                 },
                 _ => unreachable!(),
             },
             ir::ConstantInner::Matrix(mat) => match constant.ty.kind {
                 TypeKind::Matrix { rows, columns } => {
-                    let mut elements = Vec::with_capacity(rows as usize * columns as usize);
+                    let mut components = Vec::with_capacity(rows as usize * columns as usize);
                     let ty = ctx.module.types.fetch_or_append(NagaType {
                         name: None,
                         inner: TypeInner::Scalar {
@@ -105,16 +105,18 @@ pub fn build(hir_module: &Module, rodeo: &RodeoResolver) -> NagaModule {
 
                     for x in 0..rows as usize {
                         for y in 0..columns as usize {
-                            elements.push(ctx.module.constants.fetch_or_append(Constant {
+                            components.push(ctx.module.constants.fetch_or_append(Constant {
                                 name: None,
                                 specialization: None,
-                                ty,
-                                inner: mat[x * 4 + y].into(),
+                                inner: ConstantInner::Scalar {
+                                    width: 4, /* FIXME */
+                                    value: mat[x * 4 + y].into(),
+                                },
                             }))
                         }
                     }
 
-                    ConstantInner::Composite(elements)
+                    ConstantInner::Composite { ty, components }
                 },
                 _ => unreachable!(),
             },
@@ -123,7 +125,6 @@ pub fn build(hir_module: &Module, rodeo: &RodeoResolver) -> NagaModule {
         let handle = ctx.module.constants.append(Constant {
             name: Some(rodeo.resolve(&constant.name).to_string()),
             specialization: None,
-            ty,
             inner,
         });
 
@@ -292,14 +293,17 @@ fn build_struct(strct: &Struct, name: String, ctx: &mut BuilderContext) -> (Naga
 
         members.push(StructMember {
             name: Some(member.field.display(ctx.rodeo).to_string()),
-            origin: MemberOrigin::Offset(offset),
+            span: None,
             ty,
         });
 
         offset += size;
     }
 
-    let inner = TypeInner::Struct { members };
+    let inner = TypeInner::Struct {
+        block: false,
+        members,
+    };
 
     (
         NagaType {
@@ -361,7 +365,7 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
 
                 members.push(StructMember {
                     name: None,
-                    origin: MemberOrigin::Offset(offset),
+                    span: None, /* FIXME */
                     ty,
                 });
 
@@ -371,7 +375,10 @@ fn build_ty(ty: &TypeKind, ctx: &mut BuilderContext) -> (Handle<NagaType>, u32) 
             (
                 ctx.module.types.fetch_or_append(NagaType {
                     name: None,
-                    inner: TypeInner::Struct { members },
+                    inner: TypeInner::Struct {
+                        block: true, /* FIXME */
+                        members,
+                    },
                 }),
                 offset,
             )
@@ -493,27 +500,29 @@ fn build_expr<'a>(
                 })
                 .collect();
 
-            let origin = match origin {
+            match origin {
                 rsh_common::FunctionOrigin::Local(id) => {
                     let function = &ctx.functions[*id as usize];
-                    let id = build_fn(function, module, *id, ctx);
-                    FunctionOrigin::Local(id)
-                },
-                rsh_common::FunctionOrigin::External(ident) => {
-                    FunctionOrigin::External(ctx.rodeo.resolve(&ident).to_owned())
-                },
-            };
+                    let function = build_fn(function, module, *id, ctx);
 
-            Expression::Call { origin, arguments }
+                    Expression::Call {
+                        function,
+                        arguments,
+                    }
+                },
+                rsh_common::FunctionOrigin::External(_ident) => {
+                    todo!()
+                },
+            }
         },
         Expr::Literal(literal) => {
-            let ty = build_ty(expr.attr(), ctx).0;
-
             let handle = ctx.module.constants.fetch_or_append(Constant {
                 name: None,
-                ty,
                 specialization: None,
-                inner: Into::into(*literal),
+                inner: ConstantInner::Scalar {
+                    width: 4, /* FIXME */
+                    value: (*literal).into(),
+                },
             });
 
             Expression::Constant(handle)

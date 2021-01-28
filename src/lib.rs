@@ -1,6 +1,9 @@
 pub use rsh_common::error::Error;
 pub use rsh_irs::thir::pretty::HirPrettyPrinter;
 
+#[cfg(feature = "spirv")]
+pub use spriv::{compile_to_spirv, SpirvCompilationError};
+
 use rsh_common::{Hasher, Rodeo, RodeoResolver};
 use rsh_irs::{hir, ir::Module as IrModule, thir::Module as HirModule};
 
@@ -35,12 +38,45 @@ pub fn build_naga_ir(code: &str) -> Result<rsh_naga::NagaModule, Vec<Error>> {
 }
 
 #[cfg(feature = "spirv")]
-pub fn compile_to_spirv(code: &str) -> Result<Vec<u32>, Vec<Error>> {
-    use rsh_naga::back::spv;
+mod spriv {
+    use super::{build_naga_ir, Error};
+    use rsh_naga::{
+        back::spv::{Capability, Error as SpvError},
+        naga::FastHashSet,
+    };
 
-    let naga_ir = build_naga_ir(code)?;
+    #[derive(Debug)]
+    pub enum SpirvCompilationError {
+        Language(Error),
+        CodeGen(SpvError),
+    }
 
-    let spirv = spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG).write(&naga_ir);
+    impl From<Error> for SpirvCompilationError {
+        fn from(e: Error) -> Self { SpirvCompilationError::Language(e) }
+    }
 
-    Ok(spirv)
+    impl From<SpvError> for SpirvCompilationError {
+        fn from(e: SpvError) -> Self { SpirvCompilationError::CodeGen(e) }
+    }
+
+    pub fn compile_to_spirv(
+        code: &str,
+        capabilities: FastHashSet<Capability>,
+    ) -> Result<Vec<u32>, Vec<SpirvCompilationError>> {
+        use rsh_naga::back::spv;
+
+        let naga_ir = build_naga_ir(code).map_err(|errors| {
+            errors
+                .into_iter()
+                .map(SpirvCompilationError::from)
+                .collect::<Vec<SpirvCompilationError>>()
+        })?;
+        let mut words = Vec::new();
+
+        spv::Writer::new(&naga_ir.header, spv::WriterFlags::DEBUG, capabilities)
+            .write(&naga_ir, &mut words)
+            .map_err(|err| vec![SpirvCompilationError::from(err)])?;
+
+        Ok(words)
+    }
 }

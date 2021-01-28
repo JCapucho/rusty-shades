@@ -29,3 +29,7 @@ members = [
     "rsh-parser",
     "rsh-irs"
 ]
+
+# naga is under heavy development and many things aren't in the crates.io release
+[patch.crates-io]
+naga = { git = "https://github.com/gfx-rs/naga.git", rev = "4a13ce022b666a4896ba1dbcbd82121e8b06ad3e" }
