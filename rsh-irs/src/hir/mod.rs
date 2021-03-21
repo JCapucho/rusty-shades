@@ -1,8 +1,10 @@
 use crate::{
-    ast::{self, Block},
     common::{
-        error::Error, src::Span, EntryPointStage, FastHashMap, Field, FieldKind, FunctionOrigin,
-        GlobalBinding, Ident, RodeoResolver, ScalarType, Symbol, VectorSize,
+        ast::{self, Block},
+        error::Error,
+        src::Span,
+        EntryPointStage, FastHashMap, Field, FieldKind, FunctionOrigin, GlobalBinding, Ident,
+        RodeoResolver, ScalarType, Symbol, VectorSize,
     },
     infer::{InferContext, TraitBound, TypeId, TypeInfo},
 };

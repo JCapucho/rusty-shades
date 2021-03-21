@@ -8,6 +8,7 @@ use std::{
     ops::Deref,
 };
 
+pub mod ast;
 pub mod error;
 #[cfg(feature = "naga")]
 mod naga;

@@ -1,4 +1,3 @@
-use rsh_ast as ast;
 use rsh_common as common;
 
 pub mod hir;

@@ -7,13 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 rsh-irs = { path = "./rsh-irs" }
-rsh-lexer = { path = "./rsh-lexer" }
 rsh-parser = { path = "./rsh-parser" }
 rsh-naga = { path = "./rsh-naga", optional = true }
 rsh-common = { path = "./rsh-common" }
 
 [dev-dependencies]
-insta = { version = "1.3", features = ["ron", "glob"] }
+insta = { version = "1.7", features = ["ron", "glob"] }
 
 [features]
 default = ["spirv", "serde"]
@@ -24,11 +23,9 @@ serde = ["rsh-common/serde", "rsh-naga/serialize"]
 [workspace]
 default-members = ["rshc"]
 members = [
-    "rsh-lexer",
     "rsh-naga",
     "rsh-common",
     "rshc",
-    "rsh-ast",
     "rsh-parser",
     "rsh-irs"
 ]

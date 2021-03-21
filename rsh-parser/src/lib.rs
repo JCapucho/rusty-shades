@@ -1,21 +1,23 @@
 use lalrpop_util::ParseError;
-use rsh_ast::Item;
+use lexer::{Lexer, LexerError, Token};
 use rsh_common::{
+    ast::Item,
     error::Error as CommonError,
     src::{Loc, Span},
-    RodeoResolver,
+    Rodeo, RodeoResolver,
 };
-use rsh_lexer::{Lexer, LexerError, Token};
 use std::fmt;
 
 #[allow(clippy::all)]
 #[rustfmt::skip]
 mod grammar;
+mod lexer;
 
 pub type Error = ParseError<Loc, Token, LexerError>;
 
 // TODO: Return multiple errors
-pub fn parse(lexer: Lexer) -> Result<Vec<Item>, Error> {
+pub fn parse(source: &str, rodeo: &mut Rodeo) -> Result<Vec<Item>, Error> {
+    let lexer = Lexer::new(source, rodeo);
     grammar::ProgramParser::new().parse(lexer)
 }
 

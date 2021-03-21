@@ -257,7 +257,8 @@ fn handle_errors<T>(
             for error in errors {
                 let diagnostic = error.codespan_diagnostic(file_id);
 
-                term::emit(&mut writer.lock(), &config, files, &diagnostic)?;
+                term::emit(&mut writer.lock(), &config, files, &diagnostic)
+                    .expect("Failed to write to the terminal");
             }
 
             std::process::exit(1);

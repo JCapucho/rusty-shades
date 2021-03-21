@@ -8,8 +8,7 @@ edition = "2018"
 [dependencies]
 lalrpop-util = "0.19"
 rsh-common = { path = "../rsh-common" }
-rsh-lexer = { path = "../rsh-lexer" }
-rsh-ast = { path = "../rsh-ast" }
+logos = "0.12"
 
 [features]
 build = ["lalrpop"]

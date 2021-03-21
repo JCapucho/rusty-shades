@@ -1,6 +1,6 @@
 use crate::{
-    ast,
     common::{
+        ast,
         error::Error,
         src::{Span, Spanned},
         BinaryOp, EntryPointStage, FastHashMap, Field, FunctionOrigin, GlobalBinding, Ident,
